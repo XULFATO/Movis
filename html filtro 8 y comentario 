@@ -1,156 +1,236 @@
-<script>
-  // 🔽 Sustituye por tus datos reales (ahora con columna 8 = comentarios)
-  const data = [
-    ["FICH001","12345","TXT","3 puertas","F","desc X","C1 100€","Disponible solo en versión europea"],
-    ["FICH002","67890","TXT","3 puertas","F","desc X","C1 200€",""],
-    ["FICH003","13579","TXT","3 puertas","G","desc Y","C1 300€","Edición limitada, incluye kit adicional"],
-    ["FICH004","24680","TXT","3 puertas","H","desc Z","C1 400€",""],
-    ["FICH005","11223","TXT","7 puertas","A","desc A","C2 500€","Solo bajo pedido"],
-    ["FICH006","44556","TXT","7 puertas","A","desc B","C2 600€",""],
-    ["FICH007","99887","TXT","7 puertas","B","desc C","C2 700€","Notas técnicas: versión B actualizada 2024"]
-  ];
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Tabla filtrable 7 columnas + comentarios</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    :root {
+      --bg:#f5f5f5; --ink:#222; --muted:#666; --line:#ddd; --head:#333; --headInk:#fff;
+      --active:#0b6efd;
+    }
+    body { font-family: system-ui, Arial, sans-serif; margin: 20px; color: var(--ink); background: var(--bg); }
+    h2 { margin: 0 0 8px }
+    .meta { font-size: 12px; color: var(--muted); margin: 6px 0 14px; }
+    table { width: 100%; border-collapse: collapse; background: #fff; box-shadow: 0 2px 10px rgba(0,0,0,.06); }
+    th, td { padding: 8px 10px; border: 1px solid var(--line); text-align: left; vertical-align: top; }
+    thead th { background: var(--head); color: var(--headInk); position: sticky; top: 42px; z-index: 1; }
+    thead tr:first-child th { position: sticky; top: 0; z-index: 2; background: #fff; color: var(--ink); }
+    thead input {
+      width: 100%; box-sizing: border-box; padding: 6px 8px;
+      border: 1px solid var(--line); border-radius: 6px; outline: none;
+      transition: box-shadow .15s, border-color .15s, color .15s, font-weight .15s;
+    }
+    thead input:focus { border-color: var(--active); box-shadow: 0 0 0 3px rgba(11,110,253,.15); }
+    thead input.active { color: var(--active); font-weight: 700; }
+    tbody tr:nth-child(even) td { background: #fafafa; }
+    mark { background: none; color: var(--active); font-weight: 700; }
+    .status { font-size: 12px; color: var(--muted); margin-top: 10px; }
+    .actions { margin-bottom: 10px; }
+    .actions button {
+      padding: 6px 10px; border: 1px solid var(--active); background: var(--active);
+      color: #fff; border-radius: 6px; cursor: pointer; font-size: 14px;
+      transition: background .2s;
+    }
+    .actions button:hover { background: #094db1; }
+    .comment-row td {
+      background: #f9f9f9;
+      animation: fadeIn .25s ease;
+    }
+    @keyframes fadeIn {
+      from {opacity: 0;}
+      to {opacity: 1;}
+    }
+  </style>
+</head>
+<body>
+  <h2>Tabla filtrable encadenada 7 columnas + comentarios</h2>
+  <div class="meta">
+    ➕ Usa <b>+palabra</b> para forzar coincidencia, <b>-palabra</b> para excluir.<br>
+    📊 Los desplegables muestran <code>valor (n)</code> con el número de apariciones según los filtros activos.<br>
+    💬 Haz clic en una fila para ver su comentario (si tiene).
+  </div>
 
-  const COLS = 7; // número de columnas visibles
-  const MAX_SUGGESTIONS = 500;
-  const DEFAULT_RENDER_LIMIT = 500;
-  const inputs = [...document.querySelectorAll('thead input')];
-  const filters = Array(COLS).fill('');
-  const tbody = document.getElementById('tbody');
-  const statusEl = document.getElementById('status');
+  <div class="actions">
+    <button onclick="clearAllFilters()">🧼 Borrar todos los filtros</button>
+  </div>
 
-  function rowMatches(row, ignoreCol = -1){
-    for (let i=0;i<COLS;i++){
-      if (i===ignoreCol) continue;
-      const f = filters[i];
-      if (!f) continue;
-      const parts = f.split(/\s+/).filter(Boolean);
-      const cell = String(row[i]).toLowerCase();
+  <table>
+    <thead>
+      <tr>
+        <th><input id="f0" list="dl0" placeholder="Fichero" oninput="handleType(0,this)"><datalist id="dl0"></datalist></th>
+        <th><input id="f1" list="dl1" placeholder="Código" oninput="handleType(1,this)"><datalist id="dl1"></datalist></th>
+        <th><input id="f2" list="dl2" placeholder="Formato" oninput="handleType(2,this)"><datalist id="dl2"></datalist></th>
+        <th><input id="f3" list="dl3" placeholder="Descripción" oninput="handleType(3,this)"><datalist id="dl3"></datalist></th>
+        <th><input id="f4" list="dl4" placeholder="Capítulo" oninput="handleType(4,this)"><datalist id="dl4"></datalist></th>
+        <th><input id="f5" list="dl5" placeholder="Descripción 2" oninput="handleType(5,this)"><datalist id="dl5"></datalist></th>
+        <th><input id="f6" list="dl6" placeholder="C EURO" oninput="handleType(6,this)"><datalist id="dl6"></datalist></th>
+      </tr>
+      <tr>
+        <th>Fichero</th><th>Código</th><th>Formato</th><th>Descripción</th>
+        <th>Capítulo</th><th>Descripción 2</th><th>C EURO</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+
+  <div class="status" id="status"></div>
+
+  <script>
+    // 🔽 Datos de ejemplo (columna 8 = comentario)
+    const data = [
+      ["FICH001","12345","TXT","3 puertas","F","desc X","C1 100€","Disponible solo en versión europea"],
+      ["FICH002","67890","TXT","3 puertas","F","desc X","C1 200€",""],
+      ["FICH003","13579","TXT","3 puertas","G","desc Y","C1 300€","Edición limitada, incluye kit adicional"],
+      ["FICH004","24680","TXT","3 puertas","H","desc Z","C1 400€",""],
+      ["FICH005","11223","TXT","7 puertas","A","desc A","C2 500€","Solo bajo pedido"],
+      ["FICH006","44556","TXT","7 puertas","A","desc B","C2 600€",""],
+      ["FICH007","99887","TXT","7 puertas","B","desc C","C2 700€","Notas técnicas: versión B actualizada 2024"]
+    ];
+
+    const COLS = 7;
+    const MAX_SUGGESTIONS = 500;
+    const DEFAULT_RENDER_LIMIT = 500;
+    const inputs = [...document.querySelectorAll('thead input')];
+    const filters = Array(COLS).fill('');
+    const tbody = document.getElementById('tbody');
+    const statusEl = document.getElementById('status');
+
+    function rowMatches(row, ignoreCol = -1){
+      for (let i=0;i<COLS;i++){
+        if (i===ignoreCol) continue;
+        const f = filters[i];
+        if (!f) continue;
+        const parts = f.split(/\s+/).filter(Boolean);
+        const cell = String(row[i]).toLowerCase();
+        for (const p of parts) {
+          if (p.startsWith('+')) { if (!cell.includes(p.slice(1))) return false; }
+          else if (p.startsWith('-')) { if (cell.includes(p.slice(1))) return false; }
+          else { if (!cell.includes(p)) return false; }
+        }
+      }
+      return true;
+    }
+
+    function highlightText(text, colIndex){
+      const f = filters[colIndex];
+      if (!f) return text;
+      let result = text;
+      const parts = f.split(/\s+/).filter(Boolean).filter(p => !p.startsWith('-'));
       for (const p of parts) {
-        if (p.startsWith('+')) { if (!cell.includes(p.slice(1))) return false; }
-        else if (p.startsWith('-')) { if (cell.includes(p.slice(1))) return false; }
-        else { if (!cell.includes(p)) return false; }
+        const term = p.startsWith('+') ? p.slice(1) : p;
+        if (!term) continue;
+        const regex = new RegExp(`(${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+        result = result.replace(regex, '<mark>$1</mark>');
+      }
+      return result;
+    }
+
+    function toggleCommentRow(tr, commentText) {
+      const next = tr.nextElementSibling;
+      if (next && next.classList.contains('comment-row')) {
+        next.remove();
+        return;
+      }
+      const td = document.createElement('td');
+      td.colSpan = COLS;
+      td.innerHTML = `<div style="padding:8px;color:#444;">
+                        💬 ${commentText}
+                      </div>`;
+      const commentTr = document.createElement('tr');
+      commentTr.className = 'comment-row';
+      commentTr.appendChild(td);
+      tr.insertAdjacentElement('afterend', commentTr);
+    }
+
+    function renderTable(){
+      const matchedRows = [];
+      for (const row of data) if (rowMatches(row)) matchedRows.push(row);
+      const matched = matchedRows.length;
+      const activeFilters = filters.some(f => f.trim() !== '');
+      const renderLimit = (activeFilters && matched > DEFAULT_RENDER_LIMIT) ? matched : DEFAULT_RENDER_LIMIT;
+
+      const frag = document.createDocumentFragment();
+      for (const row of matchedRows.slice(0, renderLimit)) {
+        const tr = document.createElement('tr');
+        for (let c=0;c<COLS;c++){
+          const td = document.createElement('td');
+          td.innerHTML = highlightText(String(row[c]), c);
+          tr.appendChild(td);
+        }
+        const comment = row[COLS] || "";
+        if (comment.trim() !== "") {
+          tr.style.cursor = 'pointer';
+          tr.title = "Ver comentario";
+          tr.addEventListener('click', () => toggleCommentRow(tr, comment));
+        }
+        frag.appendChild(tr);
+      }
+
+      tbody.innerHTML = '';
+      tbody.appendChild(frag);
+      statusEl.textContent = `Coincidencias: ${matched.toLocaleString()} — Mostrando: ${Math.min(matched, renderLimit).toLocaleString()}${matched>renderLimit?' (limitado por rendimiento)':''}`;
+    }
+
+    function updateDatalist(colIndex, typed){
+      const dl = document.getElementById('dl'+colIndex);
+      dl.innerHTML = '';
+      const counts = new Map();
+      for (const row of data){
+        if (rowMatches(row, colIndex)){
+          const val = String(row[colIndex]);
+          counts.set(val, (counts.get(val) || 0) + 1);
+        }
+      }
+      const options = Array.from(counts.entries()).sort((a,b)=>a[0].localeCompare(b[0]));
+      const t = (typed||'').toLowerCase();
+      let count = 0;
+      for (const [val, n] of options){
+        if (!typed || val.toLowerCase().includes(t)){
+          const opt = document.createElement('option');
+          opt.value = val;
+          opt.label = `${val} (${n})`;
+          dl.appendChild(opt);
+          if (++count >= MAX_SUGGESTIONS) break;
+        }
       }
     }
-    return true;
-  }
 
-  function highlightText(text, colIndex){
-    const f = filters[colIndex];
-    if (!f) return text;
-    let result = text;
-    const parts = f.split(/\s+/).filter(Boolean).filter(p => !p.startsWith('-'));
-    for (const p of parts) {
-      const term = p.startsWith('+') ? p.slice(1) : p;
-      if (!term) continue;
-      const regex = new RegExp(`(${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
-      result = result.replace(regex, '<mark>$1</mark>');
+    function updateAllDatalists(except = -1){
+      for (let i=0;i<COLS;i++) if (i!==except) updateDatalist(i, inputs[i].value);
     }
-    return result;
-  }
 
-  function toggleCommentRow(tr, commentText) {
-    const next = tr.nextElementSibling;
-    if (next && next.classList.contains('comment-row')) {
-      next.remove();
-      return;
+    function handleType(colIndex, el){
+      const val = (el.value || '').trim();
+      filters[colIndex] = val.toLowerCase();
+      if (val) el.classList.add('active'); else el.classList.remove('active');
+      updateDatalist(colIndex, val);
+      updateAllDatalists(colIndex);
+      renderTable();
     }
-    const td = document.createElement('td');
-    td.colSpan = COLS;
-    td.innerHTML = `<div style="padding:8px;color:#444;background:#f9f9f9;border-top:1px solid #ddd;font-size:13px;">
-                      💬 ${commentText}
-                    </div>`;
-    const commentTr = document.createElement('tr');
-    commentTr.className = 'comment-row';
-    commentTr.appendChild(td);
-    tr.insertAdjacentElement('afterend', commentTr);
-  }
 
-  function renderTable(){
-    const matchedRows = [];
-    for (const row of data) if (rowMatches(row)) matchedRows.push(row);
-    const matched = matchedRows.length;
-    const activeFilters = filters.some(f => f.trim() !== '');
-    const renderLimit = (activeFilters && matched > DEFAULT_RENDER_LIMIT) ? matched : DEFAULT_RENDER_LIMIT;
-
-    const frag = document.createDocumentFragment();
-    for (const row of matchedRows.slice(0, renderLimit)) {
-      const tr = document.createElement('tr');
-      for (let c=0;c<COLS;c++){
-        const td = document.createElement('td');
-        td.innerHTML = highlightText(String(row[c]), c);
-        tr.appendChild(td);
+    function clearAllFilters(){
+      for (let i=0;i<COLS;i++){
+        filters[i]=''; inputs[i].value=''; inputs[i].classList.remove('active');
+        document.getElementById('dl'+i).innerHTML='';
       }
-      const comment = row[COLS] || "";
-      if (comment.trim() !== "") {
-        tr.style.cursor = 'pointer';
-        tr.title = "Ver comentario";
-        tr.addEventListener('click', () => toggleCommentRow(tr, comment));
-      }
-      frag.appendChild(tr);
+      renderTable();
+      updateAllDatalists();
     }
 
-    tbody.innerHTML = '';
-    tbody.appendChild(frag);
-    statusEl.textContent = `Coincidencias: ${matched.toLocaleString()} — Mostrando: ${Math.min(matched, renderLimit).toLocaleString()}${matched>renderLimit?' (limitado por rendimiento)':''}`;
-  }
-
-  function updateDatalist(colIndex, typed){
-    const dl = document.getElementById('dl'+colIndex);
-    dl.innerHTML = '';
-    const counts = new Map();
-    for (const row of data){
-      if (rowMatches(row, colIndex)){
-        const val = String(row[colIndex]);
-        counts.set(val, (counts.get(val) || 0) + 1);
-      }
-    }
-    const options = Array.from(counts.entries()).sort((a,b)=>a[0].localeCompare(b[0]));
-    const t = (typed||'').toLowerCase();
-    let count = 0;
-    for (const [val, n] of options){
-      if (!typed || val.toLowerCase().includes(t)){
-        const opt = document.createElement('option');
-        opt.value = val;
-        opt.label = `${val} (${n})`;
-        dl.appendChild(opt);
-        if (++count >= MAX_SUGGESTIONS) break;
-      }
-    }
-  }
-
-  function updateAllDatalists(except = -1){
-    for (let i=0;i<COLS;i++) if (i!==except) updateDatalist(i, inputs[i].value);
-  }
-
-  function handleType(colIndex, el){
-    const val = (el.value || '').trim();
-    filters[colIndex] = val.toLowerCase();
-    if (val) el.classList.add('active'); else el.classList.remove('active');
-    updateDatalist(colIndex, val);
-    updateAllDatalists(colIndex);
-    renderTable();
-  }
-
-  function clearAllFilters(){
-    for (let i=0;i<COLS;i++){
-      filters[i]=''; inputs[i].value=''; inputs[i].classList.remove('active');
-      document.getElementById('dl'+i).innerHTML='';
-    }
+    // Inicial
     renderTable();
     updateAllDatalists();
-  }
 
-  // Inicial
-  renderTable();
-  updateAllDatalists();
-
-  // 👇 Hack para desplegable al enfocar
-  inputs.forEach(inp => {
-    inp.addEventListener('focus', () => {
-      if (inp.value === '') {
-        inp.setAttribute('placeholder', ' ');
-        setTimeout(()=>inp.setAttribute('placeholder',''),0);
-      }
+    // Hack para mostrar datalist al enfocar
+    inputs.forEach(inp => {
+      inp.addEventListener('focus', () => {
+        if (inp.value === '') {
+          inp.setAttribute('placeholder', ' ');
+          setTimeout(()=>inp.setAttribute('placeholder',''),0);
+        }
+      });
     });
-  });
-</script>
+  </script>
+</body>
+</html>
