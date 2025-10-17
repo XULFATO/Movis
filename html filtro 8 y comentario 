@@ -2,52 +2,55 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
-  <title>Tabla filtrable + Comentarios subrayados</title>
+  <title>Tabla filtrable con comentarios (+)</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
     :root {
-      --bg:#f4f7fa;
-      --ink:#1d1f21;
+      --bg:#f6f8fa;
+      --ink:#1a1d21;
       --muted:#666;
-      --line:#d5d9de;
-      --head:#0057d9;
+      --line:#dcdfe4;
+      --head:#2c3e50;
       --headInk:#fff;
-      --active:#0057d9;
-      --comment-mark:#0070f3;
-      --comment-border:#0070f3;
-      --comment-bg:#f7faff;
+      --active:#0b6efd;
+      --highlight:#eef5ff;
     }
+
     body {
-      font-family: "Segoe UI", Roboto, sans-serif;
+      font-family: "Segoe UI", Arial, sans-serif;
       margin: 24px;
-      color: var(--ink);
       background: var(--bg);
+      color: var(--ink);
     }
+
     h2 {
-      font-size: 22px;
-      margin-bottom: 5px;
-      color: #09316c;
+      margin: 0 0 8px;
+      color: #0b3a8a;
     }
+
     .meta {
       font-size: 13px;
       color: var(--muted);
-      margin: 6px 0 18px;
+      margin-bottom: 18px;
     }
+
     table {
       width: 100%;
       border-collapse: collapse;
       background: #fff;
-      border-radius: 10px;
+      box-shadow: 0 2px 10px rgba(0,0,0,.05);
+      border-radius: 6px;
       overflow: hidden;
-      box-shadow: 0 2px 8px rgba(0,0,0,.08);
     }
+
     th, td {
-      padding: 9px 10px;
+      padding: 8px 10px;
       border-bottom: 1px solid var(--line);
       text-align: left;
-      vertical-align: top;
       font-size: 14px;
+      vertical-align: top;
     }
+
     thead th {
       background: var(--head);
       color: var(--headInk);
@@ -55,6 +58,7 @@
       top: 44px;
       z-index: 1;
     }
+
     thead tr:first-child th {
       background: #fff;
       color: var(--ink);
@@ -62,6 +66,7 @@
       top: 0;
       z-index: 2;
     }
+
     thead input {
       width: 100%;
       box-sizing: border-box;
@@ -71,68 +76,71 @@
       outline: none;
       transition: box-shadow .15s, border-color .15s;
     }
+
     thead input:focus {
       border-color: var(--active);
       box-shadow: 0 0 0 3px rgba(11,110,253,.15);
     }
+
     thead input.active {
       color: var(--active);
       font-weight: 600;
     }
-    tbody tr:nth-child(even) td { background: #fafbfc; }
+
+    tbody tr:nth-child(even) td { background: #fafafa; }
     mark { background: none; color: var(--active); font-weight: 700; }
 
-    /* ——— filas con comentario ——— */
-    tbody tr.has-comment td {
-      border-left: 3px solid var(--comment-mark);
-      background: #ffffff;
+    /* símbolo + y - para desplegar */
+    .plus-btn {
+      cursor: pointer;
+      font-weight: bold;
+      color: var(--active);
+      text-align: center;
+      font-size: 18px;
+      width: 24px;
     }
-    tbody tr.has-comment td:nth-child(4) {
-      text-decoration: underline;
-      text-decoration-color: var(--comment-mark);
-      text-underline-offset: 3px;
+    .plus-btn:hover {
+      background: var(--highlight);
+      border-radius: 4px;
     }
 
-    /* ——— comentario expandido ——— */
+    /* comentario expandido */
     .comment-row td {
-      background: var(--comment-bg);
-      border-left: 3px solid var(--comment-border);
+      background: #f9fbff;
+      border-left: 3px solid var(--active);
+      color: #333;
       font-size: 13px;
-      color: #334;
       animation: fadeIn .25s ease;
     }
+
     .comment-row div {
-      padding: 8px 10px;
+      padding: 8px 12px;
     }
+
     @keyframes fadeIn {
       from { opacity: 0; transform: translateY(-3px); }
       to { opacity: 1; transform: translateY(0); }
     }
 
-    .actions { margin-bottom: 12px; }
+    .actions { margin-bottom: 10px; }
     .actions button {
-      padding: 7px 12px;
+      padding: 6px 10px;
       border: 1px solid var(--active);
       background: var(--active);
       color: #fff;
       border-radius: 6px;
       cursor: pointer;
       font-size: 14px;
-      transition: background .2s;
     }
-    .actions button:hover { background: #094db1; }
-    .status {
-      font-size: 12px;
-      color: var(--muted);
-      margin-top: 10px;
-    }
+
+    .status { font-size: 12px; color: var(--muted); margin-top: 10px; }
   </style>
 </head>
 <body>
-  <h2>Tabla filtrable con comentarios subrayados</h2>
+  <h2>Tabla filtrable con comentarios desplegables (+)</h2>
   <div class="meta">
     ➕ Usa <b>+palabra</b> para buscar exacto, <b>-palabra</b> para excluir.<br>
-    💬 Las filas con descripción subrayada tienen comentario. Haz clic para ver el detalle.
+    🔍 Clic en el símbolo <b>+</b> para ver el comentario del elemento (si lo tiene).
   </div>
 
   <div class="actions">
@@ -142,17 +150,24 @@
   <table>
     <thead>
       <tr>
-        <th><input id="f0" list="dl0" placeholder="Fichero" oninput="handleType(0,this)"><datalist id="dl0"></datalist></th>
-        <th><input id="f1" list="dl1" placeholder="Código" oninput="handleType(1,this)"><datalist id="dl1"></datalist></th>
-        <th><input id="f2" list="dl2" placeholder="Formato" oninput="handleType(2,this)"><datalist id="dl2"></datalist></th>
+        <th><input id="f0" list="dl0" placeholder="Tabla" oninput="handleType(0,this)"><datalist id="dl0"></datalist></th>
+        <th><input id="f1" list="dl1" placeholder="Descripción" oninput="handleType(1,this)"><datalist id="dl1"></datalist></th>
+        <th><input id="f2" list="dl2" placeholder="Cod elemento" oninput="handleType(2,this)"><datalist id="dl2"></datalist></th>
         <th><input id="f3" list="dl3" placeholder="Descripción" oninput="handleType(3,this)"><datalist id="dl3"></datalist></th>
-        <th><input id="f4" list="dl4" placeholder="Capítulo" oninput="handleType(4,this)"><datalist id="dl4"></datalist></th>
-        <th><input id="f5" list="dl5" placeholder="Descripción 2" oninput="handleType(5,this)"><datalist id="dl5"></datalist></th>
-        <th><input id="f6" list="dl6" placeholder="C EURO" oninput="handleType(6,this)"><datalist id="dl6"></datalist></th>
+        <th><input id="f4" list="dl4" placeholder="Enlace" oninput="handleType(4,this)"><datalist id="dl4"></datalist></th>
+        <th><input id="f5" list="dl5" placeholder="Posición" oninput="handleType(5,this)"><datalist id="dl5"></datalist></th>
+        <th><input id="f6" list="dl6" placeholder="Formato" oninput="handleType(6,this)"><datalist id="dl6"></datalist></th>
+        <th><input id="f7" list="dl7" placeholder="Euro" oninput="handleType(7,this)"><datalist id="dl7"></datalist></th>
       </tr>
       <tr>
-        <th>Fichero</th><th>Código</th><th>Formato</th><th>Descripción</th>
-        <th>Capítulo</th><th>Descripción 2</th><th>C EURO</th>
+        <th>Tabla</th>
+        <th>Descripción</th>
+        <th>Cod elemento</th>
+        <th>Descripción</th>
+        <th>Enlace</th>
+        <th>Posición</th>
+        <th>Formato</th>
+        <th>Euro</th>
       </tr>
     </thead>
     <tbody id="tbody"></tbody>
@@ -161,17 +176,16 @@
   <div class="status" id="status"></div>
 
   <script>
+    // Datos de ejemplo (columna 9 = comentario)
     const data = [
-      ["FICH001","12345","TXT","3 puertas","F","desc X","C1 100€","Disponible solo en versión europea"],
-      ["FICH002","67890","TXT","3 puertas","F","desc X","C1 200€",""],
-      ["FICH003","13579","TXT","3 puertas","G","desc Y","C1 300€","Edición limitada, incluye kit adicional"],
-      ["FICH004","24680","TXT","3 puertas","H","desc Z","C1 400€",""],
-      ["FICH005","11223","TXT","7 puertas","A","desc A","C2 500€","Solo bajo pedido"],
-      ["FICH006","44556","TXT","7 puertas","A","desc B","C2 600€",""],
-      ["FICH007","99887","TXT","7 puertas","B","desc C","C2 700€","Notas técnicas: versión B actualizada 2024"]
+      ["TAB001","Motor","C123","Bloque completo","enlace1.htm","A1","TXT","1000€","Solo disponible en modelos 2023."],
+      ["TAB002","Puerta","C456","3 puertas","enlace2.htm","B3","TXT","450€","Incluye cerradura reforzada."],
+      ["TAB003","Ventana","C789","Cristal templado","enlace3.htm","C5","HTML","230€",""],
+      ["TAB004","Techo","C012","Techo solar","enlace4.htm","D7","TXT","890€","Entrega en 2 semanas."],
+      ["TAB005","Asiento","C999","Cuero premium","enlace5.htm","E9","TXT","1200€","Disponible en color negro o beige."]
     ];
 
-    const COLS = 7;
+    const COLS = 8;
     const inputs = [...document.querySelectorAll('thead input')];
     const filters = Array(COLS).fill('');
     const tbody = document.getElementById('tbody');
@@ -206,9 +220,13 @@
       return result;
     }
 
-    function toggleCommentRow(tr,txt){
+    function toggleCommentRow(tr,txt,btn){
       const next=tr.nextElementSibling;
-      if(next && next.classList.contains("comment-row")){ next.remove(); return; }
+      if(next && next.classList.contains("comment-row")){
+        next.remove();
+        btn.textContent="+";
+        return;
+      }
       const td=document.createElement("td");
       td.colSpan=COLS;
       td.innerHTML=`<div>💬 ${txt}</div>`;
@@ -216,25 +234,38 @@
       row.className="comment-row";
       row.appendChild(td);
       tr.insertAdjacentElement("afterend",row);
+      btn.textContent="−";
     }
 
     function renderTable(){
       const matched=data.filter(r=>rowMatches(r));
       const matchedCount=matched.length;
       const frag=document.createDocumentFragment();
+
       for(const row of matched){
         const tr=document.createElement("tr");
         const comment=row[COLS]||"";
-        if(comment.trim()!=="") tr.classList.add("has-comment");
-        for(let c=0;c<COLS;c++){
+        const tdPlus=document.createElement("td");
+        if(comment.trim()!==""){
+          const btn=document.createElement("div");
+          btn.textContent="+";
+          btn.className="plus-btn";
+          btn.onclick=()=>toggleCommentRow(tr,comment,btn);
+          tdPlus.appendChild(btn);
+        } else {
+          tdPlus.textContent="";
+        }
+        tr.appendChild(tdPlus);
+
+        for(let c=0;c<COLS-1;c++){
           const td=document.createElement("td");
           td.innerHTML=highlightText(String(row[c]),c);
           tr.appendChild(td);
         }
-        if(comment.trim()!=="")
-          tr.addEventListener("click",()=>toggleCommentRow(tr,comment));
+
         frag.appendChild(tr);
       }
+
       tbody.innerHTML="";
       tbody.appendChild(frag);
       statusEl.textContent=`Coincidencias: ${matchedCount}`;
