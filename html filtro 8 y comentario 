@@ -269,3 +269,87 @@
   </script>
 </body>
 </html>
+
+
+Option Explicit
+Dim fso, carpeta, archivo, fusion, ruta, salida
+Dim lineas, linea, ultimaValor, contenido, texto, inTable
+
+ruta = "."
+salida = ruta & "\fusion_total.html"
+
+Set fso = CreateObject("Scripting.FileSystemObject")
+Set fusion = fso.CreateTextFile(salida, True, True)
+
+fusion.WriteLine "<!DOCTYPE html>"
+fusion.WriteLine "<html lang='es'><head><meta charset='UTF-8'>"
+fusion.WriteLine "<title>Fusión de Tablas</title>"
+fusion.WriteLine "<style>table{border-collapse:collapse;width:100%;font-family:sans-serif;}td,th{border:1px solid #ccc;padding:4px;}</style>"
+fusion.WriteLine "</head><body><h2>Fusión de tablas HTM</h2><table>"
+
+ultimaValor = ""
+
+For Each archivo In fso.GetFolder(ruta).Files
+  If LCase(fso.GetExtensionName(archivo)) = "htm" Then
+    texto = fso.OpenTextFile(archivo, 1).ReadAll
+    lineas = Split(texto, vbCrLf)
+    inTable = False
+
+    Dim fila, celdas
+    fila = ""
+    For Each linea In lineas
+      linea = Trim(linea)
+
+      ' Detectar inicio de fila
+      If InStr(linea, "<tr") > 0 Then
+        fila = ""
+        inTable = True
+      End If
+
+      ' Acumular celdas
+      If inTable And InStr(linea, "<td") > 0 Then
+        fila = fila & linea & vbCrLf
+      End If
+
+      ' Detectar fin de fila
+      If InStr(linea, "</tr>") > 0 And inTable Then
+        ' Procesar la fila completa
+        celdas = Split(fila, "</td>")
+        If UBound(celdas) >= 2 Then
+          Dim terceraCelda
+          terceraCelda = celdas(2)
+
+          ' Ver si el tercer campo está vacío
+          If InStr(terceraCelda, "&nbsp;") > 0 Or Trim(Replace(terceraCelda, vbTab, "")) = "" Then
+            If ultimaValor <> "" Then
+              terceraCelda = Replace(terceraCelda, "&nbsp;", ultimaValor & " LEGACY")
+            End If
+          Else
+            ' Extraer el valor real informado (actualizar última)
+            Dim tmp
+            tmp = Replace(terceraCelda, "<td", "")
+            tmp = Replace(tmp, ">", "")
+            tmp = Trim(Replace(tmp, "</p", ""))
+            If Len(tmp) > 0 Then ultimaValor = tmp
+          End If
+          celdas(2) = terceraCelda
+          ' Reconstruir la fila
+          Dim j, nuevaFila
+          nuevaFila = "<tr>" & vbCrLf
+          For j = 0 To UBound(celdas)
+            If Trim(celdas(j)) <> "" Then nuevaFila = nuevaFila & celdas(j) & "</td>" & vbCrLf
+          Next
+          nuevaFila = nuevaFila & "</tr>" & vbCrLf
+          fusion.WriteLine nuevaFila
+        End If
+        fila = ""
+        inTable = False
+      End If
+    Next
+  End If
+Next
+
+fusion.WriteLine "</table></body></html>"
+fusion.Close
+
+MsgBox "Fusión completada: " & salida, vbInformation, "OK"
