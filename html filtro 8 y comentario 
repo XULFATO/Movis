@@ -2,153 +2,81 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
-  <title>Tabla filtrable con comentarios (+)</title>
+  <title>Tabla filtrable (8 columnas) + comentarios a la derecha</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
-    :root {
-      --bg:#f6f8fa;
-      --ink:#1a1d21;
-      --muted:#666;
-      --line:#dcdfe4;
-      --head:#2c3e50;
+    :root{
+      /* Paleta nueva (verde/oliva + grises cálidos) */
+      --bg:#f7f6f3;
+      --ink:#1b1d17;
+      --muted:#6b6a66;
+      --line:#ddd8cf;
+      --head:#374151;       /* cabecera gris pizarra */
       --headInk:#fff;
-      --active:#0b6efd;
-      --highlight:#eef5ff;
+      --active:#16a34a;     /* acento verde */
+      --control:#0e9f6e;    /* botón comentario */
+      --control-hover:#0b8258;
+      --comment-bg:#ecfdf5; /* fondo comentario */
+      --comment-border:#10b981;
     }
+    body{font-family: "Segoe UI", Roboto, Arial, sans-serif; margin:24px; background:var(--bg); color:var(--ink);}
+    h2{margin:0 0 8px; color:#2b3a2a}
+    .meta{font-size:13px; color:var(--muted); margin:4px 0 16px}
 
-    body {
-      font-family: "Segoe UI", Arial, sans-serif;
-      margin: 24px;
-      background: var(--bg);
-      color: var(--ink);
+    table{width:100%; border-collapse:collapse; background:#fff; border-radius:10px; overflow:hidden;
+          box-shadow:0 2px 10px rgba(0,0,0,.06)}
+    th,td{padding:8px 10px; border-bottom:1px solid var(--line); text-align:left; font-size:14px; vertical-align:top}
+    thead th{background:var(--head); color:var(--headInk); position:sticky; top:46px; z-index:1}
+    thead tr:first-child th{background:#fff; color:var(--ink); position:sticky; top:0; z-index:2}
+    thead input{width:100%; box-sizing:border-box; padding:6px 8px; border:1px solid var(--line); border-radius:6px; outline:none;
+                transition:box-shadow .15s, border-color .15s}
+    thead input:focus{border-color:var(--active); box-shadow:0 0 0 3px rgba(22,163,74,.18)}
+    thead input.active{color:var(--active); font-weight:600}
+    tbody tr:nth-child(even) td{background:#faf9f6}
+    mark{background:none; color:var(--active); font-weight:700}
+
+    /* Columna de control (botón +) en la derecha */
+    th.control, td.control{width:44px; text-align:center}
+    .cbtn{
+      display:inline-grid; place-items:center; width:28px; height:28px;
+      border:1px solid var(--control); color:#fff; background:var(--control);
+      border-radius:6px; font-weight:700; cursor:pointer; user-select:none;
+      transition:background .15s, transform .05s;
     }
+    .cbtn:hover{background:var(--control-hover)}
+    .cbtn:active{transform:translateY(1px)}
+    .cbtn[disabled]{opacity:.35; cursor:default}
 
-    h2 {
-      margin: 0 0 8px;
-      color: #0b3a8a;
+    /* Fila de comentario desplegado */
+    .comment-row td{
+      background:var(--comment-bg);
+      border-left:4px solid var(--comment-border);
+      animation:fadeIn .2s ease;
     }
+    .comment-row .comment-box{padding:10px 12px; color:#13322b; font-size:13px}
+    @keyframes fadeIn{from{opacity:0; transform:translateY(-3px)} to{opacity:1; transform:none}}
 
-    .meta {
-      font-size: 13px;
-      color: var(--muted);
-      margin-bottom: 18px;
+    .actions{margin-bottom:10px}
+    .actions button{
+      padding:6px 10px; border:1px solid var(--active); background:var(--active); color:#fff; border-radius:6px; cursor:pointer; font-size:14px;
     }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      background: #fff;
-      box-shadow: 0 2px 10px rgba(0,0,0,.05);
-      border-radius: 6px;
-      overflow: hidden;
-    }
-
-    th, td {
-      padding: 8px 10px;
-      border-bottom: 1px solid var(--line);
-      text-align: left;
-      font-size: 14px;
-      vertical-align: top;
-    }
-
-    thead th {
-      background: var(--head);
-      color: var(--headInk);
-      position: sticky;
-      top: 44px;
-      z-index: 1;
-    }
-
-    thead tr:first-child th {
-      background: #fff;
-      color: var(--ink);
-      position: sticky;
-      top: 0;
-      z-index: 2;
-    }
-
-    thead input {
-      width: 100%;
-      box-sizing: border-box;
-      padding: 6px 8px;
-      border: 1px solid var(--line);
-      border-radius: 5px;
-      outline: none;
-      transition: box-shadow .15s, border-color .15s;
-    }
-
-    thead input:focus {
-      border-color: var(--active);
-      box-shadow: 0 0 0 3px rgba(11,110,253,.15);
-    }
-
-    thead input.active {
-      color: var(--active);
-      font-weight: 600;
-    }
-
-    tbody tr:nth-child(even) td { background: #fafafa; }
-    mark { background: none; color: var(--active); font-weight: 700; }
-
-    /* símbolo + y - para desplegar */
-    .plus-btn {
-      cursor: pointer;
-      font-weight: bold;
-      color: var(--active);
-      text-align: center;
-      font-size: 18px;
-      width: 24px;
-    }
-    .plus-btn:hover {
-      background: var(--highlight);
-      border-radius: 4px;
-    }
-
-    /* comentario expandido */
-    .comment-row td {
-      background: #f9fbff;
-      border-left: 3px solid var(--active);
-      color: #333;
-      font-size: 13px;
-      animation: fadeIn .25s ease;
-    }
-
-    .comment-row div {
-      padding: 8px 12px;
-    }
-
-    @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(-3px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-
-    .actions { margin-bottom: 10px; }
-    .actions button {
-      padding: 6px 10px;
-      border: 1px solid var(--active);
-      background: var(--active);
-      color: #fff;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size: 14px;
-    }
-
-    .status { font-size: 12px; color: var(--muted); margin-top: 10px; }
+    .status{font-size:12px; color:var(--muted); margin-top:10px}
   </style>
 </head>
 <body>
-  <h2>Tabla filtrable con comentarios desplegables (+)</h2>
+  <h2>Tabla filtrable (8 columnas) con comentarios a la derecha</h2>
   <div class="meta">
-    ➕ Usa <b>+palabra</b> para buscar exacto, <b>-palabra</b> para excluir.<br>
-    🔍 Clic en el símbolo <b>+</b> para ver el comentario del elemento (si lo tiene).
+    ➕ Usa <b>+palabra</b> para exigir coincidencia y <b>-palabra</b> para excluir. <br>
+    🟩 Si una fila tiene comentarios, verás un <b>botón “+” a la derecha</b> para desplegarlos.
   </div>
 
   <div class="actions">
-    <button onclick="clearAllFilters()">🧼 Borrar todos los filtros</button>
+    <button onclick="clearAllFilters()">🧼 Borrar filtros</button>
   </div>
 
   <table>
     <thead>
+      <!-- Fila de filtros: 8 inputs + 1 th vacío para la columna de control -->
       <tr>
         <th><input id="f0" list="dl0" placeholder="Tabla" oninput="handleType(0,this)"><datalist id="dl0"></datalist></th>
         <th><input id="f1" list="dl1" placeholder="Descripción" oninput="handleType(1,this)"><datalist id="dl1"></datalist></th>
@@ -158,7 +86,9 @@
         <th><input id="f5" list="dl5" placeholder="Posición" oninput="handleType(5,this)"><datalist id="dl5"></datalist></th>
         <th><input id="f6" list="dl6" placeholder="Formato" oninput="handleType(6,this)"><datalist id="dl6"></datalist></th>
         <th><input id="f7" list="dl7" placeholder="Euro" oninput="handleType(7,this)"><datalist id="dl7"></datalist></th>
+        <th class="control"></th>
       </tr>
+      <!-- Fila de encabezados: 8 títulos + “Notas” para control -->
       <tr>
         <th>Tabla</th>
         <th>Descripción</th>
@@ -168,6 +98,7 @@
         <th>Posición</th>
         <th>Formato</th>
         <th>Euro</th>
+        <th class="control">Notas</th>
       </tr>
     </thead>
     <tbody id="tbody"></tbody>
@@ -176,16 +107,16 @@
   <div class="status" id="status"></div>
 
   <script>
-    // Datos de ejemplo (columna 9 = comentario)
+    // DATA: 8 columnas de datos + 9ª (índice 8) = comentario
     const data = [
       ["TAB001","Motor","C123","Bloque completo","enlace1.htm","A1","TXT","1000€","Solo disponible en modelos 2023."],
       ["TAB002","Puerta","C456","3 puertas","enlace2.htm","B3","TXT","450€","Incluye cerradura reforzada."],
       ["TAB003","Ventana","C789","Cristal templado","enlace3.htm","C5","HTML","230€",""],
       ["TAB004","Techo","C012","Techo solar","enlace4.htm","D7","TXT","890€","Entrega en 2 semanas."],
-      ["TAB005","Asiento","C999","Cuero premium","enlace5.htm","E9","TXT","1200€","Disponible en color negro o beige."]
+      ["TAB005","Asiento","C999","Cuero premium","enlace5.htm","E9","TXT","1200€","Disponible en negro o beige."]
     ];
 
-    const COLS = 8;
+    const COLS = 8;                          // nº de columnas visibles de datos
     const inputs = [...document.querySelectorAll('thead input')];
     const filters = Array(COLS).fill('');
     const tbody = document.getElementById('tbody');
@@ -220,89 +151,102 @@
       return result;
     }
 
-    function toggleCommentRow(tr,txt,btn){
-      const next=tr.nextElementSibling;
+    function toggleCommentRow(tr, txt, btn){
+      const next = tr.nextElementSibling;
       if(next && next.classList.contains("comment-row")){
         next.remove();
-        btn.textContent="+";
+        btn.textContent = "+";
         return;
       }
-      const td=document.createElement("td");
-      td.colSpan=COLS;
-      td.innerHTML=`<div>💬 ${txt}</div>`;
-      const row=document.createElement("tr");
-      row.className="comment-row";
+      const td = document.createElement("td");
+      td.colSpan = COLS + 1; // 8 datos + 1 columna de control
+      td.innerHTML = `<div class="comment-box">💬 ${txt}</div>`;
+      const row = document.createElement("tr");
+      row.className = "comment-row";
       row.appendChild(td);
-      tr.insertAdjacentElement("afterend",row);
-      btn.textContent="−";
+      tr.insertAdjacentElement("afterend", row);
+      btn.textContent = "−";
     }
 
     function renderTable(){
-      const matched=data.filter(r=>rowMatches(r));
-      const matchedCount=matched.length;
-      const frag=document.createDocumentFragment();
+      const matched = data.filter(r=>rowMatches(r));
+      const frag = document.createDocumentFragment();
 
-      for(const row of matched){
-        const tr=document.createElement("tr");
-        const comment=row[COLS]||"";
-        const tdPlus=document.createElement("td");
-        if(comment.trim()!==""){
-          const btn=document.createElement("div");
-          btn.textContent="+";
-          btn.className="plus-btn";
-          btn.onclick=()=>toggleCommentRow(tr,comment,btn);
-          tdPlus.appendChild(btn);
-        } else {
-          tdPlus.textContent="";
-        }
-        tr.appendChild(tdPlus);
+      matched.forEach(row=>{
+        const tr = document.createElement("tr");
 
-        for(let c=0;c<COLS-1;c++){
-          const td=document.createElement("td");
-          td.innerHTML=highlightText(String(row[c]),c);
+        // 8 celdas de datos
+        for(let c=0;c<COLS;c++){
+          const td = document.createElement("td");
+          td.innerHTML = highlightText(String(row[c]), c);
           tr.appendChild(td);
         }
 
-        frag.appendChild(tr);
-      }
+        // Columna de control (derecha)
+        const comment = row[COLS] || "";
+        const tdCtrl = document.createElement("td");
+        tdCtrl.className = "control";
 
-      tbody.innerHTML="";
+        if(comment.trim()!==""){
+          const btn = document.createElement("button");
+          btn.type="button";
+          btn.className="cbtn";
+          btn.textContent="+";
+          btn.title="Ver comentario";
+          btn.setAttribute("aria-label","Ver comentario");
+          btn.onclick = (ev)=>{ ev.stopPropagation(); toggleCommentRow(tr, comment, btn); };
+          btn.onkeydown = (ev)=>{ if(ev.key==="Enter"||ev.key===" "){ ev.preventDefault(); btn.click(); } };
+          tdCtrl.appendChild(btn);
+        }else{
+          const b = document.createElement("button");
+          b.className="cbtn";
+          b.textContent="+";
+          b.disabled = true;
+          b.title="Sin comentario";
+          tdCtrl.appendChild(b);
+        }
+        tr.appendChild(tdCtrl);
+
+        frag.appendChild(tr);
+      });
+
+      tbody.innerHTML = "";
       tbody.appendChild(frag);
-      statusEl.textContent=`Coincidencias: ${matchedCount}`;
+      statusEl.textContent = `Coincidencias: ${matched.length}`;
     }
 
-    function updateDatalist(col,typed){
-      const dl=document.getElementById("dl"+col);
-      dl.innerHTML="";
-      const counts=new Map();
+    function updateDatalist(col, typed){
+      const dl = document.getElementById("dl"+col);
+      dl.innerHTML = "";
+      const counts = new Map();
       for(const row of data){
-        if(rowMatches(row,col)){
-          const val=String(row[col]);
-          counts.set(val,(counts.get(val)||0)+1);
+        if(rowMatches(row, col)){
+          const val = String(row[col]);
+          counts.set(val, (counts.get(val)||0) + 1);
         }
       }
-      const options=Array.from(counts.entries()).sort((a,b)=>a[0].localeCompare(b[0]));
-      const t=(typed||"").toLowerCase();
+      const options = Array.from(counts.entries()).sort((a,b)=>a[0].localeCompare(b[0]));
+      const t = (typed||"").toLowerCase();
       let count=0;
-      for(const [val,n] of options){
-        if(!typed||val.toLowerCase().includes(t)){
-          const opt=document.createElement("option");
-          opt.value=val; opt.label=`${val} (${n})`;
+      for(const [val, n] of options){
+        if(!typed || val.toLowerCase().includes(t)){
+          const opt = document.createElement("option");
+          opt.value = val; opt.label = `${val} (${n})`;
           dl.appendChild(opt);
-          if(++count>=MAX_SUGGESTIONS) break;
+          if(++count >= MAX_SUGGESTIONS) break;
         }
       }
     }
 
     function updateAllDatalists(except=-1){
-      for(let i=0;i<COLS;i++) if(i!==except) updateDatalist(i,inputs[i].value);
+      for(let i=0;i<COLS;i++) if(i!==except) updateDatalist(i, inputs[i].value);
     }
 
-    function handleType(col,el){
+    function handleType(col, el){
       const val=(el.value||"").trim();
-      filters[col]=val.toLowerCase();
+      filters[col] = val.toLowerCase();
       if(val) el.classList.add("active"); else el.classList.remove("active");
-      updateDatalist(col,val); updateAllDatalists(col); renderTable();
+      updateDatalist(col, val); updateAllDatalists(col); renderTable();
     }
 
     function clearAllFilters(){
@@ -313,7 +257,15 @@
       renderTable(); updateAllDatalists();
     }
 
+    // Inicial
     renderTable(); updateAllDatalists();
+
+    // Hack visual para abrir datalist al enfocar
+    inputs.forEach(inp=>{
+      inp.addEventListener('focus', ()=>{
+        if(inp.value===''){ inp.setAttribute('placeholder',' '); setTimeout(()=>inp.setAttribute('placeholder',''),0); }
+      });
+    });
   </script>
 </body>
 </html>
