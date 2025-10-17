@@ -2,53 +2,135 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
-  <title>Tabla filtrable 7 columnas + comentarios</title>
+  <title>Tabla filtrable + Comentarios destacados</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
     :root {
-      --bg:#f5f5f5; --ink:#222; --muted:#666; --line:#ddd; --head:#333; --headInk:#fff;
+      --bg:#eef2f5;
+      --ink:#1c1e21;
+      --muted:#666;
+      --line:#d0d5db;
+      --head:#0b6efd;
+      --headInk:#fff;
       --active:#0b6efd;
+      --comment-bg:#e9f3ff;
+      --comment-border:#2984ff;
     }
-    body { font-family: system-ui, Arial, sans-serif; margin: 20px; color: var(--ink); background: var(--bg); }
-    h2 { margin: 0 0 8px }
-    .meta { font-size: 12px; color: var(--muted); margin: 6px 0 14px; }
-    table { width: 100%; border-collapse: collapse; background: #fff; box-shadow: 0 2px 10px rgba(0,0,0,.06); }
-    th, td { padding: 8px 10px; border: 1px solid var(--line); text-align: left; vertical-align: top; }
-    thead th { background: var(--head); color: var(--headInk); position: sticky; top: 42px; z-index: 1; }
-    thead tr:first-child th { position: sticky; top: 0; z-index: 2; background: #fff; color: var(--ink); }
+    body {
+      font-family: "Segoe UI", Roboto, sans-serif;
+      margin: 24px;
+      color: var(--ink);
+      background: var(--bg);
+    }
+    h2 {
+      font-size: 22px;
+      margin-bottom: 4px;
+      color: #0a2a5e;
+    }
+    .meta {
+      font-size: 13px;
+      color: var(--muted);
+      margin: 6px 0 18px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #fff;
+      border-radius: 10px;
+      overflow: hidden;
+      box-shadow: 0 3px 12px rgba(0,0,0,.1);
+    }
+    th, td {
+      padding: 9px 10px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+      font-size: 14px;
+    }
+    thead th {
+      background: var(--head);
+      color: var(--headInk);
+      position: sticky;
+      top: 44px;
+      z-index: 1;
+    }
+    thead tr:first-child th {
+      background: #fff;
+      color: var(--ink);
+      position: sticky;
+      top: 0;
+      z-index: 2;
+    }
     thead input {
-      width: 100%; box-sizing: border-box; padding: 6px 8px;
-      border: 1px solid var(--line); border-radius: 6px; outline: none;
-      transition: box-shadow .15s, border-color .15s, color .15s, font-weight .15s;
+      width: 100%;
+      box-sizing: border-box;
+      padding: 6px 8px;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      outline: none;
+      transition: box-shadow .15s, border-color .15s;
     }
-    thead input:focus { border-color: var(--active); box-shadow: 0 0 0 3px rgba(11,110,253,.15); }
-    thead input.active { color: var(--active); font-weight: 700; }
-    tbody tr:nth-child(even) td { background: #fafafa; }
+    thead input:focus {
+      border-color: var(--active);
+      box-shadow: 0 0 0 3px rgba(11,110,253,.15);
+    }
+    thead input.active {
+      color: var(--active);
+      font-weight: 600;
+    }
+    tbody tr:nth-child(even) td { background: #fafbfc; }
     mark { background: none; color: var(--active); font-weight: 700; }
-    .status { font-size: 12px; color: var(--muted); margin-top: 10px; }
-    .actions { margin-bottom: 10px; }
+
+    /* filas con comentario */
+    tbody tr.has-comment {
+      background: var(--comment-bg);
+    }
+    tbody tr.has-comment td:first-child::before {
+      content: "📘";
+      font-size: 14px;
+      margin-right: 6px;
+    }
+
+    .comment-row td {
+      background: #fdfdfd;
+      border-left: 4px solid var(--comment-border);
+      font-size: 13px;
+      color: #334;
+      animation: fadeIn .25s ease;
+    }
+    .comment-row div {
+      padding: 8px 10px;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(-3px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .actions { margin-bottom: 12px; }
     .actions button {
-      padding: 6px 10px; border: 1px solid var(--active); background: var(--active);
-      color: #fff; border-radius: 6px; cursor: pointer; font-size: 14px;
+      padding: 7px 12px;
+      border: 1px solid var(--active);
+      background: var(--active);
+      color: #fff;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
       transition: background .2s;
     }
     .actions button:hover { background: #094db1; }
-    .comment-row td {
-      background: #f9f9f9;
-      animation: fadeIn .25s ease;
-    }
-    @keyframes fadeIn {
-      from {opacity: 0;}
-      to {opacity: 1;}
+    .status {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 10px;
     }
   </style>
 </head>
 <body>
-  <h2>Tabla filtrable encadenada 7 columnas + comentarios</h2>
+  <h2>Tabla filtrable con comentarios destacados</h2>
   <div class="meta">
-    ➕ Usa <b>+palabra</b> para forzar coincidencia, <b>-palabra</b> para excluir.<br>
-    📊 Los desplegables muestran <code>valor (n)</code> con el número de apariciones según los filtros activos.<br>
-    💬 Haz clic en una fila para ver su comentario (si tiene).
+    ➕ Usa <b>+palabra</b> para buscar exacto, <b>-palabra</b> para excluir.<br>
+    💬 Las filas con icono <b>📘</b> tienen comentario. Clic para desplegar.
   </div>
 
   <div class="actions">
@@ -77,7 +159,6 @@
   <div class="status" id="status"></div>
 
   <script>
-    // 🔽 Datos de ejemplo (columna 8 = comentario)
     const data = [
       ["FICH001","12345","TXT","3 puertas","F","desc X","C1 100€","Disponible solo en versión europea"],
       ["FICH002","67890","TXT","3 puertas","F","desc X","C1 200€",""],
@@ -89,148 +170,115 @@
     ];
 
     const COLS = 7;
-    const MAX_SUGGESTIONS = 500;
-    const DEFAULT_RENDER_LIMIT = 500;
     const inputs = [...document.querySelectorAll('thead input')];
     const filters = Array(COLS).fill('');
     const tbody = document.getElementById('tbody');
     const statusEl = document.getElementById('status');
+    const MAX_SUGGESTIONS = 500;
+    const DEFAULT_RENDER_LIMIT = 500;
 
-    function rowMatches(row, ignoreCol = -1){
-      for (let i=0;i<COLS;i++){
-        if (i===ignoreCol) continue;
-        const f = filters[i];
-        if (!f) continue;
-        const parts = f.split(/\s+/).filter(Boolean);
-        const cell = String(row[i]).toLowerCase();
-        for (const p of parts) {
-          if (p.startsWith('+')) { if (!cell.includes(p.slice(1))) return false; }
-          else if (p.startsWith('-')) { if (cell.includes(p.slice(1))) return false; }
-          else { if (!cell.includes(p)) return false; }
+    function rowMatches(row, ignoreCol=-1){
+      for(let i=0;i<COLS;i++){
+        if(i===ignoreCol) continue;
+        const f=filters[i]; if(!f) continue;
+        const parts=f.split(/\s+/).filter(Boolean);
+        const cell=String(row[i]).toLowerCase();
+        for(const p of parts){
+          if(p.startsWith('+')){ if(!cell.includes(p.slice(1))) return false; }
+          else if(p.startsWith('-')){ if(cell.includes(p.slice(1))) return false; }
+          else if(!cell.includes(p)) return false;
         }
       }
       return true;
     }
 
-    function highlightText(text, colIndex){
-      const f = filters[colIndex];
-      if (!f) return text;
-      let result = text;
-      const parts = f.split(/\s+/).filter(Boolean).filter(p => !p.startsWith('-'));
-      for (const p of parts) {
-        const term = p.startsWith('+') ? p.slice(1) : p;
-        if (!term) continue;
-        const regex = new RegExp(`(${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
-        result = result.replace(regex, '<mark>$1</mark>');
+    function highlightText(text,col){
+      const f=filters[col]; if(!f) return text;
+      let result=text;
+      const parts=f.split(/\s+/).filter(Boolean).filter(p=>!p.startsWith('-'));
+      for(const p of parts){
+        const term=p.startsWith('+')?p.slice(1):p;
+        if(!term) continue;
+        const re=new RegExp(`(${term.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")})`,"gi");
+        result=result.replace(re,"<mark>$1</mark>");
       }
       return result;
     }
 
-    function toggleCommentRow(tr, commentText) {
-      const next = tr.nextElementSibling;
-      if (next && next.classList.contains('comment-row')) {
-        next.remove();
-        return;
-      }
-      const td = document.createElement('td');
-      td.colSpan = COLS;
-      td.innerHTML = `<div style="padding:8px;color:#444;">
-                        💬 ${commentText}
-                      </div>`;
-      const commentTr = document.createElement('tr');
-      commentTr.className = 'comment-row';
-      commentTr.appendChild(td);
-      tr.insertAdjacentElement('afterend', commentTr);
+    function toggleCommentRow(tr,txt){
+      const next=tr.nextElementSibling;
+      if(next && next.classList.contains("comment-row")){ next.remove(); return; }
+      const td=document.createElement("td");
+      td.colSpan=COLS;
+      td.innerHTML=`<div>💬 ${txt}</div>`;
+      const row=document.createElement("tr");
+      row.className="comment-row";
+      row.appendChild(td);
+      tr.insertAdjacentElement("afterend",row);
     }
 
     function renderTable(){
-      const matchedRows = [];
-      for (const row of data) if (rowMatches(row)) matchedRows.push(row);
-      const matched = matchedRows.length;
-      const activeFilters = filters.some(f => f.trim() !== '');
-      const renderLimit = (activeFilters && matched > DEFAULT_RENDER_LIMIT) ? matched : DEFAULT_RENDER_LIMIT;
-
-      const frag = document.createDocumentFragment();
-      for (const row of matchedRows.slice(0, renderLimit)) {
-        const tr = document.createElement('tr');
-        for (let c=0;c<COLS;c++){
-          const td = document.createElement('td');
-          td.innerHTML = highlightText(String(row[c]), c);
+      const matched=data.filter(r=>rowMatches(r));
+      const matchedCount=matched.length;
+      const frag=document.createDocumentFragment();
+      for(const row of matched.slice(0,DEFAULT_RENDER_LIMIT)){
+        const tr=document.createElement("tr");
+        const comment=row[COLS]||"";
+        if(comment.trim()!==""){ tr.classList.add("has-comment"); tr.title="Tiene comentario"; }
+        for(let c=0;c<COLS;c++){
+          const td=document.createElement("td");
+          td.innerHTML=highlightText(String(row[c]),c);
           tr.appendChild(td);
         }
-        const comment = row[COLS] || "";
-        if (comment.trim() !== "") {
-          tr.style.cursor = 'pointer';
-          tr.title = "Ver comentario";
-          tr.addEventListener('click', () => toggleCommentRow(tr, comment));
-        }
+        if(comment.trim()!=="")
+          tr.addEventListener("click",()=>toggleCommentRow(tr,comment));
         frag.appendChild(tr);
       }
-
-      tbody.innerHTML = '';
+      tbody.innerHTML="";
       tbody.appendChild(frag);
-      statusEl.textContent = `Coincidencias: ${matched.toLocaleString()} — Mostrando: ${Math.min(matched, renderLimit).toLocaleString()}${matched>renderLimit?' (limitado por rendimiento)':''}`;
+      statusEl.textContent=`Coincidencias: ${matchedCount}`;
     }
 
-    function updateDatalist(colIndex, typed){
-      const dl = document.getElementById('dl'+colIndex);
-      dl.innerHTML = '';
-      const counts = new Map();
-      for (const row of data){
-        if (rowMatches(row, colIndex)){
-          const val = String(row[colIndex]);
-          counts.set(val, (counts.get(val) || 0) + 1);
+    function updateDatalist(col,typed){
+      const dl=document.getElementById("dl"+col);
+      dl.innerHTML="";
+      const counts=new Map();
+      for(const row of data){
+        if(rowMatches(row,col)){
+          const val=String(row[col]);
+          counts.set(val,(counts.get(val)||0)+1);
         }
       }
-      const options = Array.from(counts.entries()).sort((a,b)=>a[0].localeCompare(b[0]));
-      const t = (typed||'').toLowerCase();
-      let count = 0;
-      for (const [val, n] of options){
-        if (!typed || val.toLowerCase().includes(t)){
-          const opt = document.createElement('option');
-          opt.value = val;
-          opt.label = `${val} (${n})`;
+      const options=Array.from(counts.entries()).sort((a,b)=>a[0].localeCompare(b[0]));
+      const t=(typed||"").toLowerCase();
+      let count=0;
+      for(const [val,n] of options){
+        if(!typed||val.toLowerCase().includes(t)){
+          const opt=document.createElement("option");
+          opt.value=val; opt.label=`${val} (${n})`;
           dl.appendChild(opt);
-          if (++count >= MAX_SUGGESTIONS) break;
+          if(++count>=MAX_SUGGESTIONS) break;
         }
       }
     }
 
-    function updateAllDatalists(except = -1){
-      for (let i=0;i<COLS;i++) if (i!==except) updateDatalist(i, inputs[i].value);
+    function updateAllDatalists(except=-1){
+      for(let i=0;i<COLS;i++) if(i!==except) updateDatalist(i,inputs[i].value);
     }
 
-    function handleType(colIndex, el){
-      const val = (el.value || '').trim();
-      filters[colIndex] = val.toLowerCase();
-      if (val) el.classList.add('active'); else el.classList.remove('active');
-      updateDatalist(colIndex, val);
-      updateAllDatalists(colIndex);
-      renderTable();
+    function handleType(col,el){
+      const val=(el.value||"").trim();
+      filters[col]=val.toLowerCase();
+      if(val) el.classList.add("active"); else el.classList.remove("active");
+      updateDatalist(col,val); updateAllDatalists(col); renderTable();
     }
 
     function clearAllFilters(){
-      for (let i=0;i<COLS;i++){
-        filters[i]=''; inputs[i].value=''; inputs[i].classList.remove('active');
-        document.getElementById('dl'+i).innerHTML='';
-      }
-      renderTable();
-      updateAllDatalists();
+      for(let i=0;i<COLS;i++){ filters[i]=""; inputs[i].value=""; inputs[i].classList.remove("active"); document.getElementById("dl"+i).innerHTML=""; }
+      renderTable(); updateAllDatalists();
     }
 
-    // Inicial
-    renderTable();
-    updateAllDatalists();
-
-    // Hack para mostrar datalist al enfocar
-    inputs.forEach(inp => {
-      inp.addEventListener('focus', () => {
-        if (inp.value === '') {
-          inp.setAttribute('placeholder', ' ');
-          setTimeout(()=>inp.setAttribute('placeholder',''),0);
-        }
-      });
-    });
+    renderTable(); updateAllDatalists();
   </script>
 </body>
 </html>
