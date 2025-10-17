@@ -2,19 +2,20 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
-  <title>Tabla filtrable + Comentarios destacados</title>
+  <title>Tabla filtrable + Comentarios subrayados</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
     :root {
-      --bg:#eef2f5;
-      --ink:#1c1e21;
+      --bg:#f4f7fa;
+      --ink:#1d1f21;
       --muted:#666;
-      --line:#d0d5db;
-      --head:#0b6efd;
+      --line:#d5d9de;
+      --head:#0057d9;
       --headInk:#fff;
-      --active:#0b6efd;
-      --comment-bg:#e9f3ff;
-      --comment-border:#2984ff;
+      --active:#0057d9;
+      --comment-mark:#0070f3;
+      --comment-border:#0070f3;
+      --comment-bg:#f7faff;
     }
     body {
       font-family: "Segoe UI", Roboto, sans-serif;
@@ -24,8 +25,8 @@
     }
     h2 {
       font-size: 22px;
-      margin-bottom: 4px;
-      color: #0a2a5e;
+      margin-bottom: 5px;
+      color: #09316c;
     }
     .meta {
       font-size: 13px;
@@ -38,7 +39,7 @@
       background: #fff;
       border-radius: 10px;
       overflow: hidden;
-      box-shadow: 0 3px 12px rgba(0,0,0,.1);
+      box-shadow: 0 2px 8px rgba(0,0,0,.08);
     }
     th, td {
       padding: 9px 10px;
@@ -81,19 +82,21 @@
     tbody tr:nth-child(even) td { background: #fafbfc; }
     mark { background: none; color: var(--active); font-weight: 700; }
 
-    /* filas con comentario */
-    tbody tr.has-comment {
-      background: var(--comment-bg);
+    /* ——— filas con comentario ——— */
+    tbody tr.has-comment td {
+      border-left: 3px solid var(--comment-mark);
+      background: #ffffff;
     }
-    tbody tr.has-comment td:first-child::before {
-      content: "📘";
-      font-size: 14px;
-      margin-right: 6px;
+    tbody tr.has-comment td:nth-child(4) {
+      text-decoration: underline;
+      text-decoration-color: var(--comment-mark);
+      text-underline-offset: 3px;
     }
 
+    /* ——— comentario expandido ——— */
     .comment-row td {
-      background: #fdfdfd;
-      border-left: 4px solid var(--comment-border);
+      background: var(--comment-bg);
+      border-left: 3px solid var(--comment-border);
       font-size: 13px;
       color: #334;
       animation: fadeIn .25s ease;
@@ -101,7 +104,6 @@
     .comment-row div {
       padding: 8px 10px;
     }
-
     @keyframes fadeIn {
       from { opacity: 0; transform: translateY(-3px); }
       to { opacity: 1; transform: translateY(0); }
@@ -127,10 +129,10 @@
   </style>
 </head>
 <body>
-  <h2>Tabla filtrable con comentarios destacados</h2>
+  <h2>Tabla filtrable con comentarios subrayados</h2>
   <div class="meta">
     ➕ Usa <b>+palabra</b> para buscar exacto, <b>-palabra</b> para excluir.<br>
-    💬 Las filas con icono <b>📘</b> tienen comentario. Clic para desplegar.
+    💬 Las filas con descripción subrayada tienen comentario. Haz clic para ver el detalle.
   </div>
 
   <div class="actions">
@@ -175,7 +177,6 @@
     const tbody = document.getElementById('tbody');
     const statusEl = document.getElementById('status');
     const MAX_SUGGESTIONS = 500;
-    const DEFAULT_RENDER_LIMIT = 500;
 
     function rowMatches(row, ignoreCol=-1){
       for(let i=0;i<COLS;i++){
@@ -221,10 +222,10 @@
       const matched=data.filter(r=>rowMatches(r));
       const matchedCount=matched.length;
       const frag=document.createDocumentFragment();
-      for(const row of matched.slice(0,DEFAULT_RENDER_LIMIT)){
+      for(const row of matched){
         const tr=document.createElement("tr");
         const comment=row[COLS]||"";
-        if(comment.trim()!==""){ tr.classList.add("has-comment"); tr.title="Tiene comentario"; }
+        if(comment.trim()!=="") tr.classList.add("has-comment");
         for(let c=0;c<COLS;c++){
           const td=document.createElement("td");
           td.innerHTML=highlightText(String(row[c]),c);
@@ -274,7 +275,10 @@
     }
 
     function clearAllFilters(){
-      for(let i=0;i<COLS;i++){ filters[i]=""; inputs[i].value=""; inputs[i].classList.remove("active"); document.getElementById("dl"+i).innerHTML=""; }
+      for(let i=0;i<COLS;i++){
+        filters[i]=""; inputs[i].value=""; inputs[i].classList.remove("active");
+        document.getElementById("dl"+i).innerHTML="";
+      }
       renderTable(); updateAllDatalists();
     }
 
