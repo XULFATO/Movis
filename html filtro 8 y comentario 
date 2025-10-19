@@ -1,33 +1,60 @@
 Option Explicit
 
-Dim fso, carpeta, archivo, texto, inicio, comentario, salida
-Dim ruta, rutaSalida, total
-
-ruta = "."
-rutaSalida = "comentarios_total.txt"
+Dim fso, folder, file, txt, p, comment, items(), n
+Dim jsonText
 
 Set fso = CreateObject("Scripting.FileSystemObject")
-Set carpeta = fso.GetFolder(ruta)
-Set salida = fso.CreateTextFile(rutaSalida, True, True)
+Set folder = fso.GetFolder(".")
 
-total = 0
+ReDim items(0) : n = 0
 
-For Each archivo In carpeta.Files
-    If LCase(fso.GetExtensionName(archivo.Name)) = "htm" Then
-        texto = fso.OpenTextFile(archivo.Path, 1, False).ReadAll
+For Each file In folder.Files
+  If LCase(fso.GetExtensionName(file.Name)) = "htm" Then
+    txt = fso.OpenTextFile(file.Path, 1, False).ReadAll
 
-        inicio = InStr(1, texto, "Comentarios a las tablas del VR", vbTextCompare)
-        If inicio > 0 Then
-            comentario = Mid(texto, inicio)
-            salida.WriteLine String(80, "-")
-            salida.WriteLine archivo.Name
-            salida.WriteLine comentario
-            salida.WriteLine vbCrLf
-            total = total + 1
-        End If
+    ' Busca la marca de inicio (insensible a may/min)
+    p = InStr(1, txt, "Comentarios a las tablas del VR", vbTextCompare)
+    If p > 0 Then
+      comment = Mid(txt, p)
+      AddItem items, n, "{""file"":""" & JsonEscape(file.Name) & """,""comments"":""" & JsonEscape(comment) & """}"
     End If
+  End If
 Next
 
-salida.Close
+' Ensambla JSON
+If n = 0 Then
+  jsonText = "[]"
+Else
+  jsonText = "[" & vbCrLf & Join(items, "," & vbCrLf) & vbCrLf & "]"
+End If
 
-MsgBox "Se han extraído " & total & " comentarios en " & rutaSalida
+' Escribe en UTF-8 usando ADODB.Stream
+Dim stm : Set stm = CreateObject("ADODB.Stream")
+stm.Type = 2 ' texto
+stm.Charset = "utf-8"
+stm.Open
+stm.WriteText jsonText
+stm.SaveToFile "comentarios.json", 2 ' 2 = overwrite
+stm.Close
+
+MsgBox "Generado comentarios.json con " & n & " entradas."
+
+'------------------ Helpers ------------------
+Function JsonEscape(s)
+  If IsNull(s) Then s = ""
+  s = Replace(s, "\", "\\")
+  s = Replace(s, """", "\""")
+  s = Replace(s, vbCrLf, "\n")
+  s = Replace(s, vbCr, "\n")
+  s = Replace(s, vbLf, "\n")
+  s = Replace(s, vbTab, "\t")
+  JsonEscape = s
+End Function
+
+Sub AddItem(ByRef arr, ByRef count, ByVal value)
+  If count = UBound(arr) Then
+    ReDim Preserve arr(UBound(arr) + 50)
+  End If
+  arr(count) = value
+  count = count + 1
+End Sub
