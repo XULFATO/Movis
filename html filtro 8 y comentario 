@@ -1,10 +1,14 @@
 Sub ExtraerComentariosJson()
-    Dim fso, folder, file, txt, regex, match, p, comment
-    Dim items, jsonText, salida, firstItem
+    Dim fso As Object, folder As Object, file As Object
+    Dim txt As String, regex As Object, match As Object
+    Dim p As Long, comment As String
+    Dim jsonText As String, firstItem As Boolean
+    
+    ' Carpeta donde están los .htm
+    Const rutaCarpeta As String = "C:\Users\TuUsuario\CarpetaHTML" ' ⚠️ cambia esto
 
     Set fso = CreateObject("Scripting.FileSystemObject")
-    Set folder = fso.GetFolder(".")
-
+    Set folder = fso.GetFolder(rutaCarpeta)
     Set regex = CreateObject("VBScript.RegExp")
     regex.IgnoreCase = True
     regex.Global = False
@@ -16,25 +20,17 @@ Sub ExtraerComentariosJson()
     For Each file In folder.Files
         If LCase(fso.GetExtensionName(file.Name)) = "htm" Then
             txt = fso.OpenTextFile(file.Path, 1, False).ReadAll
-
-            ' Normalización para evitar que las etiquetas rompan el texto
             txt = Replace(txt, "<", " <")
             txt = Replace(txt, ">", "> ")
-
+            
             If regex.Test(txt) Then
                 Set match = regex.Execute(txt)(0)
                 p = match.FirstIndex + 1
                 comment = Mid(txt, p)
-
-                ' Escapar comillas y saltos
-                comment = JsonEscape(comment)
-                Dim jsonItem
-                jsonItem = "{""file"":""" & JsonEscape(file.Name) & """,""comments"":""" & comment & """}"
-
-                If Not firstItem Then
-                    jsonText = jsonText & "," & vbCrLf
-                End If
-                jsonText = jsonText & jsonItem
+                
+                If Not firstItem Then jsonText = jsonText & "," & vbCrLf
+                jsonText = jsonText & _
+                    "{""file"":""" & JsonEscape(file.Name) & """,""comments"":""" & JsonEscape(comment) & """}"
                 firstItem = False
             End If
         End If
@@ -42,16 +38,18 @@ Sub ExtraerComentariosJson()
 
     jsonText = jsonText & "]"
 
-    ' Guardar con FSO clásico (sin ADO)
-    Set salida = fso.CreateTextFile("comentarios.json", True)
-    salida.Write jsonText
-    salida.Close
+    ' Escribir el JSON en la celda A1
+    With ThisWorkbook.Sheets(1)
+        .Cells.Clear
+        .Range("A1").Value = jsonText
+        .Columns("A").EntireColumn.AutoFit
+    End With
 
-    MsgBox "Listo. Se generó comentarios.json en esta carpeta.", vbInformation
+    MsgBox "JSON generado en la celda A1", vbInformation
 End Sub
 
-'------------------ Helpers ------------------
-Function JsonEscape(s)
+
+Private Function JsonEscape(s As String) As String
     If IsNull(s) Then s = ""
     s = Replace(s, "\", "\\")
     s = Replace(s, """", "\""")
@@ -61,6 +59,3 @@ Function JsonEscape(s)
     s = Replace(s, vbTab, "\t")
     JsonEscape = s
 End Function
-
-' Ejecutar
-Call ExtraerComentariosJson
