@@ -1,60 +1,71 @@
-Option Explicit
+Sub ExtraerComentariosJson()
+    Dim fso, folder, file, txt, regex, match, p, comment
+    Dim items(), n, jsonText, stm
 
-Dim fso, folder, file, txt, p, comment, items(), n
-Dim jsonText
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    Set folder = fso.GetFolder(".")
 
-Set fso = CreateObject("Scripting.FileSystemObject")
-Set folder = fso.GetFolder(".")
+    Set regex = New RegExp
+    regex.IgnoreCase = True
+    regex.Global = False
+    regex.Pattern = "comentarios\s*a\s*las\s*tablas\s*del\s*vr"
 
-ReDim items(0) : n = 0
+    ReDim items(0)
+    n = 0
 
-For Each file In folder.Files
-  If LCase(fso.GetExtensionName(file.Name)) = "htm" Then
-    txt = fso.OpenTextFile(file.Path, 1, False).ReadAll
+    For Each file In folder.Files
+        If LCase(fso.GetExtensionName(file.Name)) = "htm" Then
+            txt = fso.OpenTextFile(file.Path, 1, False).ReadAll
 
-    ' Busca la marca de inicio (insensible a may/min)
-    p = InStr(1, txt, "Comentarios a las tablas del VR", vbTextCompare)
-    If p > 0 Then
-      comment = Mid(txt, p)
-      AddItem items, n, "{""file"":""" & JsonEscape(file.Name) & """,""comments"":""" & JsonEscape(comment) & """}"
+            ' Pequeña normalización para evitar que las etiquetas rompan el texto
+            txt = Replace(txt, "<", " <")
+            txt = Replace(txt, ">", "> ")
+
+            If regex.Test(txt) Then
+                Set match = regex.Execute(txt)(0)
+                p = match.FirstIndex + 1
+                comment = Mid(txt, p)
+                AddItem items, n, "{""file"":""" & JsonEscape(file.Name) & """,""comments"":""" & JsonEscape(comment) & """}"
+            End If
+        End If
+    Next
+
+    ' Generar JSON
+    If n = 0 Then
+        jsonText = "[]"
+    Else
+        jsonText = "[" & vbCrLf & Join(items, "," & vbCrLf) & vbCrLf & "]"
     End If
-  End If
-Next
 
-' Ensambla JSON
-If n = 0 Then
-  jsonText = "[]"
-Else
-  jsonText = "[" & vbCrLf & Join(items, "," & vbCrLf) & vbCrLf & "]"
-End If
+    ' Guardar como UTF-8
+    Set stm = CreateObject("ADODB.Stream")
+    stm.Type = 2
+    stm.Charset = "utf-8"
+    stm.Open
+    stm.WriteText jsonText
+    stm.SaveToFile "comentarios.json", 2
+    stm.Close
 
-' Escribe en UTF-8 usando ADODB.Stream
-Dim stm : Set stm = CreateObject("ADODB.Stream")
-stm.Type = 2 ' texto
-stm.Charset = "utf-8"
-stm.Open
-stm.WriteText jsonText
-stm.SaveToFile "comentarios.json", 2 ' 2 = overwrite
-stm.Close
-
-MsgBox "Generado comentarios.json con " & n & " entradas."
+    MsgBox "Completado. Se han encontrado " & n & " comentarios.", vbInformation
+End Sub
 
 '------------------ Helpers ------------------
+
 Function JsonEscape(s)
-  If IsNull(s) Then s = ""
-  s = Replace(s, "\", "\\")
-  s = Replace(s, """", "\""")
-  s = Replace(s, vbCrLf, "\n")
-  s = Replace(s, vbCr, "\n")
-  s = Replace(s, vbLf, "\n")
-  s = Replace(s, vbTab, "\t")
-  JsonEscape = s
+    If IsNull(s) Then s = ""
+    s = Replace(s, "\", "\\")
+    s = Replace(s, """", "\""")
+    s = Replace(s, vbCrLf, "\n")
+    s = Replace(s, vbCr, "\n")
+    s = Replace(s, vbLf, "\n")
+    s = Replace(s, vbTab, "\t")
+    JsonEscape = s
 End Function
 
 Sub AddItem(ByRef arr, ByRef count, ByVal value)
-  If count = UBound(arr) Then
-    ReDim Preserve arr(UBound(arr) + 50)
-  End If
-  arr(count) = value
-  count = count + 1
+    If count = UBound(arr) Then
+        ReDim Preserve arr(UBound(arr) + 50)
+    End If
+    arr(count) = value
+    count = count + 1
 End Sub
