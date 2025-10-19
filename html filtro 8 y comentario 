@@ -1,23 +1,23 @@
 Sub ExtraerComentariosJson()
     Dim fso, folder, file, txt, regex, match, p, comment
-    Dim items(), n, jsonText, stm
+    Dim items, jsonText, salida, firstItem
 
     Set fso = CreateObject("Scripting.FileSystemObject")
     Set folder = fso.GetFolder(".")
 
-    Set regex = New RegExp
+    Set regex = CreateObject("VBScript.RegExp")
     regex.IgnoreCase = True
     regex.Global = False
     regex.Pattern = "comentarios\s*a\s*las\s*tablas\s*del\s*vr"
 
-    ReDim items(0)
-    n = 0
+    jsonText = "["
+    firstItem = True
 
     For Each file In folder.Files
         If LCase(fso.GetExtensionName(file.Name)) = "htm" Then
             txt = fso.OpenTextFile(file.Path, 1, False).ReadAll
 
-            ' Pequeña normalización para evitar que las etiquetas rompan el texto
+            ' Normalización para evitar que las etiquetas rompan el texto
             txt = Replace(txt, "<", " <")
             txt = Replace(txt, ">", "> ")
 
@@ -25,32 +25,32 @@ Sub ExtraerComentariosJson()
                 Set match = regex.Execute(txt)(0)
                 p = match.FirstIndex + 1
                 comment = Mid(txt, p)
-                AddItem items, n, "{""file"":""" & JsonEscape(file.Name) & """,""comments"":""" & JsonEscape(comment) & """}"
+
+                ' Escapar comillas y saltos
+                comment = JsonEscape(comment)
+                Dim jsonItem
+                jsonItem = "{""file"":""" & JsonEscape(file.Name) & """,""comments"":""" & comment & """}"
+
+                If Not firstItem Then
+                    jsonText = jsonText & "," & vbCrLf
+                End If
+                jsonText = jsonText & jsonItem
+                firstItem = False
             End If
         End If
     Next
 
-    ' Generar JSON
-    If n = 0 Then
-        jsonText = "[]"
-    Else
-        jsonText = "[" & vbCrLf & Join(items, "," & vbCrLf) & vbCrLf & "]"
-    End If
+    jsonText = jsonText & "]"
 
-    ' Guardar como UTF-8
-    Set stm = CreateObject("ADODB.Stream")
-    stm.Type = 2
-    stm.Charset = "utf-8"
-    stm.Open
-    stm.WriteText jsonText
-    stm.SaveToFile "comentarios.json", 2
-    stm.Close
+    ' Guardar con FSO clásico (sin ADO)
+    Set salida = fso.CreateTextFile("comentarios.json", True)
+    salida.Write jsonText
+    salida.Close
 
-    MsgBox "Completado. Se han encontrado " & n & " comentarios.", vbInformation
+    MsgBox "Listo. Se generó comentarios.json en esta carpeta.", vbInformation
 End Sub
 
 '------------------ Helpers ------------------
-
 Function JsonEscape(s)
     If IsNull(s) Then s = ""
     s = Replace(s, "\", "\\")
@@ -62,10 +62,5 @@ Function JsonEscape(s)
     JsonEscape = s
 End Function
 
-Sub AddItem(ByRef arr, ByRef count, ByVal value)
-    If count = UBound(arr) Then
-        ReDim Preserve arr(UBound(arr) + 50)
-    End If
-    arr(count) = value
-    count = count + 1
-End Sub
+' Ejecutar
+Call ExtraerComentariosJson
