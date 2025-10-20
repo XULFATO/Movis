@@ -1,122 +1,224 @@
-Sub ExtraerComentariosLimpios()
-    Dim fso As Object, folder As Object, file As Object
-    Dim txt As String, regex As Object, match As Object
-    Dim p As Long, raw As String, elemento As String, comentario As String
-    Dim jsonText As String, firstItem As Boolean, nombre As String
-    Dim linea1 As String, partes As Variant
-    
-    ' 📁 Cambia esta ruta a donde tengas tus .htm
-    Const rutaCarpeta As String = "C:\Users\TuUsuario\CarpetaHTML"
+Option Explicit
 
-    Set fso = CreateObject("Scripting.FileSystemObject")
-    Set folder = fso.GetFolder(rutaCarpeta)
-    Set regex = CreateObject("VBScript.RegExp")
-    regex.IgnoreCase = True
-    regex.Global = False
-    regex.Pattern = "comentarios\s*a\s*las\s*tablas\s*del\s*vr"
+' ==== CONFIGURA AQUÍ ====
+Const INPUT_HTML = "C:\RUTA\A\TU\tabla_800.htm"   ' tabla original (800 registros)
+Const INPUT_JSON = "C:\RUTA\A\TU\comentarios.json" ' JSON con ~300 comentarios
+Const OUTPUT_HTML = "C:\RUTA\A\TU\fusion_total.html"
 
-    jsonText = "["
-    firstItem = True
+Const DROP_4TH_COL = True ' True = elimina la 4.ª columna de la tabla original
+' ========================
 
-    For Each file In folder.Files
-        If LCase(fso.GetExtensionName(file.Name)) = "htm" Then
-            txt = fso.OpenTextFile(file.Path, 1, False).ReadAll
+Call FusionarVR(INPUT_HTML, INPUT_JSON, OUTPUT_HTML)
 
-            If regex.Test(txt) Then
-                Set match = regex.Execute(txt)(0)
-                p = match.FirstIndex + match.Length + 1
-                raw = Mid(txt, p)
+Sub FusionarVR(pathHtml, pathJson, pathOut)
+  Dim fso, html, json, rows, outHtml, i
+  Dim commentsDict : Set commentsDict = CreateObject("Scripting.Dictionary")
+  commentsDict.CompareMode = 1 ' TextCompare
 
-                ' 🔹 Quitar etiquetas hasta después del primer <br>
-                raw = Replace(raw, vbCrLf, "")
-                raw = Replace(raw, "&nbsp;", " ")
-                raw = HtmlDecode(raw)
+  Set fso = CreateObject("Scripting.FileSystemObject")
+  If Not fso.FileExists(pathHtml) Then WScript.Echo "No existe: " & pathHtml : WScript.Quit 1
+  If Not fso.FileExists(pathJson) Then WScript.Echo "No existe: " & pathJson : WScript.Quit 1
 
-                ' 🔹 Obtener la primera línea (código + elemento)
-                Dim iBR As Long
-                iBR = InStr(1, raw, "<br>", vbTextCompare)
-                If iBR > 0 Then
-                    linea1 = Trim(Left(raw, iBR - 1))
-                    raw = Mid(raw, iBR + 4)
-                Else
-                    linea1 = ""
-                End If
+  html = fso.OpenTextFile(pathHtml, 1, False).ReadAll
+  json = fso.OpenTextFile(pathJson, 1, False).ReadAll
 
-                ' 🔹 Separar nombre y elemento (por espacios)
-                partes = Split(Trim(linea1))
-                If UBound(partes) >= 1 Then
-                    nombre = partes(0)
-                    elemento = partes(UBound(partes))
-                Else
-                    nombre = fso.GetBaseName(file.Name)
-                    elemento = ""
-                End If
+  ' --- Cargar JSON a diccionario: clave = FILE+ELEMENTO (p.ej. "ACRA03") ---
+  LoadComments json, commentsDict
 
-                ' 🔹 El resto es el comentario
-                comentario = CleanHtml(raw)
+  ' --- Extraer filas <tr> de la tabla original ---
+  Set rows = ExtractRows(html)
 
-                ' 🔹 Generar JSON
-                If Not firstItem Then jsonText = jsonText & "," & vbCrLf
-                jsonText = jsonText & _
-                    "{""file"":""" & JsonEscape(nombre) & """,""elemento"":""" & JsonEscape(elemento) & """,""comentario"":""" & JsonEscape(comentario) & """}"
-                firstItem = False
-            End If
-        End If
+  ' --- Construir HTML de salida ---
+  outHtml = "" _
+    & "<!doctype html><html><head><meta charset='utf-8'>" _
+    & "<title>Fusión de tablas HTM</title>" _
+    & "<style>" _
+    & "body{font-family:Segoe UI,Arial,sans-serif;margin:24px}" _
+    & "h1{font-size:18px;margin:0 0 12px}" _
+    & "table{width:100%;border-collapse:collapse}" _
+    & "th,td{border:1px solid #ddd;padding:6px 8px}" _
+    & "th{background:#f3f6fa;text-align:left}" _
+    & "tbody tr:nth-child(odd){background:#fafafa}" _
+    & ".center{text-align:center}" _
+    & "</style></head><body>" _
+    & "<h1>Fusión de tablas HTM</h1>" _
+    & "<table><thead><tr>"
+
+  ' Encabezados: leer de la primera fila si existen <th>
+  Dim headers : headers = ExtractHeaders(html)
+  Dim colCount, h
+  colCount = UBound(headers) - LBound(headers) + 1
+  If colCount > 0 Then
+    For i = 0 To colCount-1
+      If Not (DROP_4TH_COL And i = 3) Then
+        outHtml = outHtml & "<th>" & HTMLEncode(headers(i)) & "</th>"
+      End If
     Next
+  Else
+    ' si no hay <th>, asumimos 7 columnas
+    colCount = 7
+    For i = 1 To colCount
+      If Not (DROP_4TH_COL And i = 4) Then
+        outHtml = outHtml & "<th>Col" & i & "</th>"
+      End If
+    Next
+  End If
 
-    jsonText = jsonText & "]"
+  outHtml = outHtml & "<th class='center'>TieneComentario</th><th>Comentario</th></tr></thead><tbody>"
 
-    ' 📤 Mostrar en hoja de Excel (columna A troceada)
-    Dim pos As Long, fila As Long, chunk As String
-    pos = 1
-    fila = 1
-    Do While pos <= Len(jsonText)
-        chunk = Mid(jsonText, pos, 30000)
-        ThisWorkbook.Sheets(1).Cells(fila, 1).Value = chunk
-        pos = pos + 30000
-        fila = fila + 1
-    Loop
+  ' --- Procesar cada fila <tr> ---
+  Dim r, tds, tabla, codElem, hasHref, key, comment
+  For Each r In rows
+    tds = ExtractTDs(CStr(r))
+    If UBound(tds) >= 1 Then
+      ' 1) Tabla (col 1)
+      tabla = Trim(StripTags(tds(0)))
+      ' 2) Cod elemento (col 2), detectar si tenía <a>
+      hasHref = (InStr(1, tds(1), "<a ", 1) > 0)
+      codElem = Trim(StripTags(tds(1)))
 
-    MsgBox "Listo: JSON limpio y decodificado en columna A (" & fila - 1 & " filas).", vbInformation
+      ' Clave para buscar comentario: "TABLA" + "ELEMENTO" => ej. "ACR" + "A03" -> "ACRA03"
+      key = UCase(tabla & codElem)
+      comment = ""
+      If commentsDict.Exists(key) Then comment = commentsDict(key)
+
+      ' --- Escribir fila de salida ---
+      outHtml = outHtml & "<tr>"
+      For i = 0 To UBound(tds)
+        If Not (DROP_4TH_COL And i = 3) Then
+          If i = 1 Then
+            ' Columna 2 sin hipervínculo (ya StripTags devuelve el texto limpio)
+            outHtml = outHtml & "<td>" & HTMLEncode(codElem) & "</td>"
+          Else
+            outHtml = outHtml & "<td>" & HTMLEncode(Trim(StripTags(tds(i)))) & "</td>"
+          End If
+        End If
+      Next
+      outHtml = outHtml & "<td class='center'>" & IIf(hasHref And Len(comment)>0, "S", "N") & "</td>"
+      outHtml = outHtml & "<td>" & HTMLEncode(comment) & "</td></tr>"
+    End If
+  Next
+
+  outHtml = outHtml & "</tbody></table></body></html>"
+
+  ' Guardar
+  Dim outFile : Set outFile = fso.CreateTextFile(pathOut, True, True)
+  outFile.Write outHtml
+  outFile.Close
+
+  WScript.Echo "OK. Generado: " & pathOut
 End Sub
 
-'------------------ FUNCIONES AUXILIARES ------------------
+' ======= Carga JSON en diccionario: clave "FILE+ELEMENTO" , valor "comentario" =======
+Sub LoadComments(ByVal json, ByRef dict)
+  Dim re, m, i, fileKey, fileName, elemento, comentario
+  Set re = CreateObject("VBScript.RegExp")
+  re.IgnoreCase = True
+  re.Global = True
+  ' Busca objetos {"file":"X","elemento":"Y","comentario":"Z"}
+  re.Pattern = """file""\s*:\s*""([^""]+)""[^}]*?""elemento""\s*:\s*""([^""]*)""[^}]*?""comentario""\s*:\s*""([^""]*)"""
+  Dim matches : Set matches = re.Execute(json)
+  For Each m In matches
+    fileName = CleanSpaces(HtmlDecode(m.SubMatches(0)))
+    elemento = CleanSpaces(HtmlDecode(m.SubMatches(1)))
+    comentario = HtmlDecode(m.SubMatches(2))
+    fileKey = UCase(fileName & elemento) ' ej. "ACRA03"
+    If Not dict.Exists(fileKey) Then dict.Add fileKey, comentario
+  Next
+End Sub
 
-Private Function HtmlDecode(s As String) As String
-    s = Replace(s, "&aacute;", "á")
-    s = Replace(s, "&eacute;", "é")
-    s = Replace(s, "&iacute;", "í")
-    s = Replace(s, "&oacute;", "ó")
-    s = Replace(s, "&uacute;", "ú")
-    s = Replace(s, "&ntilde;", "ñ")
-    s = Replace(s, "&Ntilde;", "Ñ")
-    s = Replace(s, "&amp;", "&")
-    s = Replace(s, "&quot;", """")
-    s = Replace(s, "&#250;", "ú")
-    s = Replace(s, "&#243;", "ó")
-    s = Replace(s, "&#233;", "é")
-    s = Replace(s, "&#237;", "í")
-    s = Replace(s, "&#225;", "á")
-    s = Replace(s, "&#241;", "ñ")
-    HtmlDecode = s
+' ======= Extrae cabeceras <th> si existen =======
+Function ExtractHeaders(ByVal html)
+  Dim re, m, i, arr()
+  Set re = CreateObject("VBScript.RegExp")
+  re.IgnoreCase = True : re.Global = True
+  re.Pattern = "<th[^>]*>([\s\S]*?)</th>"
+  Dim matches : Set matches = re.Execute(html)
+  If matches.Count = 0 Then
+    ReDim arr(-1) ' vacío
+  Else
+    ReDim arr(matches.Count-1)
+    i = 0
+    For Each m In matches
+      arr(i) = Trim(StripTags(m.SubMatches(0))) : i = i + 1
+    Next
+  End If
+  ExtractHeaders = arr
 End Function
 
-Private Function CleanHtml(s As String) As String
-    Dim re As Object
-    Set re = CreateObject("VBScript.RegExp")
-    re.Global = True
-    re.IgnoreCase = True
-    re.Pattern = "<[^>]+>"
-    CleanHtml = Trim(re.Replace(s, " "))
+' ======= Extrae colección de filas <tr> =======
+Function ExtractRows(ByVal html)
+  Dim re : Set re = CreateObject("VBScript.RegExp")
+  re.IgnoreCase = True : re.Global = True
+  re.Pattern = "<tr[^>]*>([\s\S]*?)</tr>"
+  Set ExtractRows = re.Execute(html)
 End Function
 
-Private Function JsonEscape(s As String) As String
-    If IsNull(s) Then s = ""
-    s = Replace(s, "\", "\\")
-    s = Replace(s, """", "\""")
-    s = Replace(s, vbCrLf, "\n")
-    s = Replace(s, vbCr, "\n")
-    s = Replace(s, vbLf, "\n")
-    s = Replace(s, vbTab, "\t")
-    JsonEscape = s
+' ======= Devuelve array de celdas (innerHTML de cada <td>) =======
+Function ExtractTDs(ByVal trHtml)
+  Dim re, matches, m, arr(), i
+  Set re = CreateObject("VBScript.RegExp")
+  re.IgnoreCase = True : re.Global = True
+  re.Pattern = "<td[^>]*>([\s\S]*?)</td>"
+  Set matches = re.Execute(trHtml)
+  If matches.Count = 0 Then
+    ReDim arr(-1)
+  Else
+    ReDim arr(matches.Count-1)
+    i = 0
+    For Each m In matches
+      arr(i) = m.SubMatches(0) : i = i + 1
+    Next
+  End If
+  ExtractTDs = arr
+End Function
+
+' ======= Limpia etiquetas y decodifica entidades básicas =======
+Function StripTags(ByVal s)
+  Dim re : Set re = CreateObject("VBScript.RegExp")
+  re.Global = True : re.IgnoreCase = True
+  re.Pattern = "<[^>]+>"
+  StripTags = Trim(re.Replace(s, " "))
+End Function
+
+Function HTMLEncode(ByVal s)
+  s = Replace(s, "&", "&amp;")
+  s = Replace(s, "<", "&lt;")
+  s = Replace(s, ">", "&gt;")
+  s = Replace(s, """", "&quot;")
+  HTMLEncode = s
+End Function
+
+Function HtmlDecode(ByVal s)
+  ' entidades frecuentes (añade más si te hicieran falta)
+  s = Replace(s, "&nbsp;", " ")
+  s = Replace(s, "&quot;", """")
+  s = Replace(s, "&amp;", "&")
+  s = Replace(s, "&lt;", "<")
+  s = Replace(s, "&gt;", ">")
+  s = Replace(s, "&aacute;", "á")
+  s = Replace(s, "&eacute;", "é")
+  s = Replace(s, "&iacute;", "í")
+  s = Replace(s, "&oacute;", "ó")
+  s = Replace(s, "&uacute;", "ú")
+  s = Replace(s, "&ntilde;", "ñ")
+  s = Replace(s, "&#225;", "á")
+  s = Replace(s, "&#233;", "é")
+  s = Replace(s, "&#237;", "í")
+  s = Replace(s, "&#243;", "ó")
+  s = Replace(s, "&#250;", "ú")
+  s = Replace(s, "&#241;", "ñ")
+  HtmlDecode = s
+End Function
+
+Function CleanSpaces(ByVal s)
+  s = Trim(Replace(Replace(s, vbCrLf, " "), vbTab, " "))
+  Do While InStr(s, "  ") > 0
+    s = Replace(s, "  ", " ")
+  Loop
+  CleanSpaces = s
+End Function
+
+Function IIf(cond, vTrue, vFalse)
+  If cond Then IIf = vTrue Else IIf = vFalse
 End Function
