@@ -1,11 +1,12 @@
-Sub ExtraerComentariosJson()
+Sub ExtraerComentariosLimpios()
     Dim fso As Object, folder As Object, file As Object
     Dim txt As String, regex As Object, match As Object
-    Dim p As Long, comment As String, cleanComment As String
-    Dim jsonText As String, firstItem As Boolean, nombreSinExt As String
+    Dim p As Long, raw As String, elemento As String, comentario As String
+    Dim jsonText As String, firstItem As Boolean, nombre As String
+    Dim linea1 As String, partes As Variant
     
-    ' 📁 Carpeta donde están los .htm
-    Const rutaCarpeta As String = "C:\Users\TuUsuario\CarpetaHTML"  ' ⚠️ CAMBIA ESTA RUTA
+    ' 📁 Cambia esta ruta a donde tengas tus .htm
+    Const rutaCarpeta As String = "C:\Users\TuUsuario\CarpetaHTML"
 
     Set fso = CreateObject("Scripting.FileSystemObject")
     Set folder = fso.GetFolder(rutaCarpeta)
@@ -20,24 +21,44 @@ Sub ExtraerComentariosJson()
     For Each file In folder.Files
         If LCase(fso.GetExtensionName(file.Name)) = "htm" Then
             txt = fso.OpenTextFile(file.Path, 1, False).ReadAll
-            txt = Replace(txt, "<", " <")
-            txt = Replace(txt, ">", "> ")
 
             If regex.Test(txt) Then
                 Set match = regex.Execute(txt)(0)
                 p = match.FirstIndex + match.Length + 1
-                comment = Mid(txt, p)
+                raw = Mid(txt, p)
 
-                ' 🔹 Eliminar etiquetas HTML iniciales
-                cleanComment = LimpiarComentario(comment)
+                ' 🔹 Quitar etiquetas hasta después del primer <br>
+                raw = Replace(raw, vbCrLf, "")
+                raw = Replace(raw, "&nbsp;", " ")
+                raw = HtmlDecode(raw)
 
-                ' 🔹 Quitar extensión .htm
-                nombreSinExt = fso.GetBaseName(file.Name)
+                ' 🔹 Obtener la primera línea (código + elemento)
+                Dim iBR As Long
+                iBR = InStr(1, raw, "<br>", vbTextCompare)
+                If iBR > 0 Then
+                    linea1 = Trim(Left(raw, iBR - 1))
+                    raw = Mid(raw, iBR + 4)
+                Else
+                    linea1 = ""
+                End If
 
-                ' 🔹 Crear JSON limpio
+                ' 🔹 Separar nombre y elemento (por espacios)
+                partes = Split(Trim(linea1))
+                If UBound(partes) >= 1 Then
+                    nombre = partes(0)
+                    elemento = partes(UBound(partes))
+                Else
+                    nombre = fso.GetBaseName(file.Name)
+                    elemento = ""
+                End If
+
+                ' 🔹 El resto es el comentario
+                comentario = CleanHtml(raw)
+
+                ' 🔹 Generar JSON
                 If Not firstItem Then jsonText = jsonText & "," & vbCrLf
                 jsonText = jsonText & _
-                    "{""file"":""" & JsonEscape(nombreSinExt) & """,""comments"":""" & JsonEscape(cleanComment) & """}"
+                    "{""file"":""" & JsonEscape(nombre) & """,""elemento"":""" & JsonEscape(elemento) & """,""comentario"":""" & JsonEscape(comentario) & """}"
                 firstItem = False
             End If
         End If
@@ -45,7 +66,7 @@ Sub ExtraerComentariosJson()
 
     jsonText = jsonText & "]"
 
-    ' 📤 Poner el JSON completo en celdas de Excel (dividido si es muy largo)
+    ' 📤 Mostrar en hoja de Excel (columna A troceada)
     Dim pos As Long, fila As Long, chunk As String
     pos = 1
     fila = 1
@@ -56,25 +77,37 @@ Sub ExtraerComentariosJson()
         fila = fila + 1
     Loop
 
-    MsgBox "Listo: JSON limpio en columna A (" & fila - 1 & " filas).", vbInformation
+    MsgBox "Listo: JSON limpio y decodificado en columna A (" & fila - 1 & " filas).", vbInformation
 End Sub
-
 
 '------------------ FUNCIONES AUXILIARES ------------------
 
-Private Function LimpiarComentario(s As String) As String
-    ' Elimina todo hasta después de </p> o </span>
-    Dim pos As Long
-    pos = InStr(1, s, "</p>", vbTextCompare)
-    If pos = 0 Then pos = InStr(1, s, "</span>", vbTextCompare)
-    If pos > 0 Then s = Mid(s, pos + 4)
+Private Function HtmlDecode(s As String) As String
+    s = Replace(s, "&aacute;", "á")
+    s = Replace(s, "&eacute;", "é")
+    s = Replace(s, "&iacute;", "í")
+    s = Replace(s, "&oacute;", "ó")
+    s = Replace(s, "&uacute;", "ú")
+    s = Replace(s, "&ntilde;", "ñ")
+    s = Replace(s, "&Ntilde;", "Ñ")
+    s = Replace(s, "&amp;", "&")
+    s = Replace(s, "&quot;", """")
+    s = Replace(s, "&#250;", "ú")
+    s = Replace(s, "&#243;", "ó")
+    s = Replace(s, "&#233;", "é")
+    s = Replace(s, "&#237;", "í")
+    s = Replace(s, "&#225;", "á")
+    s = Replace(s, "&#241;", "ñ")
+    HtmlDecode = s
+End Function
 
-    ' Limpieza de entidades básicas
-    s = Replace(s, "&nbsp;", " ")
-    s = Replace(s, vbCrLf, "")
-    s = Replace(s, vbCr, "")
-    s = Replace(s, vbLf, "")
-    LimpiarComentario = Trim(s)
+Private Function CleanHtml(s As String) As String
+    Dim re As Object
+    Set re = CreateObject("VBScript.RegExp")
+    re.Global = True
+    re.IgnoreCase = True
+    re.Pattern = "<[^>]+>"
+    CleanHtml = Trim(re.Replace(s, " "))
 End Function
 
 Private Function JsonEscape(s As String) As String
