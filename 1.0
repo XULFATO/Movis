@@ -1,7 +1,8 @@
 # ===========================================
 # Buscar-Blueprints.ps1
 # Busca literales dentro de la hoja "Análisis Conceptos"
-# en ficheros Excel cuyo nombre contenga "Blueprint"
+# en ficheros Blueprint ubicados en estructura:
+# carpeta con "_" en 4ª posición -> subcarpeta -> Documentación Implantación -> Análisis
 # ===========================================
 
 $ErrorActionPreference = 'Stop'
@@ -14,7 +15,7 @@ function Ask-YesNo($prompt) {
     }
 }
 
-Write-Host "🔍 Búsqueda de literales en la hoja 'Análisis Conceptos' de ficheros 'Blueprint'..." -ForegroundColor Cyan
+Write-Host "🔍 Búsqueda de literales en hoja 'Análisis Conceptos' de ficheros 'Blueprint'..." -ForegroundColor Cyan
 
 # Ruta base
 $basePath = Read-Host "📂 Introduce la ruta base (p.ej. R:\Proyectos)"
@@ -23,7 +24,7 @@ if (-not (Test-Path $basePath)) {
     exit 1
 }
 
-# Nombre exacto de la hoja (por si en tu entorno varía el acento, puedes cambiarlo aquí)
+# Nombre exacto de la hoja (ajústalo si difiere)
 $sheetName = "Análisis Conceptos"
 
 # Literales (hasta 10)
@@ -42,97 +43,125 @@ if ($literals.Count -eq 0) {
 # ¿Parar en la primera coincidencia global?
 $stopAtFirst = Ask-YesNo "¿Parar al encontrar la primera coincidencia?"
 
-# Recopilación de archivos objetivo
-Write-Host "`n📁 Recorriendo carpetas..." -ForegroundColor DarkCyan
-$files = Get-ChildItem -Path $basePath -Recurse -File -Include '*Blueprint*.xlsx','*Blueprint*.xlsm','*Blueprint*.xls' `
-         | Where-Object { $_.Name -notlike '~$*' }  # ignora temporales de Excel
+# ===========================================
+# RECORRER ESTRUCTURA DE CARPETAS
+# ===========================================
+Write-Host "`n📁 Recorriendo estructura (con '_' en 4ª posición, Documentación Implantación/Análisis)..." -ForegroundColor DarkCyan
+
+$files = @()
+
+# 1️⃣ Solo carpetas de primer nivel con "_" en la 4ª posición
+Get-ChildItem -Path $basePath -Directory | Where-Object {
+    $_.Name.Length -ge 4 -and $_.Name[3] -eq '_'
+} | ForEach-Object {
+    $nivel1 = $_.FullName
+    Write-Host (" → Revisando carpeta principal: {0}" -f $_.Name) -ForegroundColor Gray
+
+    # 2️⃣ Dentro, recorrer subcarpetas (de nombre variable)
+    Get-ChildItem -Path $nivel1 -Directory | ForEach-Object {
+        $nivel2 = $_.FullName
+
+        # 3️⃣ Buscar carpeta que contenga "Documentación Implantación"
+        $docImplDirs = Get-ChildItem -Path $nivel2 -Directory | Where-Object {
+            $_.Name -match "Documentación Implantación"
+        }
+
+        foreach ($docDir in $docImplDirs) {
+            # 4️⃣ Buscar carpeta dentro que contenga "Análisis"
+            $analisisDirs = Get-ChildItem -Path $docDir.FullName -Directory | Where-Object {
+                $_.Name -match "Análisis"
+            }
+
+            foreach ($anaDir in $analisisDirs) {
+                # 5️⃣ Buscar los ficheros Blueprint
+                $found = Get-ChildItem -Path $anaDir.FullName -File -Include '*Blueprint*.xlsx','*Blueprint*.xlsm','*Blueprint*.xls' |
+                         Where-Object { $_.Name -notlike '~$*' }
+                if ($found) {
+                    $files += $found
+                }
+            }
+        }
+    }
+}
 
 if ($files.Count -eq 0) {
-    Write-Host "⚠️ No se encontraron ficheros 'Blueprint' en $basePath" -ForegroundColor DarkYellow
+    Write-Host "⚠️ No se encontraron ficheros 'Blueprint' en la estructura esperada." -ForegroundColor DarkYellow
     exit 0
 }
-Write-Host ("   → {0} ficheros encontrados." -f $files.Count)
 
-# Preparar Excel (COM)
+Write-Host ("   → {0} ficheros 'Blueprint' encontrados en carpetas de análisis." -f $files.Count)
+
+# ===========================================
+# BÚSQUEDA EN EXCEL
+# ===========================================
+
 $excel = $null
 try {
     $excel = New-Object -ComObject Excel.Application
-    $excel.Visible        = $false
-    $excel.DisplayAlerts  = $false
+    $excel.Visible = $false
+    $excel.DisplayAlerts = $false
 
-    # Optimizar durante la búsqueda
     $prevCalc = $excel.Calculation
     $prevScreen = $excel.ScreenUpdating
     $excel.ScreenUpdating = $false
-    $excel.Calculation    = -4135 # xlCalculationManual
+    $excel.Calculation = -4135 # xlCalculationManual
 
-    # Para resultados, crearemos un libro nuevo al final
     $results = New-Object System.Collections.Generic.List[object]
 
     # Constantes Excel
-    $xlValues   = -4163  # LookIn
-    $xlPart     = 2      # LookAt (contiene)
-    $xlByRows   = 1
-    $xlNext     = 1
+    $xlValues = -4163
+    $xlPart = 2
+    $xlByRows = 1
+    $xlNext = 1
 
     foreach ($file in $files) {
         foreach ($lit in $literals) {
             $wb = $null
             try {
-                # Abrir en sólo lectura, sin actualizar vínculos
-                $wb = $excel.Workbooks.Open($file.FullName, 0, $true)  # UpdateLinks:=0, ReadOnly:=True
-
-                # Buscar la hoja exacta
+                $wb = $excel.Workbooks.Open($file.FullName, 0, $true)
                 $sheet = $null
                 foreach ($sh in $wb.Worksheets) {
                     if ($sh.Name -eq $sheetName) { $sheet = $sh; break }
                 }
-                if (-not $sheet) {
-                    # No tiene la hoja requerida
-                    continue
-                }
+                if (-not $sheet) { continue }
 
-                # Usar Find para localizar coincidencias (rápido y fiable)
                 $firstHit = $sheet.Cells.Find($lit, [Type]::Missing, $xlValues, $xlPart, $xlByRows, $xlNext, $false, [Type]::Missing, [Type]::Missing)
-
                 if ($firstHit -ne $null) {
-                    # Registramos la primera coincidencia
-                    $addrStart = $firstHit.Address(0,0)  # A1 style
-                    $addrCurr  = $addrStart
+                    $addrStart = $firstHit.Address(0,0)
+                    $addrCurr = $addrStart
 
                     $results.Add([PSCustomObject]@{
-                        Fichero   = $file.FullName
-                        Hoja      = $sheetName
-                        Literal   = $lit
-                        Celda     = $addrCurr
+                        Fichero = $file.FullName
+                        Hoja = $sheetName
+                        Literal = $lit
+                        Celda = $addrCurr
                     })
+
+                    Write-Host "✅ [$lit] encontrado en: $($file.Name)" -ForegroundColor Green
 
                     if ($stopAtFirst) {
                         $wb.Close($false)
                         throw [System.Exception]::new("STOP_GLOBAL")
                     }
 
-                    # Si queremos todas, iteramos FindNext hasta volver al inicio
                     while ($true) {
                         $next = $sheet.Cells.FindNext($firstHit)
                         if ($next -eq $null) { break }
                         $addrNext = $next.Address(0,0)
-                        if ($addrNext -eq $addrStart) { break } # cerramos ciclo
+                        if ($addrNext -eq $addrStart) { break }
 
                         $results.Add([PSCustomObject]@{
-                            Fichero   = $file.FullName
-                            Hoja      = $sheetName
-                            Literal   = $lit
-                            Celda     = $addrNext
+                            Fichero = $file.FullName
+                            Hoja = $sheetName
+                            Literal = $lit
+                            Celda = $addrNext
                         })
-
                         $firstHit = $next
                     }
                 }
             } catch {
-                # Si es la excepción de parada global, la relanzamos
                 if ($_.Exception.Message -eq "STOP_GLOBAL") { throw }
-                Write-Host ("⚠️ Error con: {0}  → {1}" -f $file.FullName, $_.Exception.Message) -ForegroundColor DarkYellow
+                Write-Host ("⚠️ Error con: {0} → {1}" -f $file.FullName, $_.Exception.Message) -ForegroundColor DarkYellow
             } finally {
                 if ($wb -ne $null) { $wb.Close($false) | Out-Null }
             }
@@ -141,15 +170,14 @@ try {
 
     # Restaurar Excel
     $excel.ScreenUpdating = $prevScreen
-    $excel.Calculation    = $prevCalc
+    $excel.Calculation = $prevCalc
 
-    # Volcar resultados a un Excel nuevo
+    # Crear Excel de resultados
     $outPath = Join-Path $env:USERPROFILE "Desktop\Resultados_Blueprint.xlsx"
     $wbOut = $excel.Workbooks.Add()
     $wsOut = $wbOut.Worksheets.Item(1)
     $wsOut.Name = "Resultados"
 
-    # Cabeceras
     $wsOut.Cells.Item(1,1) = "Fichero"
     $wsOut.Cells.Item(1,2) = "Hoja"
     $wsOut.Cells.Item(1,3) = "Literal"
@@ -164,7 +192,6 @@ try {
         $row++
     }
 
-    # Autoajustar columnas si hay resultados
     if ($results.Count -gt 0) {
         $wsOut.Range("A1:D$($row-1)").EntireColumn.AutoFit() | Out-Null
     }
@@ -182,35 +209,7 @@ try {
 
 } catch {
     if ($_.Exception.Message -eq "STOP_GLOBAL") {
-        # Parada voluntaria al primer hallazgo: aún así volcamos lo encontrado
         Write-Host "`n⏹ Parado en la primera coincidencia (por opción elegida)." -ForegroundColor Yellow
-        # Crear Excel de salida mínimo si no existe instancia (reutilizamos $excel activo)
-        try {
-            $outPath = Join-Path $env:USERPROFILE "Desktop\Resultados_Blueprint.xlsx"
-            $wbOut = $excel.Workbooks.Add()
-            $wsOut = $wbOut.Worksheets.Item(1)
-            $wsOut.Name = "Resultados"
-            $wsOut.Cells.Item(1,1) = "Fichero"
-            $wsOut.Cells.Item(1,2) = "Hoja"
-            $wsOut.Cells.Item(1,3) = "Literal"
-            $wsOut.Cells.Item(1,4) = "Celda"
-            $row = 2
-            foreach ($r in $results) {
-                $wsOut.Cells.Item($row,1) = $r.Fichero
-                $wsOut.Cells.Item($row,2) = $r.Hoja
-                $wsOut.Cells.Item($row,3) = $r.Literal
-                $wsOut.Cells.Item($row,4) = $r.Celda
-                $row++
-            }
-            if ($results.Count -gt 0) {
-                $wsOut.Range("A1:D$($row-1)").EntireColumn.AutoFit() | Out-Null
-            }
-            $wbOut.SaveAs($outPath)
-            $wbOut.Close($false)
-            Write-Host ("📁 Archivo generado: {0}" -f $outPath) -ForegroundColor Cyan
-        } catch {
-            Write-Host ("❌ Error creando el Excel de resultados: {0}" -f $_.Exception.Message) -ForegroundColor Red
-        }
     } else {
         Write-Host ("❌ Error inesperado: {0}" -f $_.Exception.Message) -ForegroundColor Red
     }
