@@ -1,5 +1,5 @@
 # ===========================================
-# Buscar-Blueprints.ps1 (versión estable)
+# Buscar-Blueprints.ps1 (versión definitiva)
 # ===========================================
 
 $ErrorActionPreference = 'Stop'
@@ -24,7 +24,7 @@ if (-not (Test-Path $basePath)) {
 # Nombre exacto de la hoja
 $sheetName = "Análisis Conceptos"
 
-# Literales (hasta 10)
+# Literales
 Write-Host "`nIntroduce hasta 10 literales (pueden tener varias palabras, uno por línea). Deja vacío para terminar." -ForegroundColor Yellow
 $literals = @()
 for ($i=1; $i -le 10; $i++) {
@@ -37,7 +37,7 @@ if ($literals.Count -eq 0) {
     exit 1
 }
 
-# ¿Parar en la primera coincidencia global?
+# ¿Parar en la primera coincidencia?
 $stopAtFirst = Ask-YesNo "¿Parar al encontrar la primera coincidencia?"
 
 # ===========================================
@@ -47,7 +47,7 @@ $regexDocImpl = '(?i)(^\s*\d{0,3}\s*[-_. ]*\s*documentaci[oó]n\s+implantaci[oó
 $regexAnalisis = '(?i)(^\s*\d{0,3}\s*[-_. ]*\s*an[aá]lisis\b)|(\ban[aá]lisis\b)'
 
 # ===========================================
-# RECORRER ESTRUCTURA (versión buena anterior)
+# RECORRER ESTRUCTURA
 # ===========================================
 Write-Host "`n📁 Recorriendo estructura (con '_' en 4ª posición, Doc. Implantación/Análisis, orden descendente por fecha)..." -ForegroundColor DarkCyan
 
@@ -61,17 +61,14 @@ Get-ChildItem -Path $basePath -Directory |
     $nivel1 = $_.FullName
     Write-Host ("→ Revisando carpeta principal: {0}" -f $_.Name) -ForegroundColor Yellow
 
-    # Subcarpetas de segundo nivel
     Get-ChildItem -Path $nivel1 -Directory -ErrorAction SilentlyContinue | ForEach-Object {
         $nivel2 = $_.FullName
 
-        # Carpeta "Documentación Implantación"
         $docImplDirs = Get-ChildItem -Path $nivel2 -Directory -ErrorAction SilentlyContinue | Where-Object {
             $_.Name -match $regexDocImpl
         }
 
         foreach ($docDir in $docImplDirs) {
-            # Carpeta "Análisis"
             $analisisDirs = Get-ChildItem -Path $docDir.FullName -Directory -ErrorAction SilentlyContinue | Where-Object {
                 $_.Name -match $regexAnalisis
             }
@@ -79,7 +76,6 @@ Get-ChildItem -Path $basePath -Directory |
             foreach ($anaDir in $analisisDirs) {
                 Write-Host ("   📂 Revisando subcarpeta: {0}" -f $anaDir.FullName) -ForegroundColor Cyan
 
-                # Buscar ficheros Blueprint (versión que funcionaba)
                 $found = Get-ChildItem -Path $anaDir.FullName -File -Filter '*Blueprint*.xls*' -ErrorAction SilentlyContinue |
                          Where-Object { $_.Name -notlike '~$*' }
 
@@ -102,19 +98,15 @@ if ($files.Count -eq 0) {
 Write-Host ("   → {0} ficheros 'Blueprint' detectados." -f $files.Count) -ForegroundColor Green
 
 # ===========================================
-# BÚSQUEDA EN EXCEL (modificada para funcionar bien)
+# BÚSQUEDA EN EXCEL (actualizada y robusta)
 # ===========================================
-
 $excel = $null
 try {
     $excel = New-Object -ComObject Excel.Application
     $excel.Visible = $false
     $excel.DisplayAlerts = $false
-
-    $prevCalc = $excel.Calculation
-    $prevScreen = $excel.ScreenUpdating
-    $excel.ScreenUpdating = $false
-    $excel.Calculation = -4135 # xlCalculationManual
+    $excel.AutomationSecurity = 3
+    $excel.EnableEvents = $false
 
     $results = New-Object System.Collections.Generic.List[object]
 
@@ -122,7 +114,6 @@ try {
         foreach ($lit in $literals) {
             $wb = $null
             try {
-                # Abrir en solo lectura
                 $wb = $excel.Workbooks.Open($file.FullName, 0, $true)
                 $sheet = $null
                 foreach ($sh in $wb.Worksheets) {
@@ -130,14 +121,18 @@ try {
                 }
                 if (-not $sheet) { continue }
 
-                # Rango usado
+                # Forzar carga y activación
+                $sheet.Activate() | Out-Null
                 $used = $sheet.UsedRange
+                if (-not $used) { continue }
+
                 $rows = $used.Rows.Count
                 $cols = $used.Columns.Count
+                Write-Host ("      🔍 Analizando '{0}' ({1}x{2})..." -f $sheetName, $rows, $cols) -ForegroundColor DarkGray
 
                 for ($r=1; $r -le $rows; $r++) {
                     for ($c=1; $c -le $cols; $c++) {
-                        $val = $used.Cells.Item($r,$c).Text
+                        $val = [string]$used.Cells.Item($r,$c).Value2
                         if ([string]::IsNullOrWhiteSpace($val)) { continue }
 
                         $valNorm = ($val -replace '\s+', ' ').Trim()
@@ -152,7 +147,7 @@ try {
                                 Celda   = "$r,$c"
                                 Tipo    = $tipo
                             })
-                            Write-Host "✅ [$lit] en $($file.Name) celda $r,$c ($tipo)" -ForegroundColor Green
+                            Write-Host ("✅ Literal '{0}' encontrado en {1} celda {2},{3} ({4})" -f $lit, $file.Name, $r, $c, $tipo) -ForegroundColor Green
                             if ($stopAtFirst) { throw "STOP_GLOBAL" }
                         }
                     }
@@ -190,7 +185,8 @@ try {
     $wbOut.SaveAs($outPath)
     $wbOut.Close($false)
 
-    Write-Host "`n✅ Terminado. Resultados en: $outPath" -ForegroundColor Cyan
+    Write-Host "`n✅ Terminado. Resultados guardados en:" -ForegroundColor Green
+    Write-Host $outPath -ForegroundColor Cyan
 
 } finally {
     if ($excel) {
