@@ -1,5 +1,5 @@
 # ===========================================
-# Buscar-Blueprints.ps1 (versión definitiva)
+# Buscar-Blueprints.ps1 (recorrido intacto + búsqueda ultra-robusta)
 # ===========================================
 
 $ErrorActionPreference = 'Stop'
@@ -12,6 +12,22 @@ function Ask-YesNo($prompt) {
     }
 }
 
+# Normaliza texto: quita NBSP, colapsa espacios, elimina tildes, pasa a minúsculas
+function Normalize-Text([string]$s) {
+    if ([string]::IsNullOrEmpty($s)) { return "" }
+    $t = $s.Replace([char]0x00A0, ' ') -replace "[`r`n`t]", " "   # NBSP y saltos -> espacio
+    $t = ($t -replace '\s+', ' ').Trim()
+    # quitar diacríticos
+    $formD = $t.Normalize([Text.NormalizationForm]::FormD)
+    $sb = New-Object System.Text.StringBuilder
+    foreach ($ch in $formD.ToCharArray()) {
+        if ([Globalization.CharUnicodeInfo]::GetUnicodeCategory($ch) -ne [Globalization.UnicodeCategory]::NonSpacingMark) {
+            [void]$sb.Append($ch)
+        }
+    }
+    return $sb.ToString().ToLowerInvariant()
+}
+
 Write-Host "🔍 Búsqueda de literales en hoja 'Análisis Conceptos' de ficheros 'Blueprint'..." -ForegroundColor Cyan
 
 # Ruta base
@@ -21,10 +37,10 @@ if (-not (Test-Path $basePath)) {
     exit 1
 }
 
-# Nombre exacto de la hoja
-$sheetName = "Análisis Conceptos"
+# Hoja objetivo (match flexible por si hay espacios/tildes diferentes)
+$sheetTargetRegex = '(?i)^\s*an[aá]lisis\s+conceptos\s*$'
 
-# Literales
+# Literales (hasta 10)
 Write-Host "`nIntroduce hasta 10 literales (pueden tener varias palabras, uno por línea). Deja vacío para terminar." -ForegroundColor Yellow
 $literals = @()
 for ($i=1; $i -le 10; $i++) {
@@ -32,22 +48,19 @@ for ($i=1; $i -le 10; $i++) {
     if ([string]::IsNullOrWhiteSpace($lit)) { break }
     $literals += $lit
 }
-if ($literals.Count -eq 0) {
-    Write-Host "❌ No se introdujo ningún literal." -ForegroundColor Red
-    exit 1
-}
+if ($literals.Count -eq 0) { Write-Host "❌ No se introdujo ningún literal." -ForegroundColor Red; exit 1 }
 
 # ¿Parar en la primera coincidencia?
 $stopAtFirst = Ask-YesNo "¿Parar al encontrar la primera coincidencia?"
 
 # ===========================================
-# PATRONES FLEXIBLES DE CARPETAS
+# PATRONES FLEXIBLES DE CARPETAS (sin cambios)
 # ===========================================
 $regexDocImpl = '(?i)(^\s*\d{0,3}\s*[-_. ]*\s*documentaci[oó]n\s+implantaci[oó]n\b)|(\bdocumentaci[oó]n\s+implantaci[oó]n\b)'
 $regexAnalisis = '(?i)(^\s*\d{0,3}\s*[-_. ]*\s*an[aá]lisis\b)|(\ban[aá]lisis\b)'
 
 # ===========================================
-# RECORRER ESTRUCTURA
+# RECORRER ESTRUCTURA (idéntico al que te funcionaba)
 # ===========================================
 Write-Host "`n📁 Recorriendo estructura (con '_' en 4ª posición, Doc. Implantación/Análisis, orden descendente por fecha)..." -ForegroundColor DarkCyan
 
@@ -84,21 +97,19 @@ Get-ChildItem -Path $basePath -Directory |
                         Write-Host ("      ✅ Encontrado Blueprint: {0}" -f $f.Name) -ForegroundColor Green
                     }
                     $files += $found
+                } else {
+                    Write-Host ("      ⚠️ Ningún Blueprint encontrado en {0}" -f $anaDir.FullName) -ForegroundColor DarkYellow
                 }
             }
         }
     }
 }
 
-if ($files.Count -eq 0) {
-    Write-Host "⚠️ No se encontraron ficheros 'Blueprint' en la estructura esperada." -ForegroundColor DarkYellow
-    exit 0
-}
-
+if ($files.Count -eq 0) { Write-Host "⚠️ No se encontraron ficheros 'Blueprint' en la estructura esperada." -ForegroundColor DarkYellow; exit 0 }
 Write-Host ("   → {0} ficheros 'Blueprint' detectados." -f $files.Count) -ForegroundColor Green
 
 # ===========================================
-# BÚSQUEDA EN EXCEL (actualizada y robusta)
+# BÚSQUEDA EN EXCEL (reforzada: celdas + shapes + comentarios)
 # ===========================================
 $excel = $null
 try {
@@ -112,57 +123,107 @@ try {
 
     foreach ($file in $files) {
         foreach ($lit in $literals) {
+            $litNorm = Normalize-Text $lit
+
             $wb = $null
             try {
                 $wb = $excel.Workbooks.Open($file.FullName, 0, $true)
+                # Localizar hoja por regex flexible (por si hay espacios/tildes distintos)
                 $sheet = $null
                 foreach ($sh in $wb.Worksheets) {
-                    if ($sh.Name -eq $sheetName) { $sheet = $sh; break }
+                    if ($sh.Name -match $sheetTargetRegex) { $sheet = $sh; break }
                 }
                 if (-not $sheet) { continue }
 
-                # Forzar carga y activación
                 $sheet.Activate() | Out-Null
                 $used = $sheet.UsedRange
-                if (-not $used) { continue }
+                if ($used) {
+                    $rows = $used.Rows.Count; $cols = $used.Columns.Count
+                    Write-Host ("      🔍 Analizando '{0}' ({1}x{2})..." -f $sheet.Name, $rows, $cols) -ForegroundColor DarkGray
 
-                $rows = $used.Rows.Count
-                $cols = $used.Columns.Count
-                Write-Host ("      🔍 Analizando '{0}' ({1}x{2})..." -f $sheetName, $rows, $cols) -ForegroundColor DarkGray
-
-                for ($r=1; $r -le $rows; $r++) {
-                    for ($c=1; $c -le $cols; $c++) {
-                        $val = [string]$used.Cells.Item($r,$c).Value2
-                        if ([string]::IsNullOrWhiteSpace($val)) { continue }
-
-                        $valNorm = ($val -replace '\s+', ' ').Trim()
-                        $litNorm = ($lit -replace '\s+', ' ').Trim()
-
-                        if ($valNorm -imatch [regex]::Escape($litNorm)) {
-                            $tipo = if ($valNorm -ieq $litNorm) { "Exacta" } else { "Parcial" }
-                            $results.Add([PSCustomObject]@{
-                                Fichero = $file.FullName
-                                Hoja    = $sheetName
-                                Literal = $lit
-                                Celda   = "$r,$c"
-                                Tipo    = $tipo
-                            })
-                            Write-Host ("✅ Literal '{0}' encontrado en {1} celda {2},{3} ({4})" -f $lit, $file.Name, $r, $c, $tipo) -ForegroundColor Green
-                            if ($stopAtFirst) { throw "STOP_GLOBAL" }
+                    for ($r=1; $r -le $rows; $r++) {
+                        for ($c=1; $c -le $cols; $c++) {
+                            $val = [string]$used.Cells.Item($r,$c).Value2
+                            if ([string]::IsNullOrWhiteSpace($val)) { continue }
+                            $valNorm = Normalize-Text $val
+                            if ($valNorm.Contains($litNorm)) {
+                                $tipo = if ($valNorm -eq $litNorm) { "Exacta" } else { "Parcial" }
+                                $results.Add([PSCustomObject]@{
+                                    Fichero = $file.FullName
+                                    Hoja    = $sheet.Name
+                                    Literal = $lit
+                                    Celda   = "$r,$c"
+                                    Tipo    = $tipo
+                                })
+                                Write-Host ("✅ Literal '{0}' en {1} celda {2},{3} ({4})" -f $lit, $file.Name, $r, $c, $tipo) -ForegroundColor Green
+                                if ($stopAtFirst) { throw "STOP_GLOBAL" }
+                            }
                         }
                     }
                 }
 
+                # Buscar en SHAPES (textboxes, WordArt, etc.)
+                if ($sheet.Shapes.Count -gt 0) {
+                    foreach ($shape in $sheet.Shapes) {
+                        try {
+                            $txt = $null
+                            if ($shape.TextFrame2 -and $shape.TextFrame2.HasText) {
+                                $txt = $shape.TextFrame2.TextRange.Text
+                            } elseif ($shape.TextFrame -and $shape.TextFrame.Characters().Count -gt 0) {
+                                $txt = $shape.TextFrame.Characters().Text
+                            }
+                            if ($txt) {
+                                $txtNorm = Normalize-Text $txt
+                                if ($txtNorm.Contains($litNorm)) {
+                                    $results.Add([PSCustomObject]@{
+                                        Fichero = $file.FullName
+                                        Hoja    = $sheet.Name
+                                        Literal = $lit
+                                        Celda   = "Shape: " + $shape.Name
+                                        Tipo    = "Parcial (shape)"
+                                    })
+                                    Write-Host ("✅ Literal '{0}' en SHAPE '{1}' de {2}" -f $lit, $shape.Name, $file.Name) -ForegroundColor Green
+                                    if ($stopAtFirst) { throw "STOP_GLOBAL" }
+                                }
+                            }
+                        } catch { }
+                    }
+                }
+
+                # Buscar en COMENTARIOS (legacy)
+                try {
+                    if ($sheet.Comments -and $sheet.Comments.Count -gt 0) {
+                        foreach ($cmt in $sheet.Comments) {
+                            $ct = [string]$cmt.Text()
+                            if ($ct) {
+                                $ctNorm = Normalize-Text $ct
+                                if ($ctNorm.Contains($litNorm)) {
+                                    $addr = $cmt.Parent.Address(0,0)
+                                    $results.Add([PSCustomObject]@{
+                                        Fichero = $file.FullName
+                                        Hoja    = $sheet.Name
+                                        Literal = $lit
+                                        Celda   = "Comentario en " + $addr
+                                        Tipo    = "Parcial (comentario)"
+                                    })
+                                    Write-Host ("✅ Literal '{0}' en COMENTARIO {1} de {2}" -f $lit, $addr, $file.Name) -ForegroundColor Green
+                                    if ($stopAtFirst) { throw "STOP_GLOBAL" }
+                                }
+                            }
+                        }
+                    }
+                } catch { } # si no hay comentarios legacy
+
             } catch {
                 if ($_.Exception.Message -eq "STOP_GLOBAL") { throw }
-                Write-Host ("⚠️ Error con {0}" -f $file.FullName) -ForegroundColor DarkYellow
+                Write-Host ("⚠️ Error con {0} → {1}" -f $file.FullName, $_.Exception.Message) -ForegroundColor DarkYellow
             } finally {
                 if ($wb) { $wb.Close($false) | Out-Null }
             }
         }
     }
 
-    # Crear Excel de resultados
+    # Exportar resultados
     $outPath = Join-Path $env:USERPROFILE "Desktop\Resultados_Blueprint.xlsx"
     $wbOut = $excel.Workbooks.Add()
     $wsOut = $wbOut.Sheets.Item(1)
