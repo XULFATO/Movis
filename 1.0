@@ -1,8 +1,10 @@
 # ===========================================
 # Buscar-Blueprints.ps1
-# Busca literales dentro de la hoja "Análisis Conceptos"
+# Busca literales (con espacios o múltiples palabras)
+# dentro de la hoja "Análisis Conceptos"
 # en ficheros Blueprint ubicados en estructura:
 # carpeta con "_" en 4ª posición -> subcarpeta -> Documentación Implantación -> Análisis
+# Recorrido ordenado por fecha descendente de modificación
 # ===========================================
 
 $ErrorActionPreference = 'Stop'
@@ -15,7 +17,7 @@ function Ask-YesNo($prompt) {
     }
 }
 
-Write-Host "🔍 Búsqueda de literales en hoja 'Análisis Conceptos' de ficheros 'Blueprint'..." -ForegroundColor Cyan
+Write-Host "🔍 Búsqueda de literales (con espacios permitidos) en hoja 'Análisis Conceptos' de ficheros 'Blueprint'..." -ForegroundColor Cyan
 
 # Ruta base
 $basePath = Read-Host "📂 Introduce la ruta base (p.ej. R:\Proyectos)"
@@ -27,8 +29,8 @@ if (-not (Test-Path $basePath)) {
 # Nombre exacto de la hoja (ajústalo si difiere)
 $sheetName = "Análisis Conceptos"
 
-# Literales (hasta 10)
-Write-Host "`nIntroduce hasta 10 literales (uno por línea). Deja vacío para terminar." -ForegroundColor Yellow
+# Literales (hasta 10, pueden contener espacios)
+Write-Host "`nIntroduce hasta 10 literales (pueden tener varias palabras, uno por línea). Deja vacío para terminar." -ForegroundColor Yellow
 $literals = @()
 for ($i=1; $i -le 10; $i++) {
     $lit = Read-Host ("Literal #{0}" -f $i)
@@ -46,14 +48,17 @@ $stopAtFirst = Ask-YesNo "¿Parar al encontrar la primera coincidencia?"
 # ===========================================
 # RECORRER ESTRUCTURA DE CARPETAS
 # ===========================================
-Write-Host "`n📁 Recorriendo estructura (con '_' en 4ª posición, Documentación Implantación/Análisis)..." -ForegroundColor DarkCyan
+Write-Host "`n📁 Recorriendo estructura (con '_' en 4ª posición, Documentación Implantación/Análisis, orden descendente por fecha)..." -ForegroundColor DarkCyan
 
 $files = @()
 
 # 1️⃣ Solo carpetas de primer nivel con "_" en la 4ª posición
-Get-ChildItem -Path $basePath -Directory | Where-Object {
-    $_.Name.Length -ge 4 -and $_.Name[3] -eq '_'
-} | ForEach-Object {
+#    y ordenadas por fecha de modificación descendente
+Get-ChildItem -Path $basePath -Directory |
+    Where-Object { $_.Name.Length -ge 4 -and $_.Name[3] -eq '_' } |
+    Sort-Object LastWriteTime -Descending |
+    ForEach-Object {
+
     $nivel1 = $_.FullName
     Write-Host (" → Revisando carpeta principal: {0}" -f $_.Name) -ForegroundColor Gray
 
@@ -125,6 +130,7 @@ try {
                 }
                 if (-not $sheet) { continue }
 
+                # Buscar usando la cadena completa (incluidos espacios)
                 $firstHit = $sheet.Cells.Find($lit, [Type]::Missing, $xlValues, $xlPart, $xlByRows, $xlNext, $false, [Type]::Missing, [Type]::Missing)
                 if ($firstHit -ne $null) {
                     $addrStart = $firstHit.Address(0,0)
