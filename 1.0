@@ -1,8 +1,15 @@
 # ==========================================================
-# Buscar-Blueprints.ps1  (Open XML + red: FileShare.ReadWrite + ruta larga)
+# Buscar-Blueprints.ps1  (versión definitiva: lectura en memoria)
 # ==========================================================
+# - Recorre la estructura de carpetas según tus reglas (_ en 4ª pos., etc.)
+# - Busca hoja tipo "Analisis conceptos" en ficheros Blueprint .xlsx/.xlsm
+# - Lee el contenido directamente en memoria (sin copiar ni abrir Excel)
+# - Busca los literales indicados y exporta resultados al escritorio
+# ==========================================================
+
 $ErrorActionPreference = 'Stop'
 
+# --- utilidades de texto ---
 function Remove-Diacritics([string]$s){
     if ([string]::IsNullOrEmpty($s)) { return "" }
     $d = $s.Normalize([Text.NormalizationForm]::FormD)
@@ -16,31 +23,7 @@ function Remove-Diacritics([string]$s){
 }
 function Normalize([string]$s){ (Remove-Diacritics $s).ToLowerInvariant() }
 
-# ---- Rutas largas/UNC ----
-function To-LongPath([string]$path) {
-    if ($path -match '^[A-Za-z]:\\') { return "\\?\$path" }           # unidad local
-    if ($path -match '^(\\\\)')       { return $path -replace '^\\\\', '\\?\UNC\' } # UNC -> \\?\UNC\
-    return $path
-}
-
-# ---- ZIP vía FileStream (red) con FileShare.ReadWrite + reintentos ----
-Add-Type -AssemblyName System.IO.Compression.FileSystem | Out-Null
-function Open-ZipArchiveShared {
-    param([string]$fullPath, [int]$retries=3, [int]$delayMs=250)
-    $lp = To-LongPath $fullPath
-    for ($i=0; $i -lt $retries; $i++) {
-        try {
-            $fs = [System.IO.File]::Open($lp, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
-            $zip = New-Object System.IO.Compression.ZipArchive($fs, [System.IO.Compression.ZipArchiveMode]::Read, $false)
-            return @{ Zip = $zip; Stream = $fs }
-        } catch {
-            if ($i -eq ($retries-1)) { throw $_ }
-            Start-Sleep -Milliseconds $delayMs
-        }
-    }
-}
-
-# ---- SharedStrings ----
+# --- shared strings ---
 function Get-SharedTextFromSiNode {
     param($siNode)
     $ns = New-Object System.Xml.XmlNamespaceManager($siNode.OwnerDocument.NameTable)
@@ -59,7 +42,6 @@ function Read-SharedStrings {
     $sr = New-Object IO.StreamReader($entry.Open())
     $xml = [xml]$sr.ReadToEnd()
     $sr.Dispose()
-
     $ns = New-Object System.Xml.XmlNamespaceManager($xml.NameTable)
     $ns.AddNamespace('d','http://schemas.openxmlformats.org/spreadsheetml/2006/main')
     $sis = $xml.SelectNodes('//d:si',$ns)
@@ -68,10 +50,9 @@ function Read-SharedStrings {
     return ,$list
 }
 
-# ---- workbook.xml + rels -> localizar sheet por nombre (analisis + concept) ----
+# --- localizar hoja "analisis conceptos" ---
 function Get-SheetEntryPath {
     param($zip)
-
     $wbEntry = $zip.Entries | Where-Object { $_.FullName -ieq "xl/workbook.xml" }
     if (-not $wbEntry){ return $null }
     $sr = New-Object IO.StreamReader($wbEntry.Open())
@@ -106,18 +87,15 @@ function Get-SheetEntryPath {
     return @{ Path = "xl/$target"; SheetName = $targetSheetName }
 }
 
-# ---- Lee cells de la hoja (resuelve shared strings e inlineStr) ----
+# --- leer celdas ---
 function Read-SheetCells {
     param($zip, $sheetPath, $shared)
-
     $entry = $zip.Entries | Where-Object { $_.FullName -ieq $sheetPath }
     if (-not $entry){ return @() }
     $sr = New-Object IO.StreamReader($entry.Open())
     $xml = [xml]$sr.ReadToEnd(); $sr.Dispose()
-
     $ns = New-Object System.Xml.XmlNamespaceManager($xml.NameTable)
     $ns.AddNamespace('d','http://schemas.openxmlformats.org/spreadsheetml/2006/main')
-
     $cells = $xml.SelectNodes('//d:worksheet/d:sheetData/d:row/d:c',$ns)
     $out = New-Object System.Collections.Generic.List[object]
     foreach($c in $cells){
@@ -125,7 +103,6 @@ function Read-SheetCells {
         $t    = [string]$c.t
         $valNode = $c.SelectSingleNode('d:v',$ns)
         $text = $null
-
         if ($t -eq 's'){
             if ($valNode){
                 $idx = [int]$valNode.InnerText
@@ -137,7 +114,6 @@ function Read-SheetCells {
         } else {
             if ($valNode){ $text = [string]$valNode.InnerText }
         }
-
         if ($text -ne $null -and $text -ne ''){
             $out.Add([PSCustomObject]@{ Address = $addr; Text = $text })
         }
@@ -153,11 +129,11 @@ function Ask-YesNo($prompt) {
     }
 }
 
-Write-Host "🔍 Búsqueda de literales Open XML (compatible red, sin copiar archivos)" -ForegroundColor Cyan
+Write-Host "🔍 Búsqueda de literales en hoja 'Análisis Conceptos' (lectura en memoria)" -ForegroundColor Cyan
 
-# -------- Entrada --------
-$basePath = Read-Host "📂 Introduce la ruta base"
-if (-not (Test-Path $basePath)){ Write-Host "❌ Ruta no válida." -ForegroundColor Red; exit }
+# --- entrada ---
+$basePath = Read-Host "📂 Introduce la ruta base (por ejemplo O:\ADP_SP\Clientes_Bob_LOPD)"
+if (-not (Test-Path $basePath)){ Write-Host "❌ Ruta no válida."; exit }
 
 Write-Host "`nIntroduce hasta 10 literales (uno por línea). Deja vacío para terminar." -ForegroundColor Yellow
 $literals = @()
@@ -166,10 +142,10 @@ for ($i=1; $i -le 10; $i++){
     if ([string]::IsNullOrWhiteSpace($lit)) { break }
     $literals += $lit
 }
-if ($literals.Count -eq 0){ Write-Host "❌ Sin literales." -ForegroundColor Red; exit }
+if ($literals.Count -eq 0){ Write-Host "❌ Sin literales."; exit }
 $stopAtFirst = Ask-YesNo "¿Parar al encontrar la primera coincidencia?"
 
-# -------- Recorrido (igual que el tuyo) --------
+# --- recorrido de carpetas ---
 $regexDocImpl = '(?i)(^\s*\d{0,3}\s*[-_. ]*\s*documentaci[oó]n\s+implantaci[oó]n\b)|(\bdocumentaci[oó]n\s+implantaci[oó]n\b)'
 $regexAnalisis = '(?i)(^\s*\d{0,3}\s*[-_. ]*\s*an[aá]lisis\b)|(\ban[aá]lisis\b)'
 
@@ -182,10 +158,8 @@ Get-ChildItem -Path $basePath -Directory |
   ForEach-Object {
     $nivel1 = $_.FullName
     Write-Host ("→ Revisando carpeta principal: {0}" -f $_.Name) -ForegroundColor Yellow
-
     Get-ChildItem -Path $nivel1 -Directory -ErrorAction SilentlyContinue | ForEach-Object {
         $nivel2 = $_.FullName
-
         $docImplDirs = Get-ChildItem -Path $nivel2 -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match $regexDocImpl }
         foreach ($docDir in $docImplDirs) {
             $analisisDirs = Get-ChildItem -Path $docDir.FullName -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match $regexAnalisis }
@@ -204,37 +178,37 @@ Get-ChildItem -Path $basePath -Directory |
     }
 }
 
-if ($files.Count -eq 0){ Write-Host "⚠️ No se encontraron ficheros 'Blueprint'." -ForegroundColor DarkYellow; exit 0 }
+if ($files.Count -eq 0){ Write-Host "⚠️ No se encontraron ficheros 'Blueprint'."; exit 0 }
 Write-Host ("   → {0} ficheros 'Blueprint' detectados." -f $files.Count) -ForegroundColor Green
 
-# -------- Búsqueda Open XML con stream compartido --------
+# --- lectura y búsqueda en memoria ---
 $results = New-Object System.Collections.Generic.List[object]
 
 foreach ($file in $files){
     if ($file.Extension -notmatch '^\.(xlsx|xlsm)$') {
-        Write-Host ("      ⚠️ {0} es .xls (binario). Se omite en modo Open XML." -f $file.Name) -ForegroundColor DarkYellow
+        Write-Host ("      ⚠️ {0} es .xls (binario). Se omite." -f $file.Name) -ForegroundColor DarkYellow
         continue
     }
 
     try {
-        Write-Host ("      ⏳ Abriendo (stream compartido) {0}" -f $file.FullName) -ForegroundColor DarkGray
-        $opened = Open-ZipArchiveShared -fullPath $file.FullName -retries 4 -delayMs 300
-        $zip = $opened.Zip; $fs = $opened.Stream
+        Write-Host ("      ⏳ Leyendo en memoria: {0}" -f $file.FullName) -ForegroundColor DarkGray
+        $bytes = [System.IO.File]::ReadAllBytes($file.FullName)
+        $ms = New-Object System.IO.MemoryStream(,$bytes)
+        $zip = New-Object System.IO.Compression.ZipArchive($ms, [System.IO.Compression.ZipArchiveMode]::Read, $false)
 
         $sheetInfo = Get-SheetEntryPath -zip $zip
         if (-not $sheetInfo){
             Write-Host ("      ⚠️ No se localizó hoja tipo 'Análisis Conceptos' en {0}" -f $file.Name) -ForegroundColor DarkYellow
-            $zip.Dispose(); $fs.Dispose()
-            continue
+            $zip.Dispose(); $ms.Dispose(); continue
         }
 
         $shared = Read-SharedStrings -zip $zip
         $cells  = Read-SheetCells -zip $zip -sheetPath $sheetInfo.Path -shared $shared
 
-        $zip.Dispose(); $fs.Dispose()
+        $zip.Dispose(); $ms.Dispose()
 
         if ($cells.Count -eq 0){
-            Write-Host ("      ⚪ Hoja '{0}' sin celdas legibles (Open XML)" -f $sheetInfo.SheetName) -ForegroundColor Gray
+            Write-Host ("      ⚪ Hoja '{0}' sin celdas legibles" -f $sheetInfo.SheetName) -ForegroundColor Gray
             continue
         }
 
@@ -258,23 +232,25 @@ foreach ($file in $files){
 
     } catch {
         if ($_.Exception.Message -eq "STOP_GLOBAL"){ throw }
-        Write-Host ("⚠️ Error (red/stream) en {0}: {1}" -f $file.FullName, $_.Exception.Message) -ForegroundColor DarkYellow
+        Write-Host ("⚠️ Error leyendo {0}: {1}" -f $file.FullName, $_.Exception.Message) -ForegroundColor DarkYellow
         continue
     }
 }
 
-# -------- Exportar resultados (CSV/XLSX sin tocar originales) --------
+# --- exportar resultados ---
 $outPath = Join-Path $env:USERPROFILE "Desktop\Resultados_Blueprint.xlsx"
 $csvPath = Join-Path $env:TEMP "Resultados_Blueprint.csv"
+
 if ($results.Count -gt 0){
     $results | Export-Csv -NoTypeInformation -Encoding UTF8 $csvPath
     try {
         $excel = New-Object -ComObject Excel.Application
         $excel.Visible = $false; $excel.DisplayAlerts = $false
         $wb = $excel.Workbooks.Open($csvPath)
-        $wb.SaveAs($outPath, 51) # xlsx
+        $wb.SaveAs($outPath, 51)
         $wb.Close($false)
-        $excel.Quit(); [System.Runtime.InteropServices.Marshal]::ReleaseComObject($excel) | Out-Null
+        $excel.Quit()
+        [System.Runtime.InteropServices.Marshal]::ReleaseComObject($excel) | Out-Null
         Remove-Item $csvPath -ErrorAction SilentlyContinue
         Write-Host "`n✅ Terminado. Resultados guardados en: $outPath" -ForegroundColor Green
     } catch {
