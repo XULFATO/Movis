@@ -1,5 +1,9 @@
 # ===========================================
-# Buscar-Blueprints.ps1 (recorrido intacto + lectura segura de celdas)
+# Buscar-Blueprints.ps1
+# ===========================================
+# Recorre estructura de carpetas, busca ficheros "Blueprint" en
+# "01 Documentación Implantación\03 Análisis" y busca literales
+# dentro de la hoja "Análisis Conceptos" de esos Excel.
 # ===========================================
 
 $ErrorActionPreference = 'Stop'
@@ -25,7 +29,7 @@ $literals = @()
 for ($i=1; $i -le 10; $i++) {
     $lit = Read-Host ("Literal #{0}" -f $i)
     if ([string]::IsNullOrWhiteSpace($lit)) { break }
-    $literals += $lit.ToLowerInvariant()
+    $literals += $lit
 }
 if ($literals.Count -eq 0) { Write-Host "❌ Sin literales."; exit }
 
@@ -36,7 +40,7 @@ $regexDocImpl = '(?i)(^\s*\d{0,3}\s*[-_. ]*\s*documentaci[oó]n\s+implantaci[oó
 $regexAnalisis = '(?i)(^\s*\d{0,3}\s*[-_. ]*\s*an[aá]lisis\b)|(\ban[aá]lisis\b)'
 
 # ===========================================
-# RECORRIDO (el tuyo, intacto)
+# RECORRIDO ORIGINAL
 # ===========================================
 Write-Host "`n📁 Recorriendo estructura (con '_' en 4ª posición, Doc. Implantación/Análisis, orden descendente por fecha)..." -ForegroundColor DarkCyan
 
@@ -87,7 +91,7 @@ if ($files.Count -eq 0) {
 Write-Host ("   → {0} ficheros 'Blueprint' detectados." -f $files.Count) -ForegroundColor Green
 
 # ===========================================
-# BÚSQUEDA EN EXCEL (leer rango completo)
+# BÚSQUEDA EN EXCEL (LECTURA CON CurrentRegion)
 # ===========================================
 $excel = $null
 try {
@@ -110,29 +114,31 @@ try {
             if (-not $sheet) { continue }
 
             $sheet.Activate() | Out-Null
-            $used = $sheet.UsedRange
-            if (-not $used) { continue }
 
-            $data = $used.Value2
-            if (-not $data) { continue }
+            # 🔹 Leer el bloque principal de la hoja (desde A1)
+            try {
+                $range = $sheet.Range("A1").CurrentRegion
+                $data = $range.Value2
+                $rows = $range.Rows.Count
+                $cols = $range.Columns.Count
+                Write-Host ("      🔍 Analizando '{0}' ({1}x{2})..." -f $sheetName, $rows, $cols) -ForegroundColor DarkGray
+            } catch {
+                Write-Host "⚠️ No se pudo leer el rango principal en $($file.Name)" -ForegroundColor DarkYellow
+                continue
+            }
 
-            # Si sólo hay una celda, PowerShell no lo ve como array 2D
+            # Si el rango es de una sola celda, PowerShell no crea matriz
             if (-not $data.GetType().IsArray) { $data = ,$data }
 
-            $rows = $used.Rows.Count
-            $cols = $used.Columns.Count
-            Write-Host ("      🔍 Analizando '{0}' ({1}x{2})..." -f $sheetName, $rows, $cols) -ForegroundColor DarkGray
-
-            for ($r = 1; $r -le $rows; $r++) {
-                for ($c = 1; $c -le $cols; $c++) {
+            for ($r=1; $r -le $rows; $r++) {
+                for ($c=1; $c -le $cols; $c++) {
                     $val = ""
                     try { $val = [string]$data[$r, $c] } catch { continue }
                     if ([string]::IsNullOrWhiteSpace($val)) { continue }
 
-                    $valLow = $val.ToLowerInvariant()
                     foreach ($lit in $literals) {
-                        if ($valLow -match [regex]::Escape($lit)) {
-                            $tipo = if ($valLow -eq $lit) { "Exacta" } else { "Parcial" }
+                        if ($val.ToLowerInvariant().Contains($lit.ToLowerInvariant())) {
+                            $tipo = if ($val.ToLowerInvariant() -eq $lit.ToLowerInvariant()) { "Exacta" } else { "Parcial" }
                             $results.Add([PSCustomObject]@{
                                 Fichero = $file.FullName
                                 Hoja    = $sheetName
@@ -155,7 +161,9 @@ try {
         }
     }
 
+    # ===========================================
     # Exportar resultados
+    # ===========================================
     $outPath = Join-Path $env:USERPROFILE "Desktop\Resultados_Blueprint.xlsx"
     $wbOut = $excel.Workbooks.Add()
     $wsOut = $wbOut.Sheets.Item(1)
