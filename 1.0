@@ -4,8 +4,8 @@
 # dentro de ficheros "Blueprint*.xls*" ubicados en estructura:
 #   carpeta raíz con "_" en 4ª posición
 #   -> subcarpeta (nombre variable)
-#   -> "Documentación Implantación" (flexible: con/ sin tilde, con prefijos 01-, 01_, etc.)
-#   -> "Análisis" (flexible: con/ sin tilde, con prefijos 01-, 01_, etc.)
+#   -> "Documentación Implantación" (flexible: con/sin tilde, con prefijos 01-, 01_, etc.)
+#   -> "Análisis" (flexible: con/sin tilde, con prefijos 01-, 01_, etc.)
 # Recorre las carpetas raíz en orden descendente por fecha de modificación.
 # ===========================================
 
@@ -28,7 +28,7 @@ if (-not (Test-Path $basePath)) {
     exit 1
 }
 
-# Nombre exacto de la hoja (ajústalo si difiere)
+# Nombre exacto de la hoja
 $sheetName = "Análisis Conceptos"
 
 # Literales (hasta 10, pueden contener espacios)
@@ -50,12 +50,7 @@ $stopAtFirst = Ask-YesNo "¿Parar al encontrar la primera coincidencia?"
 # ===========================================
 # PATRONES FLEXIBLES DE CARPETAS
 # ===========================================
-# Documentación Implantación (con/sin tilde, con prefijo numérico y separadores)
-# Ejemplos válidos: "01 Documentación Implantación", "1-Documentacion Implantacion", "Documentación Implantación"
 $regexDocImpl = '(?i)(^\s*\d{0,3}\s*[-_. ]*\s*documentaci[oó]n\s+implantaci[oó]n\b)|(\bdocumentaci[oó]n\s+implantaci[oó]n\b)'
-
-# Análisis (con/sin tilde, con prefijo numérico y separadores)
-# Ejemplos válidos: "01 Análisis", "1-Analisis_03", "Análisis"
 $regexAnalisis = '(?i)(^\s*\d{0,3}\s*[-_. ]*\s*an[aá]lisis\b)|(\ban[aá]lisis\b)'
 
 # ===========================================
@@ -65,36 +60,43 @@ Write-Host "`n📁 Recorriendo estructura (con '_' en 4ª posición, Doc. Implan
 
 $files = @()
 
-# 1) Solo carpetas de primer nivel con "_" en la 4ª posición, ordenadas por fecha modific.
 Get-ChildItem -Path $basePath -Directory |
     Where-Object { $_.Name.Length -ge 4 -and $_.Name[3] -eq '_' } |
     Sort-Object LastWriteTime -Descending |
     ForEach-Object {
 
     $nivel1 = $_.FullName
-    Write-Host (" → Revisando carpeta principal: {0}" -f $_.Name) -ForegroundColor Gray
+    Write-Host ("→ Revisando carpeta principal: {0}" -f $_.Name) -ForegroundColor Yellow
 
-    # 2) Subcarpetas de nombre variable
+    # Subcarpetas
     Get-ChildItem -Path $nivel1 -Directory -ErrorAction SilentlyContinue | ForEach-Object {
         $nivel2 = $_.FullName
 
-        # 3) Carpeta que CASE con "Documentación Implantación" (flexible)
+        # Carpeta "Documentación Implantación" flexible
         $docImplDirs = Get-ChildItem -Path $nivel2 -Directory -ErrorAction SilentlyContinue | Where-Object {
             $_.Name -match $regexDocImpl
         }
 
         foreach ($docDir in $docImplDirs) {
-            # 4) Dentro, carpeta que CASE con "Análisis" (flexible)
+            # Carpeta "Análisis" flexible
             $analisisDirs = Get-ChildItem -Path $docDir.FullName -Directory -ErrorAction SilentlyContinue | Where-Object {
                 $_.Name -match $regexAnalisis
             }
 
             foreach ($anaDir in $analisisDirs) {
-                # 5) Ficheros Blueprint
-                $found = Get-ChildItem -Path $anaDir.FullName -File -Include '*Blueprint*.xlsx','*Blueprint*.xlsm','*Blueprint*.xls' -ErrorAction SilentlyContinue |
+                Write-Host ("   📂 Revisando subcarpeta: {0}" -f $anaDir.FullName) -ForegroundColor Cyan
+
+                # Buscar los ficheros Blueprint (usando -Filter, más fiable)
+                $found = Get-ChildItem -Path $anaDir.FullName -File -Filter '*Blueprint*.xls*' -ErrorAction SilentlyContinue |
                          Where-Object { $_.Name -notlike '~$*' }
+
                 if ($found) {
+                    foreach ($f in $found) {
+                        Write-Host ("      ✅ Encontrado Blueprint: {0}" -f $f.Name) -ForegroundColor Green
+                    }
                     $files += $found
+                } else {
+                    Write-Host ("      ⚠️ Ningún Blueprint encontrado en {0}" -f $anaDir.FullName) -ForegroundColor DarkYellow
                 }
             }
         }
@@ -106,7 +108,7 @@ if ($files.Count -eq 0) {
     exit 0
 }
 
-Write-Host ("   → {0} ficheros 'Blueprint' candidatos encontrados." -f $files.Count)
+Write-Host ("   → {0} ficheros 'Blueprint' detectados." -f $files.Count) -ForegroundColor Green
 
 # ===========================================
 # BÚSQUEDA EN EXCEL
@@ -142,7 +144,7 @@ try {
                 }
                 if (-not $sheet) { continue }
 
-                # Busca la cadena completa (admite espacios)
+                # Buscar literal completo (admite espacios)
                 $firstHit = $sheet.Cells.Find($lit, [Type]::Missing, $xlValues, $xlPart, $xlByRows, $xlNext, $false, [Type]::Missing, [Type]::Missing)
                 if ($firstHit -ne $null) {
                     $addrStart = $firstHit.Address(0,0)
@@ -153,14 +155,14 @@ try {
                         Celda   = $addrStart
                     })
 
-                    Write-Host "✅ [$lit] en: $($file.Name)" -ForegroundColor Green
+                    Write-Host "✅ [$lit] encontrado en: $($file.Name)" -ForegroundColor Green
 
                     if ($stopAtFirst) {
                         $wb.Close($false)
                         throw [System.Exception]::new("STOP_GLOBAL")
                     }
 
-                    # Recorrer todas las coincidencias de la misma hoja/archivo
+                    # Recorrer todas las coincidencias del mismo archivo
                     $cursor = $firstHit
                     while ($true) {
                         $next = $sheet.Cells.FindNext($cursor)
