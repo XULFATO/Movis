@@ -1,14 +1,20 @@
 # ==========================================================
-# OPCIÓN 1 — Búsqueda de literales en Blueprints (Excel COM)
+# CÓDIGO 2 — Buscar literales en Blueprints (Open XML, sin Excel)
+# - Pide ruta y literales (hasta 10)
+# - Mismo recorrido y logs
+# - Abre .xlsx como ZIP en memoria y busca en hojas
+# - Exporta resultados a XLSX/CSV
 # ==========================================================
+
+Add-Type -AssemblyName System.IO.Compression.FileSystem
 $ErrorActionPreference = "Stop"
 
-# ---------- Entrada ----------
-Write-Host "🔍 Búsqueda de literales dentro de ficheros Blueprint (Excel COM)" -ForegroundColor Cyan
+# ---------- ENTRADA ----------
+Write-Host "🔍 Búsqueda de literales dentro de ficheros Blueprint (Open XML)" -ForegroundColor Cyan
 $basePath = Read-Host "📂 Introduce la ruta base (p.ej. O:\ADP_SP\Clientes_Bob_LOPD)"
 if (-not (Test-Path $basePath)) { Write-Host "❌ Ruta no válida."; exit }
 
-Write-Host "`n✏️ Introduce hasta 10 literales (uno por línea). Deja vacío para terminar." -ForegroundColor Yellow
+Write-Host "`n✏️  Introduce hasta 10 literales (uno por línea). Deja vacío para terminar." -ForegroundColor Yellow
 $literals = @()
 for ($i=1; $i -le 10; $i++) {
     $lit = Read-Host ("Literal #{0}" -f $i)
@@ -16,259 +22,213 @@ for ($i=1; $i -le 10; $i++) {
     $literals += $lit
 }
 if ($literals.Count -eq 0) { Write-Host "❌ Sin literales. Saliendo."; exit }
+
 $stopAtFirst = (Read-Host "¿Parar al encontrar la primera coincidencia? (S/N)") -match '^[sS]$'
 
-function Normalize([string]$s) {
+# ---------- UTILIDADES ----------
+function Remove-Diacritics([string]$s) {
     if ([string]::IsNullOrWhiteSpace($s)) { return "" }
-    $d=$s.Normalize([Text.NormalizationForm]::FormD)
-    ($d.ToCharArray() | Where-Object { [Globalization.CharUnicodeInfo]::GetUnicodeCategory($_) -ne [Globalization.UnicodeCategory]::NonSpacingMark }) -join '' | ForEach-Object {$_}|Out-String|%{$_.Trim().ToLower()}
+    $d = $s.Normalize([Text.NormalizationForm]::FormD)
+    ($d.ToCharArray() | Where-Object {
+        [Globalization.CharUnicodeInfo]::GetUnicodeCategory($_) -ne [Globalization.UnicodeCategory]::NonSpacingMark
+    }) -join ''
 }
+function Normalize([string]$s) { (Remove-Diacritics $s).ToLowerInvariant() }
 
-# ---------- Búsqueda de Blueprints ----------
-$reDoc='(?i)(documentaci[oó]n\s+implantaci[oó]n)'
-$reAna='(?i)(an[aá]lisis)'
-Write-Host "`n📁 Recorriendo estructura..." -ForegroundColor DarkCyan
-$blueprints=@()
+# ---------- RECORRIDO ----------
+$reDoc = '(?i)(documentaci[oó]n\s+implantaci[oó]n)'
+$reAna = '(?i)(an[aá]lisis)'
+
+Write-Host "`n📁 Recorriendo estructura (orden por fecha desc.)..." -ForegroundColor DarkCyan
+
+$blueprints = @()
 
 Get-ChildItem -Path $basePath -Directory |
- Where-Object { $_.Name.Length -ge 4 -and $_.Name[3] -eq '_' } |
- Sort-Object LastWriteTime -Descending |
- ForEach-Object {
-    $dir1=$_
+Where-Object { $_.Name.Length -ge 4 -and $_.Name[3] -eq '_' } |
+Sort-Object LastWriteTime -Descending |
+ForEach-Object {
+    $dir1 = $_
     Write-Host "→ Revisando carpeta principal: $($dir1.Name)" -ForegroundColor Yellow
+
     Get-ChildItem -Path $dir1.FullName -Directory -ErrorAction SilentlyContinue | ForEach-Object {
-        $dir2=$_
-        $docDirs=Get-ChildItem -Path $dir2.FullName -Directory -ErrorAction SilentlyContinue|Where-Object{$_.Name -match $reDoc}
-        foreach($doc in $docDirs){
-            $anaDirs=Get-ChildItem -Path $doc.FullName -Directory -ErrorAction SilentlyContinue|Where-Object{$_.Name -match $reAna}
-            foreach($ana in $anaDirs){
+        $dir2 = $_
+
+        $docDirs = Get-ChildItem -Path $dir2.FullName -Directory -ErrorAction SilentlyContinue |
+                   Where-Object { $_.Name -match $reDoc }
+
+        foreach ($doc in $docDirs) {
+            $anaDirs = Get-ChildItem -Path $doc.FullName -Directory -ErrorAction SilentlyContinue |
+                       Where-Object { $_.Name -match $reAna }
+
+            foreach ($ana in $anaDirs) {
                 Write-Host "   📂 Revisando subcarpeta: $($ana.FullName)" -ForegroundColor Cyan
-                $found=Get-ChildItem -Path $ana.FullName -File -ErrorAction SilentlyContinue|Where-Object{$_.Name -match '(?i)Blueprint.*\.(xlsx|xlsm)$' -and $_.Name -notlike '~$*'}
-                foreach($f in $found){
+
+                $found = Get-ChildItem -Path $ana.FullName -File -ErrorAction SilentlyContinue |
+                         Where-Object { $_.Name -notlike '~$*' -and $_.Name -match '(?i)Blueprint.*\.xlsx$' }
+
+                foreach ($f in $found) {
                     Write-Host "      ✅ Encontrado Blueprint: $($f.Name)" -ForegroundColor Green
-                    $blueprints+=$f.FullName
+                    $blueprints += $f.FullName
                 }
             }
         }
     }
- }
+}
+
 if ($blueprints.Count -eq 0) { Write-Host "⚠️ No se encontraron Blueprints."; exit }
 
-# ---------- Análisis de Blueprints ----------
-$excel=$null
-$results=@()
-try {
-    $excel=New-Object -ComObject Excel.Application
-    $excel.Visible=$false
-    $excel.DisplayAlerts=$false
+# ---------- LECTURA OPEN XML ----------
+function Search-InWorksheetXml([string]$xmlContent, [string[]]$literals) {
+    $norm = Normalize $xmlContent
+    $hits = @()
+    foreach ($lit in $literals) {
+        $needle = Normalize $lit
+        if ($norm -like ("*" + $needle + "*")) {
+            $hits += $lit
+        }
+    }
+    return $hits
+}
 
-    foreach($path in $blueprints){
-        try {
-            Write-Host "      ⏳ Abriendo (solo lectura): $path" -ForegroundColor DarkGray
-            Write-Host "      🧩 Intentando abrir Excel..." -ForegroundColor DarkCyan
-            $wb=$excel.Workbooks.Open($path,0,$true)
-            Write-Host "      ✅ Excel abierto correctamente." -ForegroundColor Green
+$results = New-Object System.Collections.Generic.List[object]
 
-            $sheet=$null
-            foreach($sh in $wb.Worksheets){
-                $n=Normalize $sh.Name
-                if($n -match 'analisis' -and $n -match 'concept'){$sheet=$sh;break}
+foreach ($path in $blueprints) {
+    try {
+        Write-Host "      ⏳ Analizando (OpenXML): $path" -ForegroundColor DarkGray
+
+        # Extrae a carpeta temporal (más robusto en red que abrir ZipArchive directo)
+        $tmp = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), [System.IO.Path]::GetRandomFileName())
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($path, $tmp)
+
+        # Intentamos localizar una hoja que contenga "analisis" y "concept" en su nombre
+        $workbookXmlPath = Join-Path $tmp "xl\workbook.xml"
+        $targetWorksheets = @()
+
+        if (Test-Path $workbookXmlPath) {
+            $wbXml = [xml](Get-Content $workbookXmlPath -Raw)
+            $ns = New-Object System.Xml.XmlNamespaceManager($wbXml.NameTable)
+            $ns.AddNamespace("d","http://schemas.openxmlformats.org/spreadsheetml/2006/main")
+
+            $sheets = $wbXml.SelectNodes("//d:sheets/d:sheet", $ns)
+            foreach ($s in $sheets) {
+                $sheetName = [string]$s.name
+                $n = Normalize $sheetName
+                if ($n -match "analisis" -and $n -match "concept") {
+                    $targetWorksheets += @{ SheetId = $s.id; Name = $sheetName }
+                }
             }
-            if(-not $sheet){
-                Write-Host "⚠️ No hay hoja 'Análisis conceptos' en $(Split-Path $path -Leaf)" -ForegroundColor Yellow
-                $wb.Close($false)|Out-Null; continue
+
+            # Si no encontramos por nombre, buscamos en todas las hojas
+            if ($targetWorksheets.Count -eq 0) {
+                foreach ($s in $sheets) {
+                    $targetWorksheets += @{ SheetId = $s.id; Name = [string]$s.name }
+                }
+            }
+        }
+
+        # Mapa rels para hallar el path de cada hoja
+        $relsPath = Join-Path $tmp "xl\_rels\workbook.xml.rels"
+        $rels = $null
+        if (Test-Path $relsPath) {
+            $rels = [xml](Get-Content $relsPath -Raw)
+        }
+
+        foreach ($tw in $targetWorksheets) {
+            $sheetPath = $null
+            if ($rels) {
+                $relNode = $rels.SelectSingleNode("//Relationship[@Id='$($tw.SheetId)']")
+                if ($relNode) {
+                    $t = [string]$relNode.Target
+                    if (-not $t.StartsWith("worksheets/")) { $t = "worksheets/$t" }
+                    $sheetPath = Join-Path $tmp ("xl\" + $t)
+                }
+            }
+            if (-not $sheetPath) {
+                # fallback: probar todas las hojas .xml
+                $sheetPath = $null
             }
 
-            Write-Host "🔍 Analizando hoja: $($sheet.Name)" -ForegroundColor Gray
-            $used=$sheet.UsedRange; $rows=$used.Rows.Count; $cols=$used.Columns.Count
-            for($r=1;$r-le$rows;$r++){
-                for($c=1;$c-le$cols;$c++){
-                    $txt=""; try{$txt=[string]$used.Cells.Item($r,$c).Text}catch{continue}
-                    if([string]::IsNullOrWhiteSpace($txt)){continue}
-                    $v=Normalize $txt
-                    foreach($lit in $literals){
-                        if($v -like ("*"+(Normalize $lit)+"*")){
-                            Write-Host "✅ '$lit' en $(Split-Path $path -Leaf) → R$r,C$c ('$txt')" -ForegroundColor Green
-                            $results += [PSCustomObject]@{
-                                Fichero = Split-Path $path -Leaf
-                                Hoja    = $sheet.Name
-                                Literal = $lit
-                                Celda   = "R$rC$c"
-                                Valor   = $txt
-                            }
-                            if($stopAtFirst){throw "STOP_GLOBAL"}
-                        }
+            if ($sheetPath -and (Test-Path $sheetPath)) {
+                $xml = Get-Content $sheetPath -Raw
+                $hits = Search-InWorksheetXml -xmlContent $xml -literals $literals
+                foreach ($h in $hits) {
+                    $results.Add([PSCustomObject]@{
+                        Fichero = $path
+                        Hoja    = $tw.Name
+                        Literal = $h
+                        Celda   = ""      # sin coordenada en este modo
+                        Valor   = ""      # sin valor exacto reconstruido
+                    })
+                    Write-Host "✅ '$h' en hoja '$($tw.Name)' de $(Split-Path $path -Leaf)" -ForegroundColor Green
+                    if ($stopAtFirst) { throw "STOP_GLOBAL" }
+                }
+            } else {
+                # Si no resolvimos la ruta exacta, escaneamos todas las hojas
+                $allSheets = Get-ChildItem -Path (Join-Path $tmp "xl\worksheets") -Filter "*.xml" -ErrorAction SilentlyContinue
+                foreach ($sf in $allSheets) {
+                    $xml = Get-Content $sf.FullName -Raw
+                    $hits = Search-InWorksheetXml -xmlContent $xml -literals $literals
+                    foreach ($h in $hits) {
+                        $results.Add([PSCustomObject]@{
+                            Fichero = $path
+                            Hoja    = $sf.BaseName
+                            Literal = $h
+                            Celda   = ""
+                            Valor   = ""
+                        })
+                        Write-Host "✅ '$h' en hoja '$($sf.BaseName)' de $(Split-Path $path -Leaf)" -ForegroundColor Green
+                        if ($stopAtFirst) { throw "STOP_GLOBAL" }
                     }
                 }
             }
-            $wb.Close($false)|Out-Null
-        } catch {
-            if($_.Exception.Message -eq "STOP_GLOBAL"){throw}
-            Write-Host "⚠️ Error con $(Split-Path $path -Leaf): $($_.Exception.Message)" -ForegroundColor Yellow
         }
+
+        Remove-Item -Path $tmp -Recurse -Force -ErrorAction SilentlyContinue
+    } catch {
+        if ($_.Exception.Message -eq "STOP_GLOBAL") { break }
+        Write-Host "⚠️ Error con $path : $($_.Exception.Message)" -ForegroundColor Yellow
+        try { Remove-Item -Path $tmp -Recurse -Force -ErrorAction SilentlyContinue } catch {}
+        continue
     }
-} finally {
-    if($excel){$excel.Quit();[System.Runtime.InteropServices.Marshal]::ReleaseComObject($excel)|Out-Null}
-    Get-Process excel -ErrorAction SilentlyContinue|%{try{$_.Kill()}catch{}}
 }
 
-# ---------- Exportar resultados ----------
-if($results.Count -gt 0){
-    $outFile=Join-Path $env:TEMP "Resultados_Blueprint.xlsx"
-    $excelOut=New-Object -ComObject Excel.Application
-    $wbOut=$excelOut.Workbooks.Add()
-    $ws=$wbOut.Worksheets.Item(1)
-    $ws.Cells.Item(1,1)="Fichero"
-    $ws.Cells.Item(1,2)="Hoja"
-    $ws.Cells.Item(1,3)="Literal"
-    $ws.Cells.Item(1,4)="Celda"
-    $ws.Cells.Item(1,5)="Valor"
-    $row=2
-    foreach($r in $results){
-        $ws.Cells.Item($row,1)=$r.Fichero
-        $ws.Cells.Item($row,2)=$r.Hoja
-        $ws.Cells.Item($row,3)=$r.Literal
-        $ws.Cells.Item($row,4)=$r.Celda
-        $ws.Cells.Item($row,5)=$r.Valor
-        $row++
-    }
-    $ws.Range("A1:E1").Font.Bold=$true
-    $ws.Columns.AutoFit()|Out-Null
-    $wbOut.SaveAs($outFile)
-    $wbOut.Close($false)
-    $excelOut.Quit()
-    [System.Runtime.InteropServices.Marshal]::ReleaseComObject($excelOut)|Out-Null
-    Write-Host "`n✅ Resultados guardados en: $outFile" -ForegroundColor Green
-}else{
-    Write-Host "⚠️ No se encontraron coincidencias." -ForegroundColor Yellow
-}
-Write-Host "`n✔️ Proceso completado (Excel COM)." -ForegroundColor Green
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# ==========================================================
-# 🔍 OPCIÓN 2 — Búsqueda de literales en Blueprints (Open XML)
-# ==========================================================
-Add-Type -AssemblyName System.IO.Compression.FileSystem
-$ErrorActionPreference = "Stop"
-
-Write-Host "🔍 Búsqueda de literales dentro de ficheros Blueprint (Open XML)" -ForegroundColor Cyan
-$basePath = Read-Host "📂 Introduce la ruta base (p.ej. O:\ADP_SP\Clientes_Bob_LOPD)"
-if (-not (Test-Path $basePath)) { Write-Host "❌ Ruta no válida."; exit }
-
-Write-Host "`n✏️ Introduce hasta 10 literales (uno por línea). Deja vacío para terminar." -ForegroundColor Yellow
-$literals=@()
-for($i=1;$i-le10;$i++){
-    $lit=Read-Host("Literal #{0}" -f $i)
-    if([string]::IsNullOrWhiteSpace($lit)){break}
-    $literals+=$lit
-}
-if($literals.Count-eq0){Write-Host"❌ Sin literales.";exit}
-$stopAtFirst=(Read-Host"¿Parar al encontrar la primera coincidencia?(S/N)")-match'^[sS]$'
-
-function Normalize([string]$s){
-    if([string]::IsNullOrWhiteSpace($s)){return""}
-    $d=$s.Normalize([Text.NormalizationForm]::FormD)
-    ($d.ToCharArray()|Where-Object{[Globalization.CharUnicodeInfo]::GetUnicodeCategory($_)-ne[Globalization.UnicodeCategory]::NonSpacingMark})-join''|ForEach-Object{$_}|Out-String|%{$_.Trim().ToLower()}
-}
-
-$reDoc='(?i)(documentaci[oó]n\s+implantaci[oó]n)'
-$reAna='(?i)(an[aá]lisis)'
-Write-Host"`n📁 Recorriendo estructura..."-ForegroundColorDarkCyan
-$blueprints=@()
-
-Get-ChildItem-Path$basePath-Directory|
-Where-Object{$_.Name.Length-ge4 -and $_.Name[3]-eq'_'}|
-Sort-ObjectLastWriteTime-Descending|
-ForEach-Object{
-    $dir1=$_
-    Write-Host"→ Revisando carpeta principal:$($dir1.Name)"-ForegroundColorYellow
-    Get-ChildItem-Path$dir1.FullName-Directory-ErrorActionSilentlyContinue|ForEach-Object{
-        $dir2=$_
-        $docDirs=Get-ChildItem-Path$dir2.FullName-Directory-ErrorActionSilentlyContinue|Where-Object{$_.Name -match $reDoc}
-        foreach($doc in $docDirs){
-            $anaDirs=Get-ChildItem-Path$doc.FullName-Directory-ErrorActionSilentlyContinue|Where-Object{$_.Name -match $reAna}
-            foreach($ana in $anaDirs){
-                $found=Get-ChildItem-Path$ana.FullName-File-ErrorActionSilentlyContinue|Where-Object{$_.Name -match'(?i)Blueprint.*\.xlsx$'-and$_.Name -notlike'~$*'}
-                foreach($f in $found){
-                    Write-Host"      ✅ Encontrado Blueprint:$($f.Name)"-ForegroundColorGreen
-                    $blueprints+=$f.FullName
-                }
-            }
+# ---------- EXPORTACIÓN ----------
+if ($results.Count -gt 0) {
+    $outFile = Join-Path $env:USERPROFILE "Desktop\Resultados_Blueprint_OpenXML.xlsx"
+    try {
+        $excelOut = New-Object -ComObject Excel.Application
+        $excelOut.Visible = $false; $excelOut.DisplayAlerts = $false
+        $wbOut = $excelOut.Workbooks.Add()
+        $ws = $wbOut.Worksheets.Item(1)
+        $ws.Cells.Item(1,1) = "Fichero"
+        $ws.Cells.Item(1,2) = "Hoja"
+        $ws.Cells.Item(1,3) = "Literal"
+        $ws.Cells.Item(1,4) = "Celda"
+        $ws.Cells.Item(1,5) = "Valor"
+        $row = 2
+        foreach ($r in $results) {
+            $ws.Cells.Item($row,1) = $r.Fichero
+            $ws.Cells.Item($row,2) = $r.Hoja
+            $ws.Cells.Item($row,3) = $r.Literal
+            $ws.Cells.Item($row,4) = $r.Celda
+            $ws.Cells.Item($row,5) = $r.Valor
+            $row++
         }
+        $ws.Range("A1:E1").Font.Bold = $true
+        $ws.Columns.AutoFit() | Out-Null
+        $wbOut.SaveAs($outFile)
+        $wbOut.Close($false)
+        $excelOut.Quit()
+        [System.Runtime.InteropServices.Marshal]::ReleaseComObject($excelOut) | Out-Null
+        Write-Host "`n✅ Resultados guardados en: $outFile" -ForegroundColor Green
+    } catch {
+        Write-Host "⚠️ No se pudo crear XLSX, exporto CSV en %TEMP%." -ForegroundColor Yellow
+        $csv = Join-Path $env:TEMP "Resultados_Blueprint_OpenXML.csv"
+        $results | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $csv
+        Write-Host "📄 CSV: $csv" -ForegroundColor Green
     }
-}
-if($blueprints.Count-eq0){Write-Host"⚠️ No se encontraron Blueprints.";exit}
-
-# ---------- Procesamiento sin Excel ----------
-$results=@()
-foreach($path in $blueprints){
-    try{
-        Write-Host"      ⏳ Analizando(OpenXML):$path"-ForegroundColorDarkGray
-        $tmp=[System.IO.Path]::Combine([System.IO.Path]::GetTempPath(),[System.IO.Path]::GetRandomFileName())
-        [System.IO.Compression.ZipFile]::ExtractToDirectory($path,$tmp)
-        $sheetFiles=Get-ChildItem(Join-Path$tmp"xl\worksheets")-Filter"*.xml"
-        foreach($sheet in $sheetFiles){
-            $xml=Get-Content$sheet.FullName-Raw
-            $norm=(Normalize$xml)
-            foreach($lit in $literals){
-                if($norm -like("*"+(Normalize$lit)+"*")){
-                    Write-Host"✅ '$lit' encontrado en hoja $($sheet.BaseName) de $(Split-Path $path -Leaf)"-ForegroundColorGreen
-                    $results+=[PSCustomObject]@{
-                        Fichero=Split-Path$path -Leaf
-                        Hoja=$sheet.BaseName
-                        Literal=$lit
-                        Celda=""
-                        Valor=""
-                    }
-                    if($stopAtFirst){throw"STOP_GLOBAL"}
-                }
-            }
-        }
-        Remove-Item-Path$tmp-Recurse-Force-ErrorActionSilentlyContinue
-    }catch{
-        if($_.Exception.Message -eq"STOP_GLOBAL"){throw}
-        Write-Host"⚠️ Error con $path:$($_.Exception.Message)"-ForegroundColorYellow
-    }
+} else {
+    Write-Host "`n⚪ No se encontraron coincidencias." -ForegroundColor Gray
 }
 
-# ---------- Exportación ----------
-if($results.Count-gt0){
-    $outFile=Join-Path$env:TEMP"Resultados_Blueprint_OpenXML.xlsx"
-    $excelOut=New-Object-ComObjectExcel.Application
-    $wbOut=$excelOut.Workbooks.Add()
-    $ws=$wbOut.Worksheets.Item(1)
-    $ws.Cells.Item(1,1)="Fichero";$ws.Cells.Item(1,2)="Hoja";$ws.Cells.Item(1,3)="Literal";$ws.Cells.Item(1,4)="Celda";$ws.Cells.Item(1,5)="Valor"
-    $row=2
-    foreach($r in $results){
-        $ws.Cells.Item($row,1)=$r.Fichero
-        $ws.Cells.Item($row,2)=$r.Hoja
-        $ws.Cells.Item($row,3)=$r.Literal
-        $ws.Cells.Item($row,4)=$r.Celda
-        $ws.Cells.Item($row,5)=$r.Valor
-        $row++
-    }
-    $ws.Range("A1:E1").Font.Bold=$true
-    $ws.Columns.AutoFit()|Out-Null
-    $wbOut.SaveAs($outFile)
-    $wbOut.Close($false)
-    $excelOut.Quit()
-    [System.Runtime.InteropServices.Marshal]::ReleaseComObject($excelOut)|Out-Null
-    Write-Host"`n✅ Resultados guardados en:$outFile"-ForegroundColorGreen
-}else{
-    Write-Host"⚠️ No se encontraron coincidencias."-ForegroundColorYellow
-}
-Write-Host"`n✔️ Proceso completado(OpenXML)."-ForegroundColorGreen
+Write-Host "`n✔️ Proceso completado (Open XML)." -ForegroundColor Green
