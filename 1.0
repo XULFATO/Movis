@@ -1,14 +1,6 @@
 # ==========================================================
-# Buscar-Blueprints.ps1  — versión estable (con prompts)
-# ==========================================================
-# - Pide ruta base y literales (hasta 10)
-# - Recorre carpetas: '_' en 4ª pos. → (2º nivel) → Doc. Implantación → Análisis
-# - Orden descendente por fecha
-# - Abre Excel en solo lectura (COM), hoja que contenga 'analisis' y 'concept'
-# - Busca literales (insensible a mayúsculas/acentos) con Value2 y fallback .Text
-# - Opción de parar al primer hallazgo
-# - Exporta resultados a Escritorio (xlsx)
-# - Compatible con PowerShell ISE: limpia instancias de Excel al inicio/fin
+# 🔍 Buscar literales dentro de ficheros "Blueprint" (Excel)
+# Compatible con PowerShell ISE y unidades de red
 # ==========================================================
 
 $ErrorActionPreference = 'Stop'
@@ -24,7 +16,7 @@ Get-Process excel -ErrorAction SilentlyContinue | ForEach-Object {
 }
 Start-Sleep -Milliseconds 600
 
-# ---------- Utilidades ----------
+# ---------- FUNCIONES AUXILIARES ----------
 function Remove-Diacritics([string]$s){
     if ([string]::IsNullOrWhiteSpace($s)) { return "" }
     $d = $s.Normalize([Text.NormalizationForm]::FormD)
@@ -43,8 +35,8 @@ function Ask-YesNo($prompt) {
     }
 }
 
-# ---------- Prompts ----------
-Write-Host "🔍 Búsqueda de literales en Blueprints → hoja 'Análisis conceptos' (Excel-COM, solo lectura)" -ForegroundColor Cyan
+# ---------- PROMPTS ----------
+Write-Host "🔍 Búsqueda de literales en Blueprints → hoja 'Análisis conceptos'" -ForegroundColor Cyan
 
 $basePath = Read-Host "📂 Introduce la ruta base (p.ej. O:\ADP_SP\Clientes_Bob_LOPD)"
 if (-not (Test-Path $basePath)) { Write-Host "❌ Ruta no válida."; exit }
@@ -60,13 +52,12 @@ if ($literals.Count -eq 0) { Write-Host "❌ Sin literales. Saliendo."; exit }
 
 $stopAtFirst = Ask-YesNo "¿Parar al encontrar la primera coincidencia?"
 
-# Patrones de carpeta (flexibles: con/sin prefijos y tildes)
-$reDoc = '(?i)(^\s*\d{0,3}\s*[-_. ]*\s*documentaci[oó]n\s+implantaci[oó]n\b)|(\bdocumentaci[oó]n\s+implantaci[oó]n\b)'
-$reAna = '(?i)(^\s*\d{0,3}\s*[-_. ]*\s*an[aá]lisis\b)|(\ban[aá]lisis\b)'
+# Patrones flexibles
+$reDoc = '(?i)(documentaci[oó]n\s+implantaci[oó]n)'
+$reAna = '(?i)(an[aá]lisis)'
 
-# ---------- Recorrido de carpetas ----------
+# ---------- RECORRIDO DE CARPETAS ----------
 Write-Host "`n📁 Recorriendo estructura (con '_' en 4ª posición, orden fecha desc.)..." -ForegroundColor DarkCyan
-
 $blueprints = @()
 
 Get-ChildItem -Path $basePath -Directory |
@@ -77,16 +68,13 @@ Get-ChildItem -Path $basePath -Directory |
     $dir1 = $_
     Write-Host ("→ Revisando carpeta principal: {0}" -f $dir1.Name) -ForegroundColor Yellow
 
-    # SEGUNDO NIVEL
     Get-ChildItem -Path $dir1.FullName -Directory -ErrorAction SilentlyContinue | ForEach-Object {
         $dir2 = $_
 
-        # 01 Documentación Implantación
         $docDirs = Get-ChildItem -Path $dir2.FullName -Directory -ErrorAction SilentlyContinue |
                    Where-Object { $_.Name -match $reDoc }
 
         foreach ($doc in $docDirs) {
-            # 03 Análisis
             $anaDirs = Get-ChildItem -Path $doc.FullName -Directory -ErrorAction SilentlyContinue |
                        Where-Object { $_.Name -match $reAna }
 
@@ -112,7 +100,7 @@ if ($blueprints.Count -eq 0) {
 
 Write-Host ("   → {0} ficheros 'Blueprint' detectados." -f $blueprints.Count) -ForegroundColor Green
 
-# ---------- Búsqueda en Excel (COM) ----------
+# ---------- PROCESO DE EXCEL ----------
 $excel = $null
 $results = New-Object System.Collections.Generic.List[object]
 
@@ -120,16 +108,23 @@ try {
     $excel = New-Object -ComObject Excel.Application
     $excel.Visible = $false
     $excel.DisplayAlerts = $false
-    $excel.AutomationSecurity = 3  # Disable macros
+    $excel.AskToUpdateLinks = $false
+    $excel.AlertBeforeOverwriting = $false
     $excel.EnableEvents = $false
 
     foreach ($path in $blueprints) {
         $wb = $null
         try {
             Write-Host ("      ⏳ Abriendo (solo lectura): {0}" -f $path) -ForegroundColor DarkGray
-            $wb = $excel.Workbooks.Open($path, 0, $true)  # ReadOnly=true
 
-            # localizar hoja: contiene 'analisis' y 'concept'
+            # Apertura robusta: evita bloqueos en red
+            $wb = $excel.Workbooks.Open(
+                $path, 0, $true, 5, "", "", $false,
+                "xlNormal", "", $false, $false, 0,
+                $false, $true, 0
+            )
+
+            # Buscar hoja 'analisis' y 'concept'
             $target = $null
             foreach ($sh in $wb.Worksheets) {
                 $n = Normalize $sh.Name
@@ -142,61 +137,30 @@ try {
             }
 
             Write-Host ("      🔍 Analizando hoja '{0}'..." -f $target.Name) -ForegroundColor DarkGray
-
             $used = $target.UsedRange
             $rows = $used.Rows.Count
             $cols = $used.Columns.Count
 
-            # 1) Intento rápido: matriz Value2
             $foundHere = $false
-            $data = $null
-            try { $data = $used.Value2 } catch {}
 
-            if ($data -and $data.GetType().IsArray) {
-                for ($r=1; $r -le $rows; $r++){
-                    for ($c=1; $c -le $cols; $c++){
-                        $val = $data[$r,$c]
-                        if ($null -ne $val) {
-                            $v = Normalize ($val.ToString())
-                            foreach ($lit in $literals) {
-                                if ($v -like ("*" + (Normalize $lit) + "*")) {
-                                    $results.Add([PSCustomObject]@{
-                                        Fichero = $path
-                                        Hoja    = $target.Name
-                                        Literal = $lit
-                                        Celda   = "$r,$c"
-                                        Valor   = $val.ToString()
-                                    })
-                                    Write-Host ("✅ '{0}' en {1} → {2},{3} ('{4}')" -f $lit, (Split-Path $path -Leaf), $r, $c, $val) -ForegroundColor Green
-                                    $foundHere = $true
-                                    if ($stopAtFirst) { throw "STOP_GLOBAL" }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            # 2) Fallback robusto: celda a celda con .Text
-            if (-not $foundHere) {
-                for ($r=1; $r -le $rows; $r++){
-                    for ($c=1; $c -le $cols; $c++){
-                        $txt = ""
-                        try { $txt = [string]$used.Cells.Item($r,$c).Text } catch { continue }
-                        if ([string]::IsNullOrWhiteSpace($txt)) { continue }
-                        $v = Normalize $txt
-                        foreach ($lit in $literals) {
-                            if ($v -like ("*" + (Normalize $lit) + "*")) {
-                                $results.Add([PSCustomObject]@{
-                                    Fichero = $path
-                                    Hoja    = $target.Name
-                                    Literal = $lit
-                                    Celda   = "$r,$c"
-                                    Valor   = $txt
-                                })
-                                Write-Host ("✅ '{0}' en {1} → {2},{3} ('{4}')" -f $lit, (Split-Path $path -Leaf), $r, $c, $txt) -ForegroundColor Green
-                                if ($stopAtFirst) { throw "STOP_GLOBAL" }
-                            }
+            for ($r=1; $r -le $rows; $r++){
+                for ($c=1; $c -le $cols; $c++){
+                    $txt = ""
+                    try { $txt = [string]$used.Cells.Item($r,$c).Text } catch { continue }
+                    if ([string]::IsNullOrWhiteSpace($txt)) { continue }
+                    $v = Normalize $txt
+                    foreach ($lit in $literals) {
+                        if ($v -like ("*" + (Normalize $lit) + "*")) {
+                            $results.Add([PSCustomObject]@{
+                                Fichero = $path
+                                Hoja    = $target.Name
+                                Literal = $lit
+                                Celda   = "$r,$c"
+                                Valor   = $txt
+                            })
+                            Write-Host ("✅ '{0}' en {1} → {2},{3} ('{4}')" -f $lit, (Split-Path $path -Leaf), $r, $c, $txt) -ForegroundColor Green
+                            $foundHere = $true
+                            if ($stopAtFirst) { throw "STOP_GLOBAL" }
                         }
                     }
                 }
@@ -214,7 +178,7 @@ try {
         }
     }
 
-    # ---------- Exportar resultados ----------
+    # ---------- EXPORTAR RESULTADOS ----------
     $outPath = Join-Path $env:USERPROFILE "Desktop\Resultados_Blueprint.xlsx"
     if ($results.Count -gt 0){
         $wbOut = $excel.Workbooks.Add()
@@ -240,7 +204,7 @@ try {
     }
 
 } finally {
-    # ---------- LIMPIEZA FINAL ISE ----------
+    # ---------- LIMPIEZA FINAL ----------
     Write-Host "🧹 Cerrando Excel y liberando COM..." -ForegroundColor DarkGray
     try {
         if ($excel) { $excel.Quit(); [System.Runtime.InteropServices.Marshal]::ReleaseComObject($excel) | Out-Null }
@@ -256,3 +220,5 @@ try {
     [GC]::Collect()
     [GC]::WaitForPendingFinalizers()
 }
+
+Write-Host "`n✔️ Proceso completado." -ForegroundColor Green
