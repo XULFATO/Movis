@@ -1,5 +1,5 @@
 # ===========================================
-# Buscar-Blueprints.ps1 (versión robusta búsqueda literal)
+# Buscar-Blueprints.ps1 (versión estable)
 # ===========================================
 
 $ErrorActionPreference = 'Stop'
@@ -14,120 +14,187 @@ function Ask-YesNo($prompt) {
 
 Write-Host "🔍 Búsqueda de literales en hoja 'Análisis Conceptos' de ficheros 'Blueprint'..." -ForegroundColor Cyan
 
+# Ruta base
 $basePath = Read-Host "📂 Introduce la ruta base (p.ej. R:\Proyectos)"
-if (-not (Test-Path $basePath)) { Write-Host "❌ Ruta no válida."; exit }
+if (-not (Test-Path $basePath)) {
+    Write-Host "❌ La ruta no existe: $basePath" -ForegroundColor Red
+    exit 1
+}
 
+# Nombre exacto de la hoja
 $sheetName = "Análisis Conceptos"
 
-# Literales
+# Literales (hasta 10)
+Write-Host "`nIntroduce hasta 10 literales (pueden tener varias palabras, uno por línea). Deja vacío para terminar." -ForegroundColor Yellow
 $literals = @()
 for ($i=1; $i -le 10; $i++) {
     $lit = Read-Host ("Literal #{0}" -f $i)
     if ([string]::IsNullOrWhiteSpace($lit)) { break }
     $literals += $lit
 }
-if ($literals.Count -eq 0) { Write-Host "❌ Sin literales."; exit }
+if ($literals.Count -eq 0) {
+    Write-Host "❌ No se introdujo ningún literal." -ForegroundColor Red
+    exit 1
+}
 
+# ¿Parar en la primera coincidencia global?
 $stopAtFirst = Ask-YesNo "¿Parar al encontrar la primera coincidencia?"
 
-# --- patrones de carpetas ---
+# ===========================================
+# PATRONES FLEXIBLES DE CARPETAS
+# ===========================================
 $regexDocImpl = '(?i)(^\s*\d{0,3}\s*[-_. ]*\s*documentaci[oó]n\s+implantaci[oó]n\b)|(\bdocumentaci[oó]n\s+implantaci[oó]n\b)'
 $regexAnalisis = '(?i)(^\s*\d{0,3}\s*[-_. ]*\s*an[aá]lisis\b)|(\ban[aá]lisis\b)'
 
-Write-Host "`n📁 Recorriendo estructura..." -ForegroundColor DarkCyan
+# ===========================================
+# RECORRER ESTRUCTURA (versión buena anterior)
+# ===========================================
+Write-Host "`n📁 Recorriendo estructura (con '_' en 4ª posición, Doc. Implantación/Análisis, orden descendente por fecha)..." -ForegroundColor DarkCyan
+
 $files = @()
+
 Get-ChildItem -Path $basePath -Directory |
- Where-Object { $_.Name.Length -ge 4 -and $_.Name[3] -eq '_' } |
- Sort-Object LastWriteTime -Descending |
- ForEach-Object {
-    Get-ChildItem -Path $_.FullName -Directory -ErrorAction SilentlyContinue | ForEach-Object {
-        Get-ChildItem -Path $_.FullName -Directory -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -match $regexDocImpl } | ForEach-Object {
-            Get-ChildItem -Path $_.FullName -Directory -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -match $regexAnalisis } | ForEach-Object {
-                $found = Get-ChildItem -Path $_.FullName -File -Filter '*Blueprint*.xls*' -ErrorAction SilentlyContinue |
-                         Where-Object { $_.Name -notlike '~$*' }
-                if ($found) { $files += $found }
-            }
+    Where-Object { $_.Name.Length -ge 4 -and $_.Name[3] -eq '_' } |
+    Sort-Object LastWriteTime -Descending |
+    ForEach-Object {
+
+    $nivel1 = $_.FullName
+    Write-Host ("→ Revisando carpeta principal: {0}" -f $_.Name) -ForegroundColor Yellow
+
+    # Subcarpetas de segundo nivel
+    Get-ChildItem -Path $nivel1 -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+        $nivel2 = $_.FullName
+
+        # Carpeta "Documentación Implantación"
+        $docImplDirs = Get-ChildItem -Path $nivel2 -Directory -ErrorAction SilentlyContinue | Where-Object {
+            $_.Name -match $regexDocImpl
         }
-    }
-}
 
-if ($files.Count -eq 0) { Write-Host "⚠️ Ningún Blueprint encontrado."; exit }
+        foreach ($docDir in $docImplDirs) {
+            # Carpeta "Análisis"
+            $analisisDirs = Get-ChildItem -Path $docDir.FullName -Directory -ErrorAction SilentlyContinue | Where-Object {
+                $_.Name -match $regexAnalisis
+            }
 
-# --- búsqueda ---
-$excel = New-Object -ComObject Excel.Application
-$excel.Visible = $false
-$excel.DisplayAlerts = $false
-$results = New-Object System.Collections.Generic.List[object]
+            foreach ($anaDir in $analisisDirs) {
+                Write-Host ("   📂 Revisando subcarpeta: {0}" -f $anaDir.FullName) -ForegroundColor Cyan
 
-foreach ($file in $files) {
-    foreach ($lit in $literals) {
-        $wb = $null
-        try {
-            $wb = $excel.Workbooks.Open($file.FullName, 0, $true)
-            $sheet = $null
-            foreach ($sh in $wb.Worksheets) { if ($sh.Name -eq $sheetName) { $sheet = $sh; break } }
-            if (-not $sheet) { continue }
+                # Buscar ficheros Blueprint (versión que funcionaba)
+                $found = Get-ChildItem -Path $anaDir.FullName -File -Filter '*Blueprint*.xls*' -ErrorAction SilentlyContinue |
+                         Where-Object { $_.Name -notlike '~$*' }
 
-            $used = $sheet.UsedRange
-            $rows = $used.Rows.Count
-            $cols = $used.Columns.Count
-
-            for ($r=1; $r -le $rows; $r++) {
-                for ($c=1; $c -le $cols; $c++) {
-                    $val = $used.Cells.Item($r,$c).Text
-                    if ([string]::IsNullOrWhiteSpace($val)) { continue }
-
-                    $valNorm = ($val -replace '\s+', ' ').Trim()
-                    $litNorm = ($lit -replace '\s+', ' ').Trim()
-
-                    if ($valNorm -imatch [regex]::Escape($litNorm)) {
-                        $tipo = if ($valNorm -ieq $litNorm) { "Exacta" } else { "Parcial" }
-                        $results.Add([PSCustomObject]@{
-                            Fichero = $file.FullName
-                            Hoja    = $sheetName
-                            Literal = $lit
-                            Celda   = "$r,$c"
-                            Tipo    = $tipo
-                        })
-                        Write-Host "✅ [$lit] en $($file.Name) celda $r,$c ($tipo)" -ForegroundColor Green
-                        if ($stopAtFirst) { throw "STOP_GLOBAL" }
+                if ($found) {
+                    foreach ($f in $found) {
+                        Write-Host ("      ✅ Encontrado Blueprint: {0}" -f $f.Name) -ForegroundColor Green
                     }
+                    $files += $found
                 }
             }
-
-        } catch {
-            if ($_.Exception.Message -eq "STOP_GLOBAL") { throw }
-            Write-Host ("⚠️ Error con {0}" -f $file.FullName) -ForegroundColor DarkYellow
-        } finally {
-            if ($wb) { $wb.Close($false) | Out-Null }
         }
     }
 }
 
-# --- exportar ---
-$outPath = Join-Path $env:USERPROFILE "Desktop\Resultados_Blueprint.xlsx"
-$wbOut = $excel.Workbooks.Add()
-$wsOut = $wbOut.Sheets.Item(1)
-$wsOut.Name = "Resultados"
-$wsOut.Cells.Item(1,1)="Fichero"
-$wsOut.Cells.Item(1,2)="Hoja"
-$wsOut.Cells.Item(1,3)="Literal"
-$wsOut.Cells.Item(1,4)="Celda"
-$wsOut.Cells.Item(1,5)="Tipo coincidencia"
-$row=2
-foreach($r in $results){
- $wsOut.Cells.Item($row,1)=$r.Fichero
- $wsOut.Cells.Item($row,2)=$r.Hoja
- $wsOut.Cells.Item($row,3)=$r.Literal
- $wsOut.Cells.Item($row,4)=$r.Celda
- $wsOut.Cells.Item($row,5)=$r.Tipo
- $row++
+if ($files.Count -eq 0) {
+    Write-Host "⚠️ No se encontraron ficheros 'Blueprint' en la estructura esperada." -ForegroundColor DarkYellow
+    exit 0
 }
-$wsOut.Range("A1:E$($row-1)").EntireColumn.AutoFit()|Out-Null
-$wbOut.SaveAs($outPath)
-$wbOut.Close($false)
-$excel.Quit()
-[System.Runtime.InteropServices.Marshal]::ReleaseComObject($excel)|Out-Null
-Write-Host "`n✅ Finalizado. Archivo: $outPath" -ForegroundColor Cyan
+
+Write-Host ("   → {0} ficheros 'Blueprint' detectados." -f $files.Count) -ForegroundColor Green
+
+# ===========================================
+# BÚSQUEDA EN EXCEL (modificada para funcionar bien)
+# ===========================================
+
+$excel = $null
+try {
+    $excel = New-Object -ComObject Excel.Application
+    $excel.Visible = $false
+    $excel.DisplayAlerts = $false
+
+    $prevCalc = $excel.Calculation
+    $prevScreen = $excel.ScreenUpdating
+    $excel.ScreenUpdating = $false
+    $excel.Calculation = -4135 # xlCalculationManual
+
+    $results = New-Object System.Collections.Generic.List[object]
+
+    foreach ($file in $files) {
+        foreach ($lit in $literals) {
+            $wb = $null
+            try {
+                # Abrir en solo lectura
+                $wb = $excel.Workbooks.Open($file.FullName, 0, $true)
+                $sheet = $null
+                foreach ($sh in $wb.Worksheets) {
+                    if ($sh.Name -eq $sheetName) { $sheet = $sh; break }
+                }
+                if (-not $sheet) { continue }
+
+                # Rango usado
+                $used = $sheet.UsedRange
+                $rows = $used.Rows.Count
+                $cols = $used.Columns.Count
+
+                for ($r=1; $r -le $rows; $r++) {
+                    for ($c=1; $c -le $cols; $c++) {
+                        $val = $used.Cells.Item($r,$c).Text
+                        if ([string]::IsNullOrWhiteSpace($val)) { continue }
+
+                        $valNorm = ($val -replace '\s+', ' ').Trim()
+                        $litNorm = ($lit -replace '\s+', ' ').Trim()
+
+                        if ($valNorm -imatch [regex]::Escape($litNorm)) {
+                            $tipo = if ($valNorm -ieq $litNorm) { "Exacta" } else { "Parcial" }
+                            $results.Add([PSCustomObject]@{
+                                Fichero = $file.FullName
+                                Hoja    = $sheetName
+                                Literal = $lit
+                                Celda   = "$r,$c"
+                                Tipo    = $tipo
+                            })
+                            Write-Host "✅ [$lit] en $($file.Name) celda $r,$c ($tipo)" -ForegroundColor Green
+                            if ($stopAtFirst) { throw "STOP_GLOBAL" }
+                        }
+                    }
+                }
+
+            } catch {
+                if ($_.Exception.Message -eq "STOP_GLOBAL") { throw }
+                Write-Host ("⚠️ Error con {0}" -f $file.FullName) -ForegroundColor DarkYellow
+            } finally {
+                if ($wb) { $wb.Close($false) | Out-Null }
+            }
+        }
+    }
+
+    # Crear Excel de resultados
+    $outPath = Join-Path $env:USERPROFILE "Desktop\Resultados_Blueprint.xlsx"
+    $wbOut = $excel.Workbooks.Add()
+    $wsOut = $wbOut.Sheets.Item(1)
+    $wsOut.Name = "Resultados"
+    $wsOut.Cells.Item(1,1)="Fichero"
+    $wsOut.Cells.Item(1,2)="Hoja"
+    $wsOut.Cells.Item(1,3)="Literal"
+    $wsOut.Cells.Item(1,4)="Celda"
+    $wsOut.Cells.Item(1,5)="Tipo coincidencia"
+    $row=2
+    foreach($r in $results){
+        $wsOut.Cells.Item($row,1)=$r.Fichero
+        $wsOut.Cells.Item($row,2)=$r.Hoja
+        $wsOut.Cells.Item($row,3)=$r.Literal
+        $wsOut.Cells.Item($row,4)=$r.Celda
+        $wsOut.Cells.Item($row,5)=$r.Tipo
+        $row++
+    }
+    $wsOut.Range("A1:E$($row-1)").EntireColumn.AutoFit()|Out-Null
+    $wbOut.SaveAs($outPath)
+    $wbOut.Close($false)
+
+    Write-Host "`n✅ Terminado. Resultados en: $outPath" -ForegroundColor Cyan
+
+} finally {
+    if ($excel) {
+        $excel.Quit()
+        [System.Runtime.InteropServices.Marshal]::ReleaseComObject($excel)|Out-Null
+    }
+}
