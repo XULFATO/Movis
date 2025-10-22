@@ -1,7 +1,153 @@
-Test-Path "O:\ADP_SP\Clientes_Bob_LOPD\J18_ANCERT\J18_ANCERT\01. Documentación Implantación\03.-ANALISIS\J18-Blueprint_v6.1 validado 09102025.xlsx" -PathType Leaf
+# ==========================================================
+# 🔍 Búsqueda de literales en Blueprints (compatible red + ISE)
+# ==========================================================
 
+$ErrorActionPreference = "Stop"
 
+# --- LIMPIEZA INICIAL (evita conflictos Excel abiertos en ISE) ---
+Write-Host "🧹 Cerrando sesiones previas de Excel..." -ForegroundColor DarkGray
+Get-Process excel -ErrorAction SilentlyContinue | ForEach-Object {
+    try {
+        $_.CloseMainWindow() | Out-Null
+        Start-Sleep -Milliseconds 500
+        if (-not $_.HasExited) { $_.Kill() }
+    } catch {}
+}
+Start-Sleep -Seconds 1
 
+# ==========================================================
+# CONFIGURACIÓN PRINCIPAL
+# ==========================================================
 
-$excel = New-Object -ComObject Excel.Application
-$excel.Workbooks.Open("O:\ADP_SP\Clientes_Bob_LOPD\J18_ANCERT\J18_ANCERT\01. Documentación Implantación\03.-ANALISIS\J18-Blueprint_v6.1 validado 09102025.xlsx")
+# Ruta base (ajusta según tu entorno)
+$root = "O:\ADP_SP\Clientes_Bob_LOPD"
+
+# Literales a buscar (puedes añadir hasta 10)
+$literals = @("embargo")
+
+# Archivo Excel que debe buscar
+$pattern = "*Blueprint*.xlsx"
+
+# ==========================================================
+# FUNCIÓN PRINCIPAL
+# ==========================================================
+
+Function Buscar-LiteralesEnExcel {
+    param (
+        [string]$file,
+        [string[]]$literals
+    )
+
+    Write-Host "📂 Abriendo Excel (solo lectura): $file" -ForegroundColor Cyan
+
+    $excel = $null
+    $wb = $null
+    $found = $false
+
+    try {
+        $excel = New-Object -ComObject Excel.Application
+        $excel.Visible = $false
+        $excel.DisplayAlerts = $false
+
+        # Abrir libro en solo lectura
+        $wb = $excel.Workbooks.Open($file, 0, $true)
+
+        # Buscar hoja que contenga “analisis” y “conceptos”
+        $sheet = $null
+        foreach ($sh in $wb.Worksheets) {
+            $name = $sh.Name.ToLower()
+            if ($name -match "analisis" -and $name -match "concept") {
+                $sheet = $sh
+                break
+            }
+        }
+
+        if (-not $sheet) {
+            Write-Host "❌ No se encontró la hoja de 'Análisis Conceptos'" -ForegroundColor Red
+        } else {
+            Write-Host "📊 Analizando hoja: $($sheet.Name)" -ForegroundColor Yellow
+
+            $used = $sheet.UsedRange
+            $rows = $used.Rows.Count
+            $cols = $used.Columns.Count
+
+            foreach ($literal in $literals) {
+                $foundLiteral = $false
+                for ($r = 1; $r -le $rows; $r++) {
+                    for ($c = 1; $c -le $cols; $c++) {
+                        $value = $sheet.Cells.Item($r, $c).Text
+                        if ($value -match [regex]::Escape($literal)) {
+                            Write-Host "✅ Literal '$literal' encontrado en $($sheet.Name): Celda=R$r C$c -> '$value'" -ForegroundColor Green
+                            $found = $true
+                            $foundLiteral = $true
+                        }
+                    }
+                }
+                if (-not $foundLiteral) {
+                    Write-Host "⚪ No se encontró el literal '$literal' en la hoja." -ForegroundColor Gray
+                }
+            }
+        }
+
+    } catch {
+        Write-Host "⚠️ Error: $($_.Exception.Message)" -ForegroundColor Yellow
+    } finally {
+        if ($wb) { $wb.Close($false) | Out-Null }
+        if ($excel) {
+            $excel.Quit()
+            [System.Runtime.InteropServices.Marshal]::ReleaseComObject($excel) | Out-Null
+        }
+        [GC]::Collect()
+        [GC]::WaitForPendingFinalizers()
+    }
+
+    return $found
+}
+
+# ==========================================================
+# RECORRIDO PRINCIPAL DE CARPETAS
+# ==========================================================
+
+Write-Host "`nRecorriendo estructura (orden por fecha desc)..." -ForegroundColor Cyan
+$dirs = Get-ChildItem -Path $root -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name.Length -ge 4 -and $_.Name[3] -eq '_' } |
+        Sort-Object LastWriteTime -Descending
+
+foreach ($dir in $dirs) {
+    Write-Host "`n📁 Revisando carpeta principal: $($dir.Name)" -ForegroundColor Cyan
+
+    $subdirs = Get-ChildItem -Path $dir.FullName -Directory -ErrorAction SilentlyContinue
+    foreach ($sub in $subdirs) {
+        $docImplDirs = Get-ChildItem -Path $sub.FullName -Directory -ErrorAction SilentlyContinue |
+                       Where-Object { $_.Name -match "documentaci[oó]n implantaci[oó]n" }
+
+        foreach ($doc in $docImplDirs) {
+            $analDirs = Get-ChildItem -Path $doc.FullName -Directory -ErrorAction SilentlyContinue |
+                        Where-Object { $_.Name -match "an[aá]lisis" }
+
+            foreach ($ana in $analDirs) {
+                $files = Get-ChildItem -Path $ana.FullName -File -Include $pattern -ErrorAction SilentlyContinue
+                foreach ($f in $files) {
+                    Write-Host "🟦 Encontrado Blueprint: $($f.Name)" -ForegroundColor Cyan
+                    Buscar-LiteralesEnExcel -file $f.FullName -literals $literals
+                }
+            }
+        }
+    }
+}
+
+# ==========================================================
+# LIMPIEZA FINAL (obligatoria en ISE)
+# ==========================================================
+Write-Host "`n🧹 Cerrando Excel y liberando COM..." -ForegroundColor DarkGray
+try {
+    Get-Process excel -ErrorAction SilentlyContinue | ForEach-Object {
+        $_.CloseMainWindow() | Out-Null
+        Start-Sleep -Milliseconds 500
+        if (-not $_.HasExited) { $_.Kill() }
+    }
+} catch {}
+[GC]::Collect()
+[GC]::WaitForPendingFinalizers()
+
+Write-Host "`n✔️ Proceso completado." -ForegroundColor Green
