@@ -1,11 +1,9 @@
 # ===========================================
-# Buscar-Blueprints.ps1 — versión final
+# Buscar-Blueprints.ps1 — versión infalible
 # ===========================================
-# Busca ficheros "Blueprint" dentro de:
-#   01. Documentación Implantación → 03. Análisis
-#   (carpetas con '_' en 4ª posición, ordenadas por fecha desc.)
-# y busca literales dentro de la hoja "Análisis Conceptos"
-# (independientemente de tildes, mayúsculas o minúsculas)
+# Recorre la estructura, encuentra Blueprints,
+# abre la hoja "Análisis Conceptos" (o "Analisis conceptos")
+# y busca literales dentro celda por celda.
 # ===========================================
 
 $ErrorActionPreference = 'Stop'
@@ -40,9 +38,9 @@ $regexDocImpl = '(?i)(^\s*\d{0,3}\s*[-_. ]*\s*documentaci[oó]n\s+implantaci[oó
 $regexAnalisis = '(?i)(^\s*\d{0,3}\s*[-_. ]*\s*an[aá]lisis\b)|(\ban[aá]lisis\b)'
 
 # ===========================================
-# RECORRIDO ORIGINAL
+# RECORRIDO DE CARPETAS
 # ===========================================
-Write-Host "`n📁 Recorriendo estructura (con '_' en 4ª posición, Doc. Implantación/Análisis, orden descendente por fecha)..." -ForegroundColor DarkCyan
+Write-Host "`n📁 Recorriendo estructura..." -ForegroundColor DarkCyan
 
 $files = @()
 
@@ -84,14 +82,14 @@ Get-ChildItem -Path $basePath -Directory |
 }
 
 if ($files.Count -eq 0) {
-    Write-Host "⚠️ No se encontraron ficheros 'Blueprint' en la estructura esperada." -ForegroundColor DarkYellow
+    Write-Host "⚠️ No se encontraron ficheros 'Blueprint'." -ForegroundColor DarkYellow
     exit 0
 }
 
 Write-Host ("   → {0} ficheros 'Blueprint' detectados." -f $files.Count) -ForegroundColor Green
 
 # ===========================================
-# BÚSQUEDA EN EXCEL (LECTURA DE TABLAS Y CELDAS)
+# LECTURA EN EXCEL CELDA A CELDA (INFALIBLE)
 # ===========================================
 $excel = $null
 try {
@@ -109,7 +107,7 @@ try {
             $wb = $excel.Workbooks.Open($file.FullName, 0, $true)
             $sheet = $null
 
-            # 🔍 Buscar hoja que contenga 'analisis' y 'concept' (sin tildes, sin importar mayúsculas)
+            # Buscar hoja tipo "analisis" + "conceptos" (sin tildes)
             foreach ($sh in $wb.Worksheets) {
                 $name = $sh.Name.ToLower()
                 if ($name -match 'analisis' -and $name -match 'concept') {
@@ -124,67 +122,50 @@ try {
             }
 
             Write-Host ("      🔍 Analizando hoja '{0}' de {1}..." -f $sheet.Name, $file.Name) -ForegroundColor DarkGray
-            $sheet.Activate() | Out-Null
 
-            # ---- Leer todas las tablas (ListObjects)
-            $allText = @()
-            if ($sheet.ListObjects.Count -gt 0) {
-                foreach ($tbl in $sheet.ListObjects) {
-                    try {
-                        $data = $tbl.DataBodyRange.Value2
-                        $rows = $tbl.DataBodyRange.Rows.Count
-                        $cols = $tbl.DataBodyRange.Columns.Count
-                        for ($r=1; $r -le $rows; $r++) {
-                            for ($c=1; $c -le $cols; $c++) {
-                                $val = [string]$data[$r,$c]
-                                if (-not [string]::IsNullOrWhiteSpace($val)) { 
-                                    $allText += $val 
-                                }
-                            }
+            $used = $sheet.UsedRange
+            $rows = $used.Rows.Count
+            $cols = $used.Columns.Count
+
+            $foundLiteral = $false
+
+            for ($r = 1; $r -le $rows; $r++) {
+                for ($c = 1; $c -le $cols; $c++) {
+                    $cellValue = ""
+                    try { $cellValue = [string]$used.Cells.Item($r, $c).Text } catch { continue }
+                    if ([string]::IsNullOrWhiteSpace($cellValue)) { continue }
+
+                    foreach ($lit in $literals) {
+                        if ($cellValue.ToLowerInvariant().Contains($lit.ToLowerInvariant())) {
+                            $foundLiteral = $true
+                            $results.Add([PSCustomObject]@{
+                                Fichero = $file.FullName
+                                Hoja    = $sheet.Name
+                                Literal = $lit
+                                Celda   = "Fila $r, Columna $c"
+                                Valor   = $cellValue
+                            })
+                            Write-Host ("✅ Literal '{0}' encontrado en {1} celda {2},{3} -> '{4}'" -f $lit, $file.Name, $r, $c, $cellValue) -ForegroundColor Green
+                            if ($stopAtFirst) { throw "STOP_GLOBAL" }
                         }
-                    } catch {}
+                    }
                 }
             }
 
-            # ---- Leer también el rango usado completo
-            try {
-                $used = $sheet.UsedRange.Value2
-                if ($used -and $used.GetType().IsArray) {
-                    foreach ($cell in $used) {
-                        if ($cell -and [string]$cell -ne "") { $allText += [string]$cell }
-                    }
-                }
-            } catch {}
-
-            # ---- Buscar literales en los textos recogidos
-            foreach ($lit in $literals) {
-                foreach ($val in $allText) {
-                    $vlow = $val.ToLowerInvariant()
-                    $llow = $lit.ToLowerInvariant()
-                    if ($vlow -match [regex]::Escape($llow)) {
-                        $tipo = if ($vlow -eq $llow) { "Exacta" } else { "Parcial" }
-                        $results.Add([PSCustomObject]@{
-                            Fichero = $file.FullName
-                            Hoja    = $sheet.Name
-                            Literal = $lit
-                            Tipo    = $tipo
-                        })
-                        Write-Host ("✅ Literal '{0}' encontrado en {1} ({2})" -f $lit, $file.Name, $tipo) -ForegroundColor Green
-                        if ($stopAtFirst) { throw "STOP_GLOBAL" }
-                    }
-                }
+            if (-not $foundLiteral) {
+                Write-Host ("      ⚪ No se encontraron literales en {0}" -f $file.Name) -ForegroundColor Gray
             }
 
         } catch {
             if ($_.Exception.Message -eq "STOP_GLOBAL") { throw }
-            Write-Host ("⚠️ Error con {0}" -f $file.FullName) -ForegroundColor DarkYellow
+            Write-Host ("⚠️ Error procesando {0}" -f $file.FullName) -ForegroundColor DarkYellow
         } finally {
             if ($wb) { $wb.Close($false) | Out-Null }
         }
     }
 
     # ===========================================
-    # Exportar resultados
+    # EXPORTAR RESULTADOS
     # ===========================================
     $outPath = Join-Path $env:USERPROFILE "Desktop\Resultados_Blueprint.xlsx"
     $wbOut = $excel.Workbooks.Add()
@@ -193,16 +174,18 @@ try {
     $wsOut.Cells.Item(1,1)="Fichero"
     $wsOut.Cells.Item(1,2)="Hoja"
     $wsOut.Cells.Item(1,3)="Literal"
-    $wsOut.Cells.Item(1,4)="Tipo coincidencia"
+    $wsOut.Cells.Item(1,4)="Celda"
+    $wsOut.Cells.Item(1,5)="Valor encontrado"
     $row=2
     foreach($r in $results){
         $wsOut.Cells.Item($row,1)=$r.Fichero
         $wsOut.Cells.Item($row,2)=$r.Hoja
         $wsOut.Cells.Item($row,3)=$r.Literal
-        $wsOut.Cells.Item($row,4)=$r.Tipo
+        $wsOut.Cells.Item($row,4)=$r.Celda
+        $wsOut.Cells.Item($row,5)=$r.Valor
         $row++
     }
-    $wsOut.Range("A1:D$($row-1)").EntireColumn.AutoFit()|Out-Null
+    $wsOut.Range("A1:E$($row-1)").EntireColumn.AutoFit()|Out-Null
     $wbOut.SaveAs($outPath)
     $wbOut.Close($false)
     Write-Host "`n✅ Terminado. Resultados guardados en:" -ForegroundColor Green
