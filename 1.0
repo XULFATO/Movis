@@ -1,17 +1,13 @@
 # ==========================================================
-# Buscar literales en Blueprints (3 modos, sin lecturas/escrituras externas)
+# Buscar literales en Blueprints (3 modos + entrada manual de literales)
 # ==========================================================
 $ErrorActionPreference = "Stop"
 
 # ---------- 🗂️ LISTA INTERNA (Modo 2) ----------
-# Puedes mezclar carpetas y ficheros .xlsx/.xlsm
 $rutasOrigen = @(
     "R:\Clientes\J18_GroupLink_6.1\01_Documentación Implantación\03_Análisis",
     "R:\Clientes\Z02_Finanzas_3.0\01_Documentación Implantación\03_Análisis\Blueprint.xlsx"
 )
-
-# ---------- 🔍 LITERALES A BUSCAR ----------
-$literals = @("Embargo", "Embargo Salarial")
 
 # ---------- FUNCIONES AUXILIARES ----------
 function Remove-Diacritics([string]$s){
@@ -27,9 +23,9 @@ function ColumnLetter([int]$n){
 }
 function Select-Mode {
     Write-Host "`n🟦 MODO DE BÚSQUEDA" -ForegroundColor Cyan
-    Write-Host "1️⃣  Escanear automáticamente toda la estructura (ruta base)"
-    Write-Host "2️⃣  Usar listado interno de rutas (arriba en `$rutasOrigen`)"
-    Write-Host "3️⃣  Escanear filtrando solo carpetas que contengan un texto (por ej. _23_, _BKT_)"
+    Write-Host "1️⃣  Escanear toda la estructura (ruta base)"
+    Write-Host "2️⃣  Usar listado interno de rutas (`$rutasOrigen`)"
+    Write-Host "3️⃣  Escanear filtrando solo carpetas que contengan un texto (p. ej. _23_, _BKT_)"
     $r = Read-Host "Elige modo (1, 2 o 3)"
     if ($r -eq '2'){ return 2 } elseif ($r -eq '3'){ return 3 } else { return 1 }
 }
@@ -38,7 +34,17 @@ function Select-Mode {
 Write-Host "🔍 Búsqueda de literales en Blueprints → hoja 'Análisis conceptos'" -ForegroundColor Cyan
 $mode = Select-Mode
 
-# Preparar patrón de búsqueda
+# Pide los literales dinámicamente
+Write-Host "`n✏️  Introduce hasta 10 literales (uno por línea). Deja vacío para terminar." -ForegroundColor Yellow
+$literals = @()
+for ($i=1; $i -le 10; $i++){
+    $lit = Read-Host ("Literal #{0}" -f $i)
+    if ([string]::IsNullOrWhiteSpace($lit)) { break }
+    $literals += $lit
+}
+if ($literals.Count -eq 0) { Write-Host "❌ No se introdujo ningún literal. Saliendo."; exit }
+
+# Preparar patrón
 $pattern = ($literals | ForEach-Object { [regex]::Escape((Normalize $_)) }) -join "|"
 $reDoc = '(?i)(documentaci[oó]n\s+implantaci[oó]n)'
 $reAna = '(?i)(an[aá]lisis)'
@@ -47,14 +53,13 @@ $reAna = '(?i)(an[aá]lisis)'
 $blueprints = @()
 
 if ($mode -eq 1 -or $mode -eq 3) {
-    # Escaneo (total o filtrado)
     $basePath = Read-Host "📂 Introduce la ruta base (p.ej. R:\Proyectos)"
     if (-not (Test-Path $basePath)) { Write-Host "❌ Ruta no válida."; exit }
 
     $filtro = ""
     if ($mode -eq 3) {
-        $filtro = Read-Host "🔤 Introduce texto a buscar en los nombres de carpetas (por ej. _23_ o _BKT_)"
-        if ([string]::IsNullOrWhiteSpace($filtro)) { Write-Host "⚠️ No se indicó filtro, se escaneará todo."; $filtro = "" }
+        $filtro = Read-Host "🔤 Texto que deben contener las carpetas (p. ej. _23_ o _BKT_)"
+        if ([string]::IsNullOrWhiteSpace($filtro)) { $filtro = "" }
     }
 
     Write-Host "`n📁 Escaneando carpetas..." -ForegroundColor DarkCyan
@@ -63,7 +68,7 @@ if ($mode -eq 1 -or $mode -eq 3) {
                 Sort-Object LastWriteTime -Descending
     if ($filtro -ne "") {
         $carpetas = $carpetas | Where-Object { $_.Name -match [regex]::Escape($filtro) }
-        Write-Host ("🔎 Aplicado filtro: '{0}' → {1} carpetas coinciden" -f $filtro, $carpetas.Count) -ForegroundColor Yellow
+        Write-Host ("🔎 Aplicado filtro: '{0}' → {1} carpetas" -f $filtro, $carpetas.Count) -ForegroundColor Yellow
     }
 
     foreach ($dir1 in $carpetas) {
@@ -110,7 +115,6 @@ if ($blueprints.Count -eq 0) { Write-Host "⚠️ No se encontraron Blueprints."
 Write-Host ("   → {0} ficheros detectados." -f $blueprints.Count) -ForegroundColor Green
 
 # ---------- ANALIZAR EXCEL ----------
-$prevExcel = Get-Process excel -ErrorAction SilentlyContinue
 $excel = New-Object -ComObject Excel.Application
 $excel.Visible = $false
 $excel.DisplayAlerts = $false
@@ -175,7 +179,7 @@ foreach ($path in $blueprints) {
             $totalBlueprintsOK++
             $totalEncontrados += $hitsLocal.Count
             $detalles += $hitsLocal
-            Write-Host ("   ✔️ {0} coincidencias en este Blueprint" -f $hitsLocal.Count) -ForegroundColor Green
+            Write-Host ("   ✔️ {0} coincidencias" -f $hitsLocal.Count) -ForegroundColor Green
         } else {
             Write-Host ("   ⚪ Sin coincidencias en {0}" -f $nombre) -ForegroundColor Gray
         }
