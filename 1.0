@@ -32,17 +32,34 @@ function Select-Mode {
 
 
 
-function Highlight($text, $pattern) {
-    # Dividir el texto por coincidencias (sin distinguir mayúsculas/minúsculas)
-    $regex = New-Object System.Text.RegularExpressions.Regex "($pattern)", [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
-    $parts = $regex.Split($text)
+function Highlight {
+    param(
+        [string]$text,
+        [string]$pattern
+    )
+    # Regex insensible a mayúsculas/minúsculas
+    $options = [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+    $regex   = New-Object System.Text.RegularExpressions.Regex $pattern, $options
 
-    foreach ($p in $parts) {
-        if ($regex.IsMatch($p)) {
-            Write-Host -NoNewline $p -ForegroundColor Yellow
-        } else {
-            Write-Host -NoNewline $p -ForegroundColor Gray
+    $lastIndex = 0
+    $matches = $regex.Matches($text)
+
+    if ($matches.Count -eq 0) {
+        Write-Host $text -ForegroundColor Gray
+        return
+    }
+
+    foreach ($m in $matches) {
+        if ($m.Index -gt $lastIndex) {
+            $seg = $text.Substring($lastIndex, $m.Index - $lastIndex)
+            Write-Host -NoNewline $seg -ForegroundColor Gray
         }
+        Write-Host -NoNewline $m.Value -ForegroundColor Yellow
+        $lastIndex = $m.Index + $m.Length
+    }
+
+    if ($lastIndex -lt $text.Length) {
+        Write-Host -NoNewline $text.Substring($lastIndex) -ForegroundColor Gray
     }
     Write-Host ""
 }
