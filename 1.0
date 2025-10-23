@@ -1,5 +1,5 @@
 # ==========================================================
-# Buscar literales en Blueprints (versión rápida + resumenes)
+# Buscar literales en Blueprints (versión rápida + resumen detallado)
 # ==========================================================
 $ErrorActionPreference = "Stop"
 
@@ -98,6 +98,7 @@ $excel.EnableEvents = $false
 
 $totalEncontrados = 0
 $totalBlueprintsOK = 0
+$detalles = @()
 
 foreach ($path in $blueprints) {
     try {
@@ -127,6 +128,7 @@ foreach ($path in $blueprints) {
         $cols = $values.GetLength(1)
 
         $coinc = 0
+        $resumenLocal = @()
 
         for ($r=1; $r -le $rows; $r++) {
             for ($c=1; $c -le $cols; $c++) {
@@ -138,6 +140,12 @@ foreach ($path in $blueprints) {
                         $coinc++
                         $totalEncontrados++
                         Write-Host ("✅ '{0}' → {1} R{2},C{3}: {4}" -f $lit, (Split-Path $path -Leaf), $r, $c, $txt) -ForegroundColor Green
+                        $resumenLocal += [PSCustomObject]@{
+                            Fichero = $path
+                            Literal = $lit
+                            Celda   = "R$r,C$c"
+                            Valor   = $txt
+                        }
                         if ($stopAtFirst) { throw "STOP_GLOBAL" }
                     }
                 }
@@ -147,8 +155,9 @@ foreach ($path in $blueprints) {
         $wb.Close($false) | Out-Null
 
         if ($coinc -gt 0) {
-            Write-Host ("   ✔️ {0} coincidencias en este Blueprint" -f $coinc) -ForegroundColor Green
             $totalBlueprintsOK++
+            Write-Host ("   ✔️ {0} coincidencias en este Blueprint" -f $coinc) -ForegroundColor Green
+            $detalles += $resumenLocal
         } else {
             Write-Host ("   ⚪ Sin coincidencias en {0}" -f (Split-Path $path -Leaf)) -ForegroundColor Gray
         }
@@ -159,13 +168,26 @@ foreach ($path in $blueprints) {
     }
 }
 
-# ---------- Resumen final ----------
+# ---------- Resumen final detallado ----------
 Write-Host "`n==============================================" -ForegroundColor DarkCyan
-Write-Host ("📊 Resumen final:") -ForegroundColor Cyan
+Write-Host ("📊 RESUMEN FINAL") -ForegroundColor Cyan
 Write-Host ("   Blueprints revisados : {0}" -f $blueprints.Count)
 Write-Host ("   Blueprints con hallazgos : {0}" -f $totalBlueprintsOK)
 Write-Host ("   Coincidencias totales : {0}" -f $totalEncontrados)
 Write-Host "==============================================" -ForegroundColor DarkCyan
+
+if ($detalles.Count -gt 0) {
+    Write-Host "`n🔍 Detalle de coincidencias:" -ForegroundColor Yellow
+    $agrupado = $detalles | Group-Object Fichero
+    foreach ($g in $agrupado) {
+        Write-Host "`n📁 $($g.Name)" -ForegroundColor Cyan
+        foreach ($d in $g.Group) {
+            Write-Host ("   → {0} | {1} | {2}" -f $d.Literal, $d.Celda, $d.Valor)
+        }
+    }
+} else {
+    Write-Host "`n⚪ No se encontraron coincidencias." -ForegroundColor Gray
+}
 
 # ---------- Limpieza ----------
 $excel.Quit()
