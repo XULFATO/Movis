@@ -1,4 +1,4 @@
-1# ==========================================================
+# ==========================================================
 # Buscar literales en Blueprints (modo escaneo o listado con memoria + mejora carpetas)
 # ==========================================================
 $ErrorActionPreference = "Stop"
