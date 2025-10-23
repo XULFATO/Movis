@@ -28,12 +28,17 @@ function Select-Mode {
     $r = Read-Host "Elige modo (1, 2, 3 o 4)"
     if ($r -eq '2'){ return 2 } elseif ($r -eq '3'){ return 3 } elseif ($r -eq '4'){ return 4 } else { return 1 }
 }
+
+
+
+
 function Highlight($text, $pattern) {
-    # Dividir el texto por coincidencias (ignorando mayúsculas/minúsculas)
-    $parts = [regex]::Split($text, "($pattern)", [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    # Dividir el texto por coincidencias (sin distinguir mayúsculas/minúsculas)
+    $regex = New-Object System.Text.RegularExpressions.Regex "($pattern)", [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+    $parts = $regex.Split($text)
 
     foreach ($p in $parts) {
-        if ($p -match $pattern) {
+        if ($regex.IsMatch($p)) {
             Write-Host -NoNewline $p -ForegroundColor Yellow
         } else {
             Write-Host -NoNewline $p -ForegroundColor Gray
@@ -41,6 +46,11 @@ function Highlight($text, $pattern) {
     }
     Write-Host ""
 }
+
+
+
+
+
 
 # ---------- ENTRADA ----------
 Write-Host "🔍 Búsqueda rápida en Blueprints (.xlsx) → hoja 'Análisis conceptos'" -ForegroundColor Cyan
