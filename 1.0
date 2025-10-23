@@ -1,23 +1,23 @@
 # ==========================================================
-# Buscar literales en Blueprints (versión C++ OpenXML optimizada)
+# Buscar literales en Blueprints (.xlsx) sin abrir Excel (OpenXML)
 # ==========================================================
 $ErrorActionPreference = "Stop"
 
-# ---------- 🗂️ LISTA INTERNA (Modo 2 y comparación en modo 4) ----------
+# -------- LISTADO INTERNO DE RUTAS (modo 2 y modo 4) --------
 $rutasOrigen = @(
-    "R:\Clientes\J18_GroupLink_6.1\01_Documentación Implantación\03_Análisis",
-    "R:\Clientes\Z02_Finanzas_3.0\01_Documentación Implantación\03_Análisis\Blueprint.xlsx"
+    "O:\ADP_SP\Clientes_Bob_LOPD\J18_ANCERT\01. Documentación Implantación\03.-ANALISIS",
+    "O:\ADP_SP\Clientes_Bob_LOPD\J20_TROPICAL_PARTNERS\01. Documentación Implantación\03.-ANALISIS"
 )
 
-# ---------- FUNCIONES AUXILIARES ----------
-function Remove-Diacritics([string]$s){
+# -------- FUNCIONES AUXILIARES --------
+function Remove-Diacritics([string]$s) {
     if ([string]::IsNullOrWhiteSpace($s)) { return "" }
     $d = $s.Normalize([Text.NormalizationForm]::FormD)
     ($d.ToCharArray() | Where-Object {
         [Globalization.CharUnicodeInfo]::GetUnicodeCategory($_) -ne [Globalization.UnicodeCategory]::NonSpacingMark
     }) -join ''
 }
-function Normalize([string]$s){ (Remove-Diacritics $s).ToLowerInvariant().Trim() }
+function Normalize([string]$s) { (Remove-Diacritics $s).ToLowerInvariant().Trim() }
 
 function Select-Mode {
     Write-Host "`n🟦 MODO DE BÚSQUEDA" -ForegroundColor Cyan
@@ -29,13 +29,12 @@ function Select-Mode {
     if ($r -eq '2'){ return 2 } elseif ($r -eq '3'){ return 3 } elseif ($r -eq '4'){ return 4 } else { return 1 }
 }
 
-# --------- HIGHLIGHT: Mostrar coincidencias resaltadas ----------
+# -------- FUNCIÓN DE RESALTADO --------
 function Highlight {
     param(
         [string]$text,
         [string]$pattern
     )
-    # Regex insensible a mayúsculas/minúsculas
     $options = [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
     $regex   = New-Object System.Text.RegularExpressions.Regex $pattern, $options
 
@@ -62,7 +61,7 @@ function Highlight {
     Write-Host ""
 }
 
-# ---------- ENTRADA ----------
+# -------- ENTRADA --------
 Write-Host "🔍 Búsqueda rápida en Blueprints (.xlsx) → hoja 'Análisis conceptos'" -ForegroundColor Cyan
 $mode = Select-Mode
 
@@ -82,11 +81,11 @@ if ($mode -ne 4) {
 $reDoc = '(?i)(documentaci[oó]n\s+implantaci[oó]n)'
 $reAna = '(?i)(an[aá]lisis)'
 
-# ---------- LOCALIZAR BLUEPRINTS ----------
+# -------- LOCALIZAR BLUEPRINTS --------
 $blueprints = @()
 
 if ($mode -eq 1 -or $mode -eq 3 -or $mode -eq 4) {
-    $basePath = Read-Host "📂 Introduce la ruta base (p.ej. R:\Proyectos)"
+    $basePath = Read-Host "📂 Introduce la ruta base (p.ej. O:\ADP_SP)"
     if (-not (Test-Path $basePath)) { Write-Host "❌ Ruta no válida."; exit }
 
     $filtro = ""
@@ -146,9 +145,9 @@ elseif ($mode -eq 2) {
 
 if ($blueprints.Count -eq 0) { Write-Host "⚠️ No se encontraron Blueprints."; exit }
 
-# ---------- MODO 4: DETECTAR NO CONTEMPLADOS ----------
+# -------- MODO 4: DETECTAR NO CONTEMPLADOS --------
 if ($mode -eq 4) {
-    Write-Host "`n🔎 Comparando con la lista interna de rutas..." -ForegroundColor Cyan
+    Write-Host "`n🔎 Comparando con la lista interna..." -ForegroundColor Cyan
     $noContemplados = $blueprints | Where-Object {
         $rutaNormalizada = (Normalize $_)
         -not ($rutasOrigen | Where-Object { (Normalize $_) -eq $rutaNormalizada })
@@ -160,7 +159,7 @@ if ($mode -eq 4) {
             Write-Host ("   ➕ {0}" -f $nc) -ForegroundColor Red
         }
     } else {
-        Write-Host "`n✅ Todos los Blueprints detectados ya están contemplados." -ForegroundColor Green
+        Write-Host "`n✅ Todos los Blueprints están contemplados." -ForegroundColor Green
     }
 
     Write-Host "`n✔️ Modo 4 completado." -ForegroundColor Green
@@ -169,7 +168,7 @@ if ($mode -eq 4) {
 
 Write-Host ("   → {0} ficheros detectados." -f $blueprints.Count) -ForegroundColor Green
 
-# ---------- ANALIZAR CON OPENXML ----------
+# -------- ANALIZAR CON OPENXML --------
 $totalEncontrados = 0
 $totalBlueprintsOK = 0
 $detalles = @()
@@ -236,7 +235,7 @@ foreach ($path in $blueprints) {
     }
 }
 
-# ---------- RESUMEN ----------
+# -------- RESUMEN FINAL --------
 $fin = Get-Date
 $dur = New-TimeSpan -Start $inicio -End $fin
 $agrupado = $detalles | Group-Object Fichero
