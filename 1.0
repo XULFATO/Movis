@@ -28,11 +28,12 @@ function Select-Mode {
     $r = Read-Host "Elige modo (1, 2, 3 o 4)"
     if ($r -eq '2'){ return 2 } elseif ($r -eq '3'){ return 3 } elseif ($r -eq '4'){ return 4 } else { return 1 }
 }
+function Highlight($text, $pattern) {
+    # Dividir el texto por coincidencias (ignorando mayúsculas/minúsculas)
+    $parts = [regex]::Split($text, "($pattern)", [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
 
-function Highlight($text, $pattern){
-    $parts = [regex]::Split($text, "($pattern)", "IgnoreCase")
-    foreach ($p in $parts){
-        if ($p -match $pattern){
+    foreach ($p in $parts) {
+        if ($p -match $pattern) {
             Write-Host -NoNewline $p -ForegroundColor Yellow
         } else {
             Write-Host -NoNewline $p -ForegroundColor Gray
