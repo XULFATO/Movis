@@ -161,3 +161,82 @@ sharedStrings.xml: para textos repetidos (ahorra espacio)
 Directamente en las celdas: textos únicos o valores especiales
 Tu script solo miraba sharedStrings.xml, por eso no encontraba textos que estuvieran directamente en las celdas.
 Ahora debería encontrar todos los literales. Pruébalo y me dices. 🎯
+
+
+
+
+
+
+
+
+
+
+
+
+
+$ErrorActionPreference = "Stop"
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+# === CONFIGURA AQUÍ ===
+$path = "C:\Users\Joquina\OneDrive - Automatic Data Processing Inc\Escritorio\PRUEBA\123_PRUEBE\123\01. Documentación Implantación\ANALISIS\J18-Blueprint_v6.1_validado_09102025.xlsx"
+$literal = "embargo"
+
+# === FUNCIONES ===
+function Remove-Diacritics([string]$s) {
+    if ([string]::IsNullOrWhiteSpace($s)) { return "" }
+    $d = $s.Normalize([Text.NormalizationForm]::FormD)
+    ($d.ToCharArray() | Where-Object {
+        [Globalization.CharUnicodeInfo]::GetUnicodeCategory($_) -ne [Globalization.UnicodeCategory]::NonSpacingMark
+    }) -join ''
+}
+
+function Normalize([string]$s) {
+    if ([string]::IsNullOrWhiteSpace($s)) { return "" }
+    (Remove-Diacritics $s).ToLowerInvariant().Trim()
+}
+
+# === DESCOMPRIMIR ===
+$tmpDir = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), [System.IO.Path]::GetRandomFileName())
+[System.IO.Compression.ZipFile]::ExtractToDirectory($path, $tmpDir)
+
+$literalNorm = Normalize $literal
+$pattern = [regex]::Escape($literalNorm)
+$found = 0
+
+Write-Host "🔍 Buscando '$literal'..." -ForegroundColor Cyan
+
+# === BUSCAR EN TODO EL CONTENIDO (método RAW) ===
+$archivos = @(
+    "$tmpDir\xl\sharedStrings.xml"
+) + (Get-ChildItem "$tmpDir\xl\worksheets" -Filter "*.xml" -File -ErrorAction SilentlyContinue)
+
+foreach ($archivo in $archivos) {
+    if (-not (Test-Path $archivo)) { continue }
+    
+    $nombre = Split-Path $archivo -Leaf
+    $contenido = Get-Content $archivo -Raw -Encoding UTF8
+    
+    # Extraer TODO el texto entre tags XML
+    $matches = [regex]::Matches($contenido, '>([^<]+)<')
+    
+    foreach ($m in $matches) {
+        $texto = $m.Groups[1].Value
+        if ([string]::IsNullOrWhiteSpace($texto)) { continue }
+        
+        $textoNorm = Normalize $texto
+        if ($textoNorm -match $pattern) {
+            Write-Host "✅ [$nombre]: $texto" -ForegroundColor Green
+            $found++
+        }
+    }
+}
+
+Write-Host "`n========================================" -ForegroundColor DarkCyan
+if ($found -gt 0) {
+    Write-Host "✅ Encontradas $found coincidencias" -ForegroundColor Green
+} else {
+    Write-Host "❌ No se encontró '$literal'" -ForegroundColor Red
+}
+Write-Host "========================================" -ForegroundColor DarkCyan
+
+Remove-Item -Path $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
