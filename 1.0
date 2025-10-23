@@ -1,5 +1,5 @@
 # ==========================================================
-# Buscar literales en Blueprints (versión rápida + resumen detallado)
+# Buscar literales en Blueprints (resumen final garantizado)
 # ==========================================================
 $ErrorActionPreference = "Stop"
 
@@ -15,6 +15,16 @@ function Remove-Diacritics([string]$s){
     }) -join ''
 }
 function Normalize([string]$s){ (Remove-Diacritics $s).ToLowerInvariant().Trim() }
+
+function ColumnLetter([int]$n) {
+    $s = ""
+    while ($n -gt 0) {
+        $n--
+        $s = ([char]([int][char]'A' + ($n % 26))) + $s
+        $n = [math]::Floor($n / 26)
+    }
+    return $s
+}
 
 function Ask-YesNo($prompt) {
     while ($true) {
@@ -139,14 +149,14 @@ foreach ($path in $blueprints) {
                     if ($v -like ("*" + (Normalize $lit) + "*")) {
                         $coinc++
                         $totalEncontrados++
-                        Write-Host ("✅ '{0}' → {1} R{2},C{3}: {4}" -f $lit, (Split-Path $path -Leaf), $r, $c, $txt) -ForegroundColor Green
+                        $celda = "$(ColumnLetter $c)$r"
+                        Write-Host ("✅ '{0}' → {1} {2}: {3}" -f $lit, (Split-Path $path -Leaf), $celda, $txt) -ForegroundColor Green
                         $resumenLocal += [PSCustomObject]@{
                             Fichero = $path
                             Literal = $lit
-                            Celda   = "R$r,C$c"
+                            Celda   = $celda
                             Valor   = $txt
                         }
-                        if ($stopAtFirst) { throw "STOP_GLOBAL" }
                     }
                 }
             }
@@ -163,12 +173,11 @@ foreach ($path in $blueprints) {
         }
     }
     catch {
-        if ($_.Exception.Message -eq "STOP_GLOBAL") { break }
         Write-Host ("⚠️ Error en {0}: {1}" -f (Split-Path $path -Leaf), $_.Exception.Message) -ForegroundColor DarkYellow
     }
 }
 
-# ---------- Resumen final detallado ----------
+# ---------- Resumen final garantizado ----------
 Write-Host "`n==============================================" -ForegroundColor DarkCyan
 Write-Host ("📊 RESUMEN FINAL") -ForegroundColor Cyan
 Write-Host ("   Blueprints revisados : {0}" -f $blueprints.Count)
@@ -194,4 +203,4 @@ $excel.Quit()
 [System.Runtime.InteropServices.Marshal]::ReleaseComObject($excel) | Out-Null
 Get-Process excel -ErrorAction SilentlyContinue | ForEach-Object { try { $_.Kill() } catch {} }
 
-Write-Host "`n✔️ Proceso completado sin exportar resultados." -ForegroundColor Green
+Write-Host "`n✔️ Proceso completado y resumen mostrado correctamente." -ForegroundColor Green
