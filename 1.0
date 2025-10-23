@@ -1,19 +1,23 @@
 # ==========================================================
-# Buscar literales en Blueprints (rutas incluidas en el script)
+# Buscar literales en Blueprints (sin acceso a disco externo)
 # ==========================================================
 $ErrorActionPreference = "Stop"
 
-# ---------- CONFIGURACIÓN INICIAL ----------
-# 👉 Añade aquí tus rutas de carpetas o de ficheros Blueprint
+# ---------- 🗂️ LISTA DE RUTAS ----------
+# Aquí puedes poner tanto carpetas como ficheros .xlsx/.xlsm
+# Ejemplos:
+#   - Carpeta: "R:\Clientes\J18_GroupLink_6.1\01_Documentación Implantación\03_Análisis"
+#   - Fichero: "R:\Clientes\Z02_Finanzas_3.0\01_Documentación Implantación\03_Análisis\Blueprint.xlsx"
 $rutasOrigen = @(
     "R:\Clientes\J18_GroupLink_6.1\01_Documentación Implantación\03_Análisis",
     "R:\Clientes\Z02_Finanzas_3.0\01_Documentación Implantación\03_Análisis\Blueprint.xlsx"
 )
 
-# ---------- Literales a buscar ----------
-$literals = @("Embargo", "Embargo Salarial")  # ← añade más si quieres
+# ---------- 🔍 LITERALES A BUSCAR ----------
+# Puedes incluir varias palabras o frases
+$literals = @("Embargo", "Embargo Salarial", "Bonificación")
 
-# ---------- Parámetros internos ----------
+# ---------- FUNCIONES AUXILIARES ----------
 function Remove-Diacritics([string]$s){
     if ([string]::IsNullOrWhiteSpace($s)) { return "" }
     $d = $s.Normalize([Text.NormalizationForm]::FormD)
@@ -22,15 +26,14 @@ function Remove-Diacritics([string]$s){
     }) -join ''
 }
 function Normalize([string]$s){ (Remove-Diacritics $s).ToLowerInvariant().Trim() }
-function ColumnLetter([int]$n){ $s=""; while($n -gt 0){$n--; $s=[char]([int][char]'A'+($n%26))+$s; $n=[math]::Floor($n/26)}; return $s }
+function ColumnLetter([int]$n){
+    $s = ""; while($n -gt 0){$n--; $s=[char]([int][char]'A'+($n%26))+$s; $n=[math]::Floor($n/26)}; return $s
+}
 
-$pattern = ($literals | ForEach-Object { [regex]::Escape((Normalize $_)) }) -join "|"
-
-Write-Host "🔍 Búsqueda de literales en Blueprints → hoja 'Análisis conceptos'" -ForegroundColor Cyan
-
-# ---------- Localizar los Blueprints ----------
+# ---------- LOCALIZAR BLUEPRINTS ----------
 $blueprints = @()
 foreach ($ruta in $rutasOrigen) {
+    if (-not (Test-Path $ruta)) { Write-Host "⚠️ Ruta no encontrada: $ruta" -ForegroundColor DarkYellow; continue }
     if ((Get-Item $ruta).PSIsContainer) {
         $found = Get-ChildItem -Path $ruta -Recurse -File -ErrorAction SilentlyContinue |
                  Where-Object { $_.Name -match '(?i)Blueprint.*\.(xlsx|xlsm)$' }
@@ -39,11 +42,11 @@ foreach ($ruta in $rutasOrigen) {
         $blueprints += $ruta
     }
 }
-
 if ($blueprints.Count -eq 0) { Write-Host "⚠️ No se encontraron Blueprints."; exit }
-Write-Host ("   → {0} ficheros detectados." -f $blueprints.Count) -ForegroundColor Green
+Write-Host ("✅ {0} ficheros detectados." -f $blueprints.Count) -ForegroundColor Green
 
-# ---------- Analizar ----------
+# ---------- ANALIZAR ----------
+$pattern = ($literals | ForEach-Object { [regex]::Escape((Normalize $_)) }) -join "|"
 $prevExcel = Get-Process excel -ErrorAction SilentlyContinue
 $excel = New-Object -ComObject Excel.Application
 $excel.Visible = $false
@@ -67,7 +70,7 @@ foreach ($path in $blueprints) {
             if ($n -match 'analisis' -and $n -match 'concept') { $target = $sh; break }
         }
         if (-not $target) {
-            Write-Host ("⚠️ Sin hoja 'Análisis conceptos'") -ForegroundColor DarkYellow
+            Write-Host "⚠️ Sin hoja 'Análisis conceptos'" -ForegroundColor DarkYellow
             $wb.Close($false) | Out-Null
             continue
         }
@@ -77,9 +80,9 @@ foreach ($path in $blueprints) {
 
         $rows = $vals.GetLength(0)
         $cols = $vals.GetLength(1)
-        $hitsLocal = @()
         $totalCells = $rows * $cols
         $processed = 0
+        $hitsLocal = @()
 
         for ($r=1; $r -le $rows; $r++) {
             for ($c=1; $c -le $cols; $c++) {
@@ -122,7 +125,7 @@ foreach ($path in $blueprints) {
     }
 }
 
-# ---------- Resumen ----------
+# ---------- RESUMEN ----------
 $fin = Get-Date
 $dur = New-TimeSpan -Start $inicio -End $fin
 Write-Host "`n==============================================" -ForegroundColor DarkCyan
@@ -146,7 +149,7 @@ if ($detalles.Count -gt 0) {
     Write-Host "`n⚪ No se encontraron coincidencias." -ForegroundColor Gray
 }
 
-# ---------- Limpieza ----------
+# ---------- LIMPIEZA ----------
 $excel.Quit()
 [System.Runtime.InteropServices.Marshal]::ReleaseComObject($excel) | Out-Null
-Write-Host "`n✔️ Proceso completado correctamente (sin cerrar tu Excel abierto)." -ForegroundColor Green
+Write-Host "`n✔️ Proceso completado correctamente." -ForegroundColor Green
