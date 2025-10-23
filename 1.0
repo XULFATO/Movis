@@ -1,12 +1,12 @@
 # ==========================================================
-# Buscar literales en Blueprints (versión funcional optimizada)
+# Buscar literales en Blueprints (versión rápida + resumenes)
 # ==========================================================
 $ErrorActionPreference = "Stop"
 
-# ---------- Limpieza de procesos previos ----------
+# ---------- Limpieza de procesos Excel previos ----------
 Get-Process excel -ErrorAction SilentlyContinue | ForEach-Object { try { $_.Kill() } catch {} }
 
-# ---------- Utilidades ----------
+# ---------- Funciones auxiliares ----------
 function Remove-Diacritics([string]$s){
     if ([string]::IsNullOrWhiteSpace($s)) { return "" }
     $d = $s.Normalize([Text.NormalizationForm]::FormD)
@@ -26,7 +26,7 @@ function Ask-YesNo($prompt) {
 }
 
 # ---------- Entrada ----------
-Write-Host "🔍 Búsqueda de literales en Blueprints → hoja 'Análisis conceptos' (Excel optimizado)" -ForegroundColor Cyan
+Write-Host "🔍 Búsqueda de literales en Blueprints → hoja 'Análisis conceptos' (sin exportar)" -ForegroundColor Cyan
 
 $basePath = Read-Host "📂 Introduce la ruta base (p.ej. R:\Proyectos)"
 if (-not (Test-Path $basePath)) { Write-Host "❌ Ruta no válida."; exit }
@@ -89,33 +89,33 @@ if ($blueprints.Count -eq 0) {
 
 Write-Host ("   → {0} ficheros 'Blueprint' detectados." -f $blueprints.Count) -ForegroundColor Green
 
-# ---------- Búsqueda en Excel optimizada ----------
+# ---------- Búsqueda optimizada ----------
 $excel = New-Object -ComObject Excel.Application
 $excel.Visible = $false
 $excel.DisplayAlerts = $false
 $excel.AutomationSecurity = 3  # sin macros
 $excel.EnableEvents = $false
 
-$results = @()
+$totalEncontrados = 0
+$totalBlueprintsOK = 0
 
 foreach ($path in $blueprints) {
     try {
-        Write-Host ("      ⏳ Abriendo: {0}" -f $path) -ForegroundColor DarkGray
+        Write-Host ("`n🔹 Analizando: {0}" -f $path) -ForegroundColor DarkCyan
         $wb = $excel.Workbooks.Open($path, 0, $true)
+
         $target = $null
         foreach ($sh in $wb.Worksheets) {
             $n = Normalize $sh.Name
             if ($n -match 'analisis' -and $n -match 'concept') { $target = $sh; break }
         }
+
         if (-not $target) {
             Write-Host ("⚠️ Sin hoja 'Análisis conceptos' en {0}" -f (Split-Path $path -Leaf)) -ForegroundColor DarkYellow
             $wb.Close($false) | Out-Null
             continue
         }
 
-        Write-Host ("      🔍 Buscando en hoja '{0}'..." -f $target.Name) -ForegroundColor Gray
-
-        # Extraer todos los valores a memoria (rapidísimo)
         $values = $target.UsedRange.Value2
         if (-not $values) {
             Write-Host "⚪ Hoja vacía." -ForegroundColor DarkGray
@@ -126,6 +126,8 @@ foreach ($path in $blueprints) {
         $rows = $values.GetLength(0)
         $cols = $values.GetLength(1)
 
+        $coinc = 0
+
         for ($r=1; $r -le $rows; $r++) {
             for ($c=1; $c -le $cols; $c++) {
                 $txt = [string]$values[$r,$c]
@@ -133,14 +135,9 @@ foreach ($path in $blueprints) {
                 $v = Normalize $txt
                 foreach ($lit in $literals) {
                     if ($v -like ("*" + (Normalize $lit) + "*")) {
-                        Write-Host ("✅ '{0}' en {1} → R{2},C{3} ('{4}')" -f $lit, (Split-Path $path -Leaf), $r, $c, $txt) -ForegroundColor Green
-                        $results += [PSCustomObject]@{
-                            Fichero = $path
-                            Hoja    = $target.Name
-                            Literal = $lit
-                            Celda   = "R$r,C$c"
-                            Valor   = $txt
-                        }
+                        $coinc++
+                        $totalEncontrados++
+                        Write-Host ("✅ '{0}' → {1} R{2},C{3}: {4}" -f $lit, (Split-Path $path -Leaf), $r, $c, $txt) -ForegroundColor Green
                         if ($stopAtFirst) { throw "STOP_GLOBAL" }
                     }
                 }
@@ -148,25 +145,31 @@ foreach ($path in $blueprints) {
         }
 
         $wb.Close($false) | Out-Null
+
+        if ($coinc -gt 0) {
+            Write-Host ("   ✔️ {0} coincidencias en este Blueprint" -f $coinc) -ForegroundColor Green
+            $totalBlueprintsOK++
+        } else {
+            Write-Host ("   ⚪ Sin coincidencias en {0}" -f (Split-Path $path -Leaf)) -ForegroundColor Gray
+        }
     }
     catch {
         if ($_.Exception.Message -eq "STOP_GLOBAL") { break }
-        Write-Host ("⚠️ Error con {0}: {1}" -f (Split-Path $path -Leaf), $_.Exception.Message) -ForegroundColor DarkYellow
+        Write-Host ("⚠️ Error en {0}: {1}" -f (Split-Path $path -Leaf), $_.Exception.Message) -ForegroundColor DarkYellow
     }
 }
 
-# ---------- Exportar ----------
-if ($results.Count -gt 0) {
-    $outFile = Join-Path $env:USERPROFILE "Desktop\Resultados_Blueprint.xlsx"
-    $results | Export-Csv -Path $outFile -NoTypeInformation -Encoding UTF8
-    Write-Host "`n✅ Resultados guardados en: $outFile" -ForegroundColor Green
-} else {
-    Write-Host "`n⚪ No se encontraron coincidencias." -ForegroundColor Gray
-}
+# ---------- Resumen final ----------
+Write-Host "`n==============================================" -ForegroundColor DarkCyan
+Write-Host ("📊 Resumen final:") -ForegroundColor Cyan
+Write-Host ("   Blueprints revisados : {0}" -f $blueprints.Count)
+Write-Host ("   Blueprints con hallazgos : {0}" -f $totalBlueprintsOK)
+Write-Host ("   Coincidencias totales : {0}" -f $totalEncontrados)
+Write-Host "==============================================" -ForegroundColor DarkCyan
 
-# ---------- Cierre limpio ----------
+# ---------- Limpieza ----------
 $excel.Quit()
 [System.Runtime.InteropServices.Marshal]::ReleaseComObject($excel) | Out-Null
 Get-Process excel -ErrorAction SilentlyContinue | ForEach-Object { try { $_.Kill() } catch {} }
 
-Write-Host "`n✔️ Terminado (optimizado, rápido y limpio)." -ForegroundColor Green
+Write-Host "`n✔️ Proceso completado sin exportar resultados." -ForegroundColor Green
