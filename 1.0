@@ -29,9 +29,7 @@ function Select-Mode {
     if ($r -eq '2'){ return 2 } elseif ($r -eq '3'){ return 3 } elseif ($r -eq '4'){ return 4 } else { return 1 }
 }
 
-
-
-
+# --------- HIGHLIGHT: Mostrar coincidencias resaltadas ----------
 function Highlight {
     param(
         [string]$text,
@@ -63,11 +61,6 @@ function Highlight {
     }
     Write-Host ""
 }
-
-
-
-
-
 
 # ---------- ENTRADA ----------
 Write-Host "🔍 Búsqueda rápida en Blueprints (.xlsx) → hoja 'Análisis conceptos'" -ForegroundColor Cyan
