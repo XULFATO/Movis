@@ -1,3 +1,5 @@
+El problema es que no estás buscando en las hojas del Excel, solo en sharedStrings.xml. Muchas veces los valores están directamente en las celdas (<v> tags) y no en la tabla de strings compartidos.
+Aquí tienes la versión corregida que busca en ambos sitios:
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
@@ -7,26 +9,35 @@ $literal = "embargo"
 
 # === FUNCIONES ===
 function Remove-Diacritics([string]$s) {
+    if ([string]::IsNullOrWhiteSpace($s)) { return "" }
     $d = $s.Normalize([Text.NormalizationForm]::FormD)
     ($d.ToCharArray() | Where-Object {
         [Globalization.CharUnicodeInfo]::GetUnicodeCategory($_) -ne [Globalization.UnicodeCategory]::NonSpacingMark
     }) -join ''
 }
+
 function Normalize([string]$s) {
+    if ([string]::IsNullOrWhiteSpace($s)) { return "" }
     $s = $s -replace '\s+', ' '
     $s = $s -replace '[\u0000-\u001F]', ''
     (Remove-Diacritics $s).ToLowerInvariant().Trim()
 }
 
-# === DESCOMPRIMIR Y LEER ===
+# === DESCOMPRIMIR ===
+Write-Host "📂 Descomprimiendo Excel..." -ForegroundColor Cyan
 $tmpDir = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), [System.IO.Path]::GetRandomFileName())
 [System.IO.Compression.ZipFile]::ExtractToDirectory($path, $tmpDir)
 
-$sharedFile = "$tmpDir\xl\sharedStrings.xml"
+$literalNorm = Normalize $literal
 $found = 0
+$detalles = @()
+
+# === 1. BUSCAR EN sharedStrings.xml ===
+Write-Host "`n🔍 Buscando en sharedStrings.xml..." -ForegroundColor Yellow
+$sharedFile = "$tmpDir\xl\sharedStrings.xml"
 if (Test-Path $sharedFile) {
     $xml = [xml](Get-Content $sharedFile -Raw)
-    $all = @()
+    $idx = 0
     foreach ($si in $xml.sst.si) {
         $txt = ""
         foreach ($node in $si.ChildNodes) {
@@ -35,19 +46,118 @@ if (Test-Path $sharedFile) {
                 foreach ($r in $node.r) { if ($r.t) { $txt += $r.t } }
             }
         }
-        $txt = Normalize $txt
-        if ($txt -match [regex]::Escape((Normalize $literal))) {
-            Write-Host "✅ Encontrado: $($txt)" -ForegroundColor Green
+        $txtNorm = Normalize $txt
+        if ($txtNorm -match [regex]::Escape($literalNorm)) {
+            Write-Host "   ✅ [SharedString #$idx]: $txt" -ForegroundColor Green
             $found++
+            $detalles += [PSCustomObject]@{
+                Ubicacion = "sharedStrings.xml [índice $idx]"
+                Valor = $txt
+            }
+        }
+        $idx++
+    }
+}
+else {
+    Write-Host "   ⚠️ No existe sharedStrings.xml" -ForegroundColor DarkYellow
+}
+
+# === 2. BUSCAR EN TODAS LAS HOJAS ===
+Write-Host "`n🔍 Buscando en hojas del Excel..." -ForegroundColor Yellow
+$worksheetsDir = "$tmpDir\xl\worksheets"
+if (Test-Path $worksheetsDir) {
+    $sheetFiles = Get-ChildItem $worksheetsDir -Filter "*.xml" -File
+    
+    # Obtener nombres de hojas
+    $workbookFile = "$tmpDir\xl\workbook.xml"
+    $sheetNames = @{}
+    if (Test-Path $workbookFile) {
+        $wbXml = [xml](Get-Content $workbookFile -Raw)
+        foreach ($s in $wbXml.workbook.sheets.sheet) {
+            $sheetNames["sheet$($s.sheetId)"] = $s.name
+        }
+    }
+    
+    foreach ($sheetFile in $sheetFiles) {
+        $sheetName = [System.IO.Path]::GetFileNameWithoutExtension($sheetFile.Name)
+        $displayName = if ($sheetNames.ContainsKey($sheetName)) { $sheetNames[$sheetName] } else { $sheetName }
+        
+        Write-Host "   📄 Analizando hoja: $displayName" -ForegroundColor Cyan
+        
+        $sheetXml = [xml](Get-Content $sheetFile.FullName -Raw)
+        
+        # Buscar en valores inline (<v> con atributo t="inlineStr")
+        foreach ($row in $sheetXml.worksheet.sheetData.row) {
+            foreach ($cell in $row.c) {
+                $valor = ""
+                
+                # Tipo 1: Valor inline
+                if ($cell.is -and $cell.is.t) {
+                    $valor = $cell.is.t
+                }
+                # Tipo 2: String compartido (referencia a sharedStrings)
+                elseif ($cell.t -eq "s" -and $cell.v) {
+                    # Este valor es un índice, ya lo buscamos en sharedStrings
+                    continue
+                }
+                # Tipo 3: Valor directo en <v>
+                elseif ($cell.v) {
+                    $valor = $cell.v
+                }
+                
+                if (-not [string]::IsNullOrWhiteSpace($valor)) {
+                    $valorNorm = Normalize $valor
+                    if ($valorNorm -match [regex]::Escape($literalNorm)) {
+                        $cellRef = $cell.r
+                        Write-Host "      ✅ Celda $cellRef : $valor" -ForegroundColor Green
+                        $found++
+                        $detalles += [PSCustomObject]@{
+                            Ubicacion = "$displayName (celda $cellRef)"
+                            Valor = $valor
+                        }
+                    }
+                }
+            }
         }
     }
 }
 else {
-    Write-Host "⚠️ No existe sharedStrings.xml" -ForegroundColor Yellow
+    Write-Host "   ⚠️ No se encontró carpeta de hojas" -ForegroundColor DarkYellow
 }
 
-if ($found -eq 0) {
-    Write-Host "❌ No se encontró '$literal' en el fichero." -ForegroundColor Red
+# === RESUMEN ===
+Write-Host "`n========================================" -ForegroundColor DarkCyan
+if ($found -gt 0) {
+    Write-Host "✅ Se encontraron $found coincidencias de '$literal'" -ForegroundColor Green
+    Write-Host "`n📋 DETALLE:" -ForegroundColor Cyan
+    foreach ($d in $detalles) {
+        Write-Host "   📍 $($d.Ubicacion)" -ForegroundColor Yellow
+        Write-Host "      💬 $($d.Valor)" -ForegroundColor White
+    }
 }
+else {
+    Write-Host "❌ No se encontró '$literal' en el fichero" -ForegroundColor Red
+    Write-Host "   Posibles causas:" -ForegroundColor Yellow
+    Write-Host "   • El literal está en una hoja oculta" -ForegroundColor Gray
+    Write-Host "   • El texto tiene formato especial (negritas, colores)" -ForegroundColor Gray
+    Write-Host "   • Está en fórmulas (no en valores)" -ForegroundColor Gray
+    Write-Host "   • Tiene espacios/saltos de línea invisibles" -ForegroundColor Gray
+}
+Write-Host "========================================" -ForegroundColor DarkCyan
 
 Remove-Item -Path $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+🔍 Cambios principales:
+Busca en las hojas reales (xl/worksheets/sheet*.xml), no solo en strings compartidos
+Muestra la celda exacta donde encuentra el literal (ej: "A5", "B12")
+Muestra el nombre de la hoja real (no solo "sheet1")
+Detalla todas las coincidencias con ubicación precisa
+Maneja 3 tipos de valores:
+Valores inline (<is><t>)
+Referencias a sharedStrings (ya cubierto)
+Valores directos en celdas (<v>)
+💡 ¿Por qué no encontraba el literal antes?
+Excel guarda los textos de dos formas:
+sharedStrings.xml: para textos repetidos (ahorra espacio)
+Directamente en las celdas: textos únicos o valores especiales
+Tu script solo miraba sharedStrings.xml, por eso no encontraba textos que estuvieran directamente en las celdas.
+Ahora debería encontrar todos los literales. Pruébalo y me dices. 🎯
