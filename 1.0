@@ -1,5 +1,5 @@
 # ==========================================================
-# Buscar literales en Blueprints (.xlsx) sin abrir Excel (OpenXML)
+# Buscar literales en Blueprints (.xlsx) sin abrir Excel (OpenXML completo)
 # ==========================================================
 $ErrorActionPreference = "Stop"
 
@@ -17,58 +17,34 @@ function Remove-Diacritics([string]$s) {
         [Globalization.CharUnicodeInfo]::GetUnicodeCategory($_) -ne [Globalization.UnicodeCategory]::NonSpacingMark
     }) -join ''
 }
-
-function Normalize([string]$s) { 
-    (Remove-Diacritics $s).ToLowerInvariant().Trim() -replace '\\', '/' 
-}
+function Normalize([string]$s) { (Remove-Diacritics $s).ToLowerInvariant().Trim() -replace '\\', '/' }
 
 function Select-Mode {
     Write-Host "`n🟦 MODO DE BÚSQUEDA" -ForegroundColor Cyan
     Write-Host "1️⃣  Escanear automáticamente toda la estructura"
-    Write-Host "2️⃣  Usar listado interno (`$rutasOrigen)"
+    Write-Host "2️⃣  Usar listado interno (`$rutasOrigen`)"
     Write-Host "3️⃣  Escanear filtrando solo carpetas que contengan un texto"
-    Write-Host "4️⃣  Detectar Blueprints NO contemplados en `$rutasOrigen"
+    Write-Host "4️⃣  Detectar Blueprints NO contemplados en `$rutasOrigen`"
     $r = Read-Host "Elige modo (1, 2, 3 o 4)"
-    switch ($r) {
-        '2' { return 2 }
-        '3' { return 3 }
-        '4' { return 4 }
-        default { return 1 }
-    }
+    switch ($r) { '2' {2} '3' {3} '4' {4} default {1} }
 }
 
-# -------- FUNCIÓN DE RESALTADO --------
 function Highlight {
-    param(
-        [string]$text,
-        [string]$pattern
-    )
-    if ([string]::IsNullOrWhiteSpace($text)) {
-        Write-Host "" -ForegroundColor Gray
-        return
-    }
-
-    $options = [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
-    $regex   = New-Object System.Text.RegularExpressions.Regex($pattern, $options)
-
-    $lastIndex = 0
-    $matches = $regex.Matches($text)
-
-    if ($matches.Count -eq 0) {
-        Write-Host $text -ForegroundColor Gray
-        return
-    }
-
-    foreach ($m in $matches) {
-        if ($m.Index -gt $lastIndex) {
-            $seg = $text.Substring($lastIndex, $m.Index - $lastIndex)
+    param([string]$text,[string]$pattern)
+    if ([string]::IsNullOrWhiteSpace($text)) { return }
+    $regex = [regex]::new($pattern,[System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    $lastIndex=0
+    $matches=$regex.Matches($text)
+    if($matches.Count -eq 0){Write-Host $text -ForegroundColor Gray;return}
+    foreach($m in $matches){
+        if($m.Index -gt $lastIndex){
+            $seg=$text.Substring($lastIndex,$m.Index-$lastIndex)
             Write-Host -NoNewline $seg -ForegroundColor Gray
         }
         Write-Host -NoNewline $m.Value -ForegroundColor Yellow
-        $lastIndex = $m.Index + $m.Length
+        $lastIndex=$m.Index+$m.Length
     }
-
-    if ($lastIndex -lt $text.Length) {
+    if($lastIndex -lt $text.Length){
         Write-Host -NoNewline $text.Substring($lastIndex) -ForegroundColor Gray
     }
     Write-Host ""
@@ -152,18 +128,11 @@ elseif ($mode -eq 2) {
             Write-Host "⚠️ Ruta no encontrada: $ruta" -ForegroundColor DarkYellow
             continue 
         }
-        if ((Get-Item $ruta).PSIsContainer) {
-            $found = Get-ChildItem -Path $ruta -Recurse -File -ErrorAction SilentlyContinue |
-                     Where-Object { $_.Name -notlike '~$*' -and $_.Name -match '(?i)Blueprint.*\.xlsx$' }
-            foreach ($f in $found) {
-                Write-Host ("      ✅ Blueprint: {0}" -f $f.FullName) -ForegroundColor Green
-                $blueprints += $f.FullName
-            }
-        } else {
-            if ($ruta -match '(?i)Blueprint.*\.xlsx$') {
-                Write-Host ("      ✅ Blueprint: {0}" -f $ruta) -ForegroundColor Green
-                $blueprints += $ruta
-            }
+        $found = Get-ChildItem -Path $ruta -Recurse -File -ErrorAction SilentlyContinue |
+                 Where-Object { $_.Name -notlike '~$*' -and $_.Name -match '(?i)Blueprint.*\.xlsx$' }
+        foreach ($f in $found) {
+            Write-Host ("      ✅ Blueprint: {0}" -f $f.FullName) -ForegroundColor Green
+            $blueprints += $f.FullName
         }
     }
 }
@@ -176,45 +145,25 @@ if ($blueprints.Count -eq 0) {
 # -------- MODO 4: DETECTAR NO CONTEMPLADOS --------
 if ($mode -eq 4) {
     Write-Host "`n🔎 Comparando con la lista interna..." -ForegroundColor Cyan
-    
-    # Normalizar rutas internas para comparación
     $rutasNormalizadas = $rutasOrigen | ForEach-Object { Normalize $_ }
-    
     $noContemplados = $blueprints | Where-Object {
-        $blueprintPath = Normalize $_
-        $estaContemplado = $false
-        
-        foreach ($rutaInterna in $rutasNormalizadas) {
-            if ($blueprintPath -like "$rutaInterna*") {
-                $estaContemplado = $true
-                break
-            }
-        }
-        
-        -not $estaContemplado
+        $bp = Normalize $_
+        -not ($rutasNormalizadas | Where-Object { $bp -like "$_*" })
     }
-
     if ($noContemplados.Count -gt 0) {
-        Write-Host ("`n❗ Se encontraron {0} Blueprints no contemplados:" -f $noContemplados.Count) -ForegroundColor Red
-        foreach ($nc in $noContemplados) {
-            Write-Host ("   ➕ {0}" -f $nc) -ForegroundColor Red
-        }
+        Write-Host ("❗ Se encontraron {0} Blueprints no contemplados:" -f $noContemplados.Count) -ForegroundColor Red
+        $noContemplados | ForEach-Object { Write-Host " ➕ $_" -ForegroundColor Red }
     } else {
-        Write-Host "`n✅ Todos los Blueprints están contemplados." -ForegroundColor Green
+        Write-Host "✅ Todos los Blueprints están contemplados." -ForegroundColor Green
     }
-
-    Write-Host "`n✔️ Modo 4 completado." -ForegroundColor Green
     exit
 }
-
-Write-Host ("   → {0} ficheros detectados." -f $blueprints.Count) -ForegroundColor Green
 
 # -------- ANALIZAR CON OPENXML --------
 $totalEncontrados = 0
 $totalBlueprintsOK = 0
 $detalles = @()
 $inicio = Get-Date
-
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 foreach ($path in $blueprints) {
@@ -223,10 +172,17 @@ foreach ($path in $blueprints) {
         $tmpDir = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), [System.IO.Path]::GetRandomFileName())
         [System.IO.Compression.ZipFile]::ExtractToDirectory($path, $tmpDir)
 
+        # Leer sharedStrings.xml (diccionario de texto)
+        $sharedFile = "$tmpDir\xl\sharedStrings.xml"
+        $sharedStrings = @()
+        if (Test-Path $sharedFile) {
+            $xml = [xml](Get-Content $sharedFile -Raw)
+            $sharedStrings = $xml.sst.si | ForEach-Object { ($_."t" | Out-String).Trim() }
+        }
+
         $sheetFiles = Get-ChildItem "$tmpDir\xl\worksheets" -File -ErrorAction SilentlyContinue
         $sheetNamesFile = "$tmpDir\xl\workbook.xml"
         $sheetNames = @{}
-        
         if (Test-Path $sheetNamesFile) {
             $xml = [xml](Get-Content $sheetNamesFile -Raw)
             foreach ($s in $xml.workbook.sheets.sheet) {
@@ -234,42 +190,30 @@ foreach ($path in $blueprints) {
             }
         }
 
-        $hitsLocal = @()
-
         foreach ($sheet in $sheetFiles) {
-            $sheetContent = Get-Content $sheet.FullName -Raw -ErrorAction SilentlyContinue
+            $xml = [xml](Get-Content $sheet.FullName -Raw)
             $sheetName = (Split-Path $sheet.Name -LeafBase)
             $displayName = if ($sheetNames.ContainsKey($sheetName)) { $sheetNames[$sheetName] } else { $sheet.Name }
 
-            if ($sheetContent -match '(?i)an[aá]lisis' -and $sheetContent -match '(?i)concept') {
-                $textos = (Select-String -InputObject $sheetContent -Pattern ">([^<]+)<" -AllMatches).Matches |
-                          ForEach-Object { $_.Groups[1].Value }
-
-                foreach ($t in $textos) {
-                    if ([string]::IsNullOrWhiteSpace($t)) { continue }
-                    $v = Normalize $t
-                    if ($v -match $pattern) {
+            if ($displayName -match '(?i)an[aá]lisis' -and $displayName -match '(?i)concept') {
+                foreach ($c in $xml.worksheet.sheetData.row.c) {
+                    $val = ""
+                    if ($c.t -eq "s") { $val = $sharedStrings[[int]$c.v] }
+                    else { $val = $c.v }
+                    if ([string]::IsNullOrWhiteSpace($val)) { continue }
+                    $valNorm = Normalize $val
+                    if ($valNorm -match $pattern) {
                         $totalEncontrados++
-                        $hitsLocal += [PSCustomObject]@{
-                            Fichero = $path
-                            Hoja    = $displayName
-                            Valor   = $t.Trim()
+                        $detalles += [PSCustomObject]@{
+                            Nº       = $totalEncontrados
+                            Fichero  = $path
+                            Hoja     = $displayName
+                            Celda    = $c.r
+                            Valor    = $val
                         }
                     }
                 }
             }
-        }
-
-        if ($hitsLocal.Count -gt 0) {
-            $totalBlueprintsOK++
-            Write-Host ("✅ {0} coincidencias encontradas en {1}" -f $hitsLocal.Count, (Split-Path $path -Leaf)) -ForegroundColor Green
-            foreach ($hit in $hitsLocal) {
-                Write-Host ("📄 Hoja: {0}" -f $hit.Hoja) -ForegroundColor Cyan
-                Highlight $hit.Valor $pattern
-                $detalles += $hit
-            }
-        } else {
-            Write-Host ("⚪ Sin coincidencias en {0}" -f (Split-Path $path -Leaf)) -ForegroundColor Gray
         }
 
         Remove-Item -Path $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
@@ -281,26 +225,23 @@ foreach ($path in $blueprints) {
 # -------- RESUMEN FINAL --------
 $fin = Get-Date
 $dur = New-TimeSpan -Start $inicio -End $fin
-$agrupado = $detalles | Group-Object Fichero
-
 Write-Host "`n==============================================" -ForegroundColor DarkCyan
 Write-Host ("📊 RESUMEN FINAL") -ForegroundColor Cyan
 Write-Host ("   Blueprints analizados : {0}" -f $blueprints.Count)
-Write-Host ("   Con hallazgos         : {0}" -f $agrupado.Count)
 Write-Host ("   Coincidencias totales : {0}" -f $totalEncontrados)
 Write-Host ("   Tiempo total          : {0} min {1:D2} s" -f $dur.Minutes, $dur.Seconds)
 Write-Host "==============================================" -ForegroundColor DarkCyan
 
-if ($agrupado.Count -gt 0) {
-    foreach ($g in $agrupado) {
-        Write-Host "`n📁 $($g.Name)" -ForegroundColor Cyan
-        foreach ($d in $g.Group) {
-            Write-Host ("📄 Hoja: {0}" -f $d.Hoja) -ForegroundColor Blue
-            Highlight $d.Valor $pattern
-        }
+if ($detalles.Count -gt 0) {
+    Write-Host "`n#️⃣ Nº  | 📄 Blueprint completo                                   | 🧾 Hoja | 📍 Celda | Texto encontrado" -ForegroundColor White
+    Write-Host "------------------------------------------------------------------------------------------------------------"
+    foreach ($d in $detalles) {
+        $num = "{0,3}" -f $d.Nº
+        Write-Host ("{0} | {1} | {2} | {3} | " -f $num, $d.Fichero, $d.Hoja, $d.Celda) -NoNewline -ForegroundColor Gray
+        Highlight $d.Valor $pattern
     }
 } else {
     Write-Host "`n⚪ No se encontraron coincidencias." -ForegroundColor Gray
 }
 
-Write-Host "`n✔️ Proceso completado
+Write-Host "`n✔️ Proceso completado (OpenXML sin Excel, versión optimizada)." -ForegroundColor Green
