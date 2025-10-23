@@ -1,6 +1,5 @@
 # ==========================================================
 # Buscar literales en Blueprints (.xlsx) sin abrir Excel (OpenXML)
-# Version limpia ASCII, llaves balanceadas
 # ==========================================================
 $ErrorActionPreference = "Stop"
 
@@ -20,8 +19,12 @@ function Remove-Diacritics([string]$s) {
 }
 
 function Normalize([string]$s) {
-    # normaliza acentos, pasa a minusculas y homogeneiza separador
-    (Remove-Diacritics $s).ToLowerInvariant().Trim() -replace '\\','/'
+    if ([string]::IsNullOrWhiteSpace($s)) { return "" }
+    $s = $s -replace '\s+', ' '              # normaliza espacios
+    $s = $s -replace '&#xA;|&#xD;', ''       # elimina saltos XML
+    $s = $s -replace '[\u0000-\u001F]', ''   # elimina caracteres invisibles
+    $s = $s.Trim()
+    (Remove-Diacritics $s).ToLowerInvariant()
 }
 
 function Select-Mode {
@@ -36,10 +39,7 @@ function Select-Mode {
 }
 
 function Highlight {
-    param(
-        [string]$text,
-        [string]$pattern
-    )
+    param([string]$text,[string]$pattern)
     if ([string]::IsNullOrWhiteSpace($text)) { return }
     $regex = New-Object System.Text.RegularExpressions.Regex $pattern, ([System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
     $lastIndex = 0
@@ -47,7 +47,7 @@ function Highlight {
     if ($matches.Count -eq 0) { Write-Host $text -ForegroundColor Gray; return }
     foreach ($m in $matches) {
         if ($m.Index -gt $lastIndex) {
-            $seg = $text.Substring($lastIndex, $m.Index - $lastIndex)
+            $seg = $text.Substring($lastIndex,$m.Index-$lastIndex)
             Write-Host -NoNewline $seg -ForegroundColor Gray
         }
         Write-Host -NoNewline $m.Value -ForegroundColor Yellow
@@ -74,7 +74,6 @@ if ($mode -ne 4) {
         $literals += $lit
     }
     if ($literals.Count -eq 0) { Write-Host "No se introdujo ningun literal. Saliendo."; exit }
-    # insensible a may/minus y acentos
     $pattern = "(?i)" + (($literals | ForEach-Object { [regex]::Escape((Normalize $_)) }) -join "|")
 }
 
@@ -176,12 +175,9 @@ foreach ($path in $blueprints) {
         if (Test-Path $sharedFile) {
             $x = [xml](Get-Content $sharedFile -Raw)
             foreach ($si in $x.sst.si) {
-                # un si puede tener varios t por formato; concatenamos
                 $txt = ""
                 if ($si.t) { $txt += ($si.t | Out-String) }
-                if ($si.r) {
-                    foreach ($r in $si.r) { if ($r.t) { $txt += ($r.t | Out-String) } }
-                }
+                if ($si.r) { foreach ($r in $si.r) { if ($r.t) { $txt += ($r.t | Out-String) } } }
                 $shared += $txt.Trim()
             }
         }
@@ -198,16 +194,13 @@ foreach ($path in $blueprints) {
         $sheets = Get-ChildItem (Join-Path $tmpDir "xl\worksheets") -File -ErrorAction SilentlyContinue
         foreach ($sheet in $sheets) {
             $xml = [xml](Get-Content $sheet.FullName -Raw)
-            $sheetKey = [System.IO.Path]::GetFileNameWithoutExtension($sheet.Name)  # p.ej. sheet1
+            $sheetKey = [System.IO.Path]::GetFileNameWithoutExtension($sheet.Name)
             $displayName = if ($sheetNames.ContainsKey($sheetKey)) { $sheetNames[$sheetKey] } else { $sheet.Name }
-
-            # filtrar por nombre "Analisis" y "concept"
             if ($displayName -notmatch '(?i)an[aá]lisis' -or $displayName -notmatch '(?i)concept') { continue }
 
             foreach ($c in $xml.worksheet.sheetData.row.c) {
                 $val = ""
                 if ($c.t -eq "s") {
-                    # indice a shared strings
                     if ($c.v -ne $null -and $c.v -ne "") {
                         $idx = [int]$c.v
                         if ($idx -ge 0 -and $idx -lt $shared.Count) { $val = $shared[$idx] }
@@ -218,7 +211,7 @@ foreach ($path in $blueprints) {
                 if ([string]::IsNullOrWhiteSpace($val)) { continue }
 
                 $valNorm = Normalize $val
-                if ($valNorm -match $pattern) {
+                if ($valNorm -match $pattern -or (Normalize $val) -match $pattern) {
                     $totalEncontrados++
                     $detalles += [PSCustomObject]@{
                         N       = $totalEncontrados
