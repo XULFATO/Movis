@@ -20,11 +20,11 @@ function Remove-Diacritics([string]$s) {
 
 function Normalize([string]$s) {
     if ([string]::IsNullOrWhiteSpace($s)) { return "" }
-    $s = $s -replace '\s+', ' '              # normaliza espacios
-    $s = $s -replace '&#xA;|&#xD;', ''       # elimina saltos XML
-    $s = $s -replace '[\u0000-\u001F]', ''   # elimina caracteres invisibles
+    $s = $s -replace '\s+', ' '               # normaliza espacios
+    $s = $s -replace '&#xA;|&#xD;', ''        # elimina saltos XML
+    $s = $s -replace '[\u0000-\u001F]', ''   # borra caracteres invisibles
     $s = $s.Trim()
-    (Remove-Diacritics $s).ToLowerInvariant()
+    Remove-Diacritics $s                      # quita tildes, mantiene mayúsculas/minúsculas
 }
 
 function Select-Mode {
@@ -208,10 +208,14 @@ foreach ($path in $blueprints) {
                 } else {
                     if ($c.v -ne $null) { $val = [string]$c.v }
                 }
+
                 if ([string]::IsNullOrWhiteSpace($val)) { continue }
 
+                # normaliza texto, pero mantiene caso
                 $valNorm = Normalize $val
-                if ($valNorm -match $pattern -or (Normalize $val) -match $pattern) {
+
+                # comprueba sin distinción de mayúsculas/minúsculas ni acentos
+                if ($val -match $pattern -or $valNorm -match $pattern) {
                     $totalEncontrados++
                     $detalles += [PSCustomObject]@{
                         N       = $totalEncontrados
