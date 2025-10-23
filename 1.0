@@ -1,10 +1,19 @@
 # ==========================================================
-# Buscar literales en Blueprints (modo escaneo o listado con memoria + mejora carpetas)
+# Buscar literales en Blueprints (rutas incluidas en el script)
 # ==========================================================
 $ErrorActionPreference = "Stop"
-$memFile = "$env:USERPROFILE\.blueprint_lastpath.txt"
 
-# ---------- Funciones ----------
+# ---------- CONFIGURACIÓN INICIAL ----------
+# 👉 Añade aquí tus rutas de carpetas o de ficheros Blueprint
+$rutasOrigen = @(
+    "R:\Clientes\J18_GroupLink_6.1\01_Documentación Implantación\03_Análisis",
+    "R:\Clientes\Z02_Finanzas_3.0\01_Documentación Implantación\03_Análisis\Blueprint.xlsx"
+)
+
+# ---------- Literales a buscar ----------
+$literals = @("Embargo", "Embargo Salarial")  # ← añade más si quieres
+
+# ---------- Parámetros internos ----------
 function Remove-Diacritics([string]$s){
     if ([string]::IsNullOrWhiteSpace($s)) { return "" }
     $d = $s.Normalize([Text.NormalizationForm]::FormD)
@@ -13,117 +22,29 @@ function Remove-Diacritics([string]$s){
     }) -join ''
 }
 function Normalize([string]$s){ (Remove-Diacritics $s).ToLowerInvariant().Trim() }
-function ColumnLetter([int]$n) {
-    $s = ""
-    while ($n -gt 0) { $n--; $s = ([char]([int][char]'A' + ($n % 26))) + $s; $n = [math]::Floor($n / 26) }
-    return $s
-}
-function Select-Mode {
-    Write-Host "`n🟦 MODO DE BÚSQUEDA" -ForegroundColor Cyan
-    Write-Host "1️⃣  Escanear automáticamente todas las carpetas"
-    Write-Host "2️⃣  Usar fichero con rutas de carpetas o de Excel"
-    $resp = Read-Host "Elige modo (1 o 2)"
-    if ($resp -eq "2") { return 2 } else { return 1 }
-}
-
-# ---------- Entrada ----------
-Write-Host "🔍 Búsqueda de literales en Blueprints → hoja 'Análisis conceptos'" -ForegroundColor Cyan
-
-$mode = Select-Mode
-$rutaListado = $null
-$blueprints = @()
-
-if ($mode -eq 1) {
-    $basePath = Read-Host "📂 Introduce la ruta base (p.ej. R:\Proyectos)"
-    if (-not (Test-Path $basePath)) { Write-Host "❌ Ruta no válida."; exit }
-}
-else {
-    # recordar última ruta
-    if (Test-Path $memFile) {
-        $lastPath = Get-Content $memFile -Raw
-        if (-not [string]::IsNullOrWhiteSpace($lastPath) -and (Test-Path $lastPath)) {
-            Write-Host "`n💾 Último fichero de rutas usado:" -ForegroundColor Yellow
-            Write-Host "   $lastPath"
-            $useLast = Read-Host "¿Usar el mismo? (S/N)"
-            if ($useLast -match '^[sS]$') { $rutaListado = $lastPath }
-        }
-    }
-    if (-not $rutaListado) {
-        $rutaListado = Read-Host "📄 Introduce la ruta del fichero con rutas de carpetas o de Excel"
-        if (-not (Test-Path $rutaListado)) { Write-Host "❌ Fichero no encontrado."; exit }
-        Set-Content -Path $memFile -Value $rutaListado
-        Write-Host "💾 Ruta guardada para próximas ejecuciones." -ForegroundColor Green
-    }
-}
-
-Write-Host "`n✏️  Introduce hasta 10 literales (uno por línea). Deja vacío para terminar." -ForegroundColor Yellow
-$literals = @()
-for ($i=1; $i -le 10; $i++){
-    $lit = Read-Host ("Literal #{0}" -f $i)
-    if ([string]::IsNullOrWhiteSpace($lit)) { break }
-    $literals += $lit
-}
-if ($literals.Count -eq 0) { Write-Host "❌ Sin literales. Saliendo."; exit }
+function ColumnLetter([int]$n){ $s=""; while($n -gt 0){$n--; $s=[char]([int][char]'A'+($n%26))+$s; $n=[math]::Floor($n/26)}; return $s }
 
 $pattern = ($literals | ForEach-Object { [regex]::Escape((Normalize $_)) }) -join "|"
-$reDoc = '(?i)(documentaci[oó]n\s+implantaci[oó]n)'
-$reAna = '(?i)(an[aá]lisis)'
 
-# ---------- Obtener lista de Blueprints ----------
-if ($mode -eq 1) {
-    Write-Host "`n📁 Escaneando carpetas automáticamente..." -ForegroundColor DarkCyan
-    Get-ChildItem -Path $basePath -Directory |
-      Where-Object { $_.Name.Length -ge 4 -and $_.Name[3] -eq '_' } |
-      Sort-Object LastWriteTime -Descending |
-      ForEach-Object {
-        $dir1 = $_
-        Write-Host ("→ Revisando carpeta principal: {0}" -f $dir1.Name) -ForegroundColor Yellow
+Write-Host "🔍 Búsqueda de literales en Blueprints → hoja 'Análisis conceptos'" -ForegroundColor Cyan
 
-        Get-ChildItem -Path $dir1.FullName -Directory -ErrorAction SilentlyContinue | ForEach-Object {
-            $dir2 = $_
-            $docDirs = Get-ChildItem -Path $dir2.FullName -Directory -ErrorAction SilentlyContinue |
-                       Where-Object { $_.Name -match $reDoc }
-
-            foreach ($doc in $docDirs) {
-                $anaDirs = Get-ChildItem -Path $doc.FullName -Directory -ErrorAction SilentlyContinue |
-                           Where-Object { $_.Name -match $reAna }
-
-                foreach ($ana in $anaDirs) {
-                    Write-Host ("   📂 Revisando subcarpeta: {0}" -f $ana.FullName) -ForegroundColor Cyan
-                    $found = Get-ChildItem -Path $ana.FullName -Recurse -File -ErrorAction SilentlyContinue |
-                             Where-Object { $_.Name -notlike '~$*' -and $_.Name -match '(?i)Blueprint.*\.(xlsx|xlsm)$' }
-                    foreach ($f in $found) {
-                        Write-Host ("      ✅ Encontrado Blueprint: {0}" -f $f.FullName) -ForegroundColor Green
-                        $blueprints += $f.FullName
-                    }
-                }
-            }
-        }
+# ---------- Localizar los Blueprints ----------
+$blueprints = @()
+foreach ($ruta in $rutasOrigen) {
+    if ((Get-Item $ruta).PSIsContainer) {
+        $found = Get-ChildItem -Path $ruta -Recurse -File -ErrorAction SilentlyContinue |
+                 Where-Object { $_.Name -match '(?i)Blueprint.*\.(xlsx|xlsm)$' }
+        foreach ($f in $found) { $blueprints += $f.FullName }
+    } else {
+        $blueprints += $ruta
     }
 }
-else {
-    Write-Host "`n📄 Cargando rutas desde listado: $rutaListado" -ForegroundColor DarkCyan
-    $rutas = Get-Content $rutaListado | Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and (Test-Path $_) }
-    foreach ($ruta in $rutas) {
-        if ((Get-Item $ruta).PSIsContainer) {
-            # Es carpeta: buscar dentro
-            $found = Get-ChildItem -Path $ruta -Recurse -File -ErrorAction SilentlyContinue |
-                     Where-Object { $_.Name -match '(?i)Blueprint.*\.(xlsx|xlsm)$' }
-            foreach ($f in $found) { $blueprints += $f.FullName }
-        } else {
-            # Es archivo Excel directamente
-            $blueprints += $ruta
-        }
-    }
-    if ($blueprints.Count -eq 0) { Write-Host "⚠️ No se encontraron Blueprints válidos."; exit }
-}
 
+if ($blueprints.Count -eq 0) { Write-Host "⚠️ No se encontraron Blueprints."; exit }
 Write-Host ("   → {0} ficheros detectados." -f $blueprints.Count) -ForegroundColor Green
 
-# ---------- Análisis Excel ----------
-# Guardar Excel existentes antes del script
+# ---------- Analizar ----------
 $prevExcel = Get-Process excel -ErrorAction SilentlyContinue
-
 $excel = New-Object -ComObject Excel.Application
 $excel.Visible = $false
 $excel.DisplayAlerts = $false
@@ -156,9 +77,9 @@ foreach ($path in $blueprints) {
 
         $rows = $vals.GetLength(0)
         $cols = $vals.GetLength(1)
+        $hitsLocal = @()
         $totalCells = $rows * $cols
         $processed = 0
-        $hitsLocal = @()
 
         for ($r=1; $r -le $rows; $r++) {
             for ($c=1; $c -le $cols; $c++) {
@@ -228,12 +149,4 @@ if ($detalles.Count -gt 0) {
 # ---------- Limpieza ----------
 $excel.Quit()
 [System.Runtime.InteropServices.Marshal]::ReleaseComObject($excel) | Out-Null
-
-# Solo cerrar instancias creadas por este script
-$afterExcel = Get-Process excel -ErrorAction SilentlyContinue
-$openedByScript = Compare-Object $prevExcel $afterExcel -PassThru | Where-Object { $_.SideIndicator -eq '=>' }
-foreach ($e in $openedByScript) {
-    try { $e.Kill() } catch {}
-}
-
 Write-Host "`n✔️ Proceso completado correctamente (sin cerrar tu Excel abierto)." -ForegroundColor Green
