@@ -211,11 +211,12 @@ foreach ($path in $blueprints) {
 
                 if ([string]::IsNullOrWhiteSpace($val)) { continue }
 
-                # normaliza texto, pero mantiene caso
-                $valNorm = Normalize $val
+                # limpieza agresiva de texto
+                $valClean = ($val -replace '\s+', ' ') -replace '[\u0000-\u001F]', ''
+                $valClean = Remove-Diacritics $valClean
 
-                # comprueba sin distinción de mayúsculas/minúsculas ni acentos
-                if ($val -match $pattern -or $valNorm -match $pattern) {
+                # comparación final insensible a mayúsculas/tildes
+                if ($valClean -match $pattern) {
                     $totalEncontrados++
                     $detalles += [PSCustomObject]@{
                         N       = $totalEncontrados
