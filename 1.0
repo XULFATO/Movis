@@ -1,11 +1,11 @@
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
-# === CONFIGURA AQUÍ ===
+# === Configura ===
 $path = "C:\Users\Joquina\OneDrive - Automatic Data Processing Inc\Escritorio\PRUEBA\123_PRUEBE\123\01. Documentación Implantación\ANALISIS\J18-Blueprint_v6.1_validado_09102025.xlsx"
 $literal = "embargo"
 
-# === FUNCIONES ===
+# === Funciones ===
 function Remove-Diacritics([string]$s) {
     $d = $s.Normalize([Text.NormalizationForm]::FormD)
     ($d.ToCharArray() | Where-Object {
@@ -18,36 +18,24 @@ function Normalize([string]$s) {
     (Remove-Diacritics $s).ToLowerInvariant().Trim()
 }
 
-# === DESCOMPRIMIR Y LEER ===
+# === Descomprimir ===
 $tmpDir = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), [System.IO.Path]::GetRandomFileName())
 [System.IO.Compression.ZipFile]::ExtractToDirectory($path, $tmpDir)
 
-$sharedFile = "$tmpDir\xl\sharedStrings.xml"
+$sheetFiles = Get-ChildItem "$tmpDir\xl\worksheets" -File -ErrorAction SilentlyContinue
 $found = 0
-if (Test-Path $sharedFile) {
-    $xml = [xml](Get-Content $sharedFile -Raw)
-    $all = @()
-    foreach ($si in $xml.sst.si) {
-        $txt = ""
-        foreach ($node in $si.ChildNodes) {
-            if ($node.t) { $txt += $node.t }
-            elseif ($node.r) {
-                foreach ($r in $node.r) { if ($r.t) { $txt += $r.t } }
-            }
-        }
-        $txt = Normalize $txt
-        if ($txt -match [regex]::Escape((Normalize $literal))) {
-            Write-Host "✅ Encontrado: $($txt)" -ForegroundColor Green
-            $found++
-        }
+
+foreach ($sf in $sheetFiles) {
+    $content = Get-Content $sf.FullName -Raw
+    $clean = Normalize ($content -replace "<[^>]+>", " ")
+    if ($clean -match (Normalize $literal)) {
+        Write-Host "✅ Encontrado en hoja: $($sf.Name)" -ForegroundColor Green
+        $found++
     }
-}
-else {
-    Write-Host "⚠️ No existe sharedStrings.xml" -ForegroundColor Yellow
 }
 
 if ($found -eq 0) {
-    Write-Host "❌ No se encontró '$literal' en el fichero." -ForegroundColor Red
+    Write-Host "❌ No se encontró '$literal' en ninguna hoja." -ForegroundColor Red
 }
 
 Remove-Item -Path $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
