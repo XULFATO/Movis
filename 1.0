@@ -1,4 +1,8 @@
-# ==========================================================
+
+
+
+
+#BUENO BUENO BUENO BUENO ==========================================================
 # Buscar literales en Blueprints (.xlsx) usando Excel COM (solo lectura)
 # ==========================================================
 $ErrorActionPreference = "Stop"
