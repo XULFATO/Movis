@@ -1,10 +1,15 @@
+# ==========================================================
+# Buscar literales en Blueprints (.xlsx) usando Excel COM (solo lectura)
+# ==========================================================
 $ErrorActionPreference = "Stop"
 
-# === CONFIGURA ===
-$path = "C:\Users\Joquina\OneDrive - Automatic Data Processing Inc\Escritorio\PRUEBA\123_PRUEBE\123\01. Documentación Implantación\ANALISIS\J18-Blueprint_v6.1_validado_09102025.xlsx"
-$literal = "embargo"
+# ----- LISTA INTERNA (modo 2 y comparacion en modo 4) -----
+$rutasOrigen = @(
+    "O:\ADP_SP\Clientes_Bob_LOPD\J18_ANCERT\01. Documentacion Implantacion\03.-ANALISIS",
+    "O:\ADP_SP\Clientes_Bob_LOPD\J20_TROPICAL_PARTNERS\01. Documentacion Implantacion\03.-ANALISIS"
+)
 
-# === FUNCIONES ===
+# ------------------ FUNCIONES AUXILIARES ------------------
 function Remove-Diacritics([string]$s) {
     if ([string]::IsNullOrWhiteSpace($s)) { return "" }
     $d = $s.Normalize([Text.NormalizationForm]::FormD)
@@ -12,40 +17,290 @@ function Remove-Diacritics([string]$s) {
         [Globalization.CharUnicodeInfo]::GetUnicodeCategory($_) -ne [Globalization.UnicodeCategory]::NonSpacingMark
     }) -join ''
 }
-function Normalize([string]$s) { (Remove-Diacritics $s).ToLowerInvariant().Trim() }
 
-# === INICIO ===
-Write-Host "`n📘 Analizando Excel REAL (vía COM)...`n" -ForegroundColor Cyan
-$excel = New-Object -ComObject Excel.Application
-$excel.Visible = $false
-$excel.DisplayAlerts = $false
+function Normalize([string]$s) {
+    if ([string]::IsNullOrWhiteSpace($s)) { return "" }
+    $s = $s -replace '\s+', ' '              # normaliza espacios y saltos
+    $s = $s -replace '[\u0000-\u001F]', ''   # elimina caracteres invisibles
+    $s = $s.Trim()
+    Remove-Diacritics $s                      # quita tildes, mantiene may/min
+}
 
-try {
-    $wb = $excel.Workbooks.Open($path, $false, $true)
-    $found = 0
-    foreach ($ws in $wb.Worksheets) {
-        $vals = $ws.UsedRange.Value2
-        if ($null -eq $vals) { continue }
+function Select-Mode {
+    Write-Host ""
+    Write-Host "MODO DE BUSQUEDA"
+    Write-Host "1) Escanear automaticamente toda la estructura"
+    Write-Host "2) Usar listado interno (rutasOrigen)"
+    Write-Host "3) Escanear filtrando solo carpetas que contengan un texto"
+    Write-Host "4) Detectar Blueprints NO contemplados en rutasOrigen"
+    Write-Host "5) Analizar rutas exactas pegadas (sin explorar)"
+    $r = Read-Host "Elige modo (1,2,3,4,5):"
+    switch ($r) { '2' {2} '3' {3} '4' {4} '5' {5} default {1} }
+}
 
-        foreach ($cell in $vals) {
-            if ($null -eq $cell) { continue }
-            $text = Normalize ([string]$cell)
-            if ($text -match (Normalize $literal)) {
-                Write-Host ("✅ Hoja '{0}' contiene: {1}" -f $ws.Name, $cell) -ForegroundColor Green
-                $found++
+function Highlight {
+    param([string]$text,[string]$pattern)
+    if ([string]::IsNullOrWhiteSpace($text)) { return }
+    $regex = New-Object System.Text.RegularExpressions.Regex $pattern, ([System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    $lastIndex = 0
+    $matches = $regex.Matches($text)
+    if ($matches.Count -eq 0) { Write-Host $text -ForegroundColor Gray; return }
+    foreach ($m in $matches) {
+        if ($m.Index -gt $lastIndex) {
+            $seg = $text.Substring($lastIndex, $m.Index - $lastIndex)
+            Write-Host -NoNewline $seg -ForegroundColor Gray
+        }
+        Write-Host -NoNewline $m.Value -ForegroundColor Yellow
+        $lastIndex = $m.Index + $m.Length
+    }
+    if ($lastIndex -lt $text.Length) {
+        Write-Host -NoNewline $text.Substring($lastIndex) -ForegroundColor Gray
+    }
+    Write-Host ""
+}
+
+function ColumnIndexToLetters([int]$index) {
+    $letters = ""
+    while ($index -gt 0) {
+        $mod = ($index - 1) % 26
+        $letters = [char](65 + $mod) + $letters
+        $index = [math]::Floor(($index - $mod) / 26)
+    }
+    return $letters
+}
+
+# ------------------------ ENTRADA -------------------------
+Write-Host "Busqueda en Blueprints (.xlsx) con Excel COM (solo lectura)"
+$mode = Select-Mode
+
+$literals = @()
+$pattern = ""
+if ($mode -ne 4) {
+    Write-Host ""
+    Write-Host "Introduce hasta 10 literales (uno por linea). Deja vacio para terminar."
+    for ($i=1; $i -le 10; $i++) {
+        $lit = Read-Host ("Literal #{0}" -f $i)
+        if ([string]::IsNullOrWhiteSpace($lit)) { break }
+        $literals += $lit
+    }
+    if ($literals.Count -eq 0) { Write-Host "No se introdujo ningun literal. Saliendo."; exit }
+    $pattern = "(?i)" + (($literals | ForEach-Object { [regex]::Escape((Normalize $_)) }) -join "|")
+}
+
+$reDoc = '(?i)(documentaci[oó]n\s+implantaci[oó]n)'
+$reAna = '(?i)(an[aá]lisis)'
+$blueprints = @()
+
+# ------------------ LOCALIZAR BLUEPRINTS ------------------
+if ($mode -in 1,3,4) {
+    $basePath = Read-Host "Ruta base (p.ej. O:\ADP_SP):"
+    if (-not (Test-Path $basePath)) { Write-Host "Ruta no valida."; exit }
+
+    $filtro = ""
+    if ($mode -eq 3) {
+        $filtro = Read-Host "Texto que deben contener las carpetas (p.ej. _23_):"
+        if ([string]::IsNullOrWhiteSpace($filtro)) { $filtro = "" }
+    }
+
+    Write-Host "Escaneando carpetas..."
+    $carpetas = Get-ChildItem -Path $basePath -Directory -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name.Length -ge 4 -and $_.Name[3] -eq '_' } |
+                Sort-Object LastWriteTime -Descending
+
+    if ($filtro -ne "") {
+        $carpetas = $carpetas | Where-Object { $_.Name -match [regex]::Escape($filtro) }
+        Write-Host ("Filtro aplicado: '{0}' -> {1} carpetas" -f $filtro, $carpetas.Count)
+    }
+
+    foreach ($dir1 in $carpetas) {
+        Write-Host ("- Carpeta principal: {0}" -f $dir1.Name)
+        Get-ChildItem -Path $dir1.FullName -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+            $dir2 = $_
+            $docDirs = Get-ChildItem -Path $dir2.FullName -Directory -ErrorAction SilentlyContinue |
+                       Where-Object { $_.Name -match $reDoc }
+            foreach ($doc in $docDirs) {
+                $anaDirs = Get-ChildItem -Path $doc.FullName -Directory -ErrorAction SilentlyContinue |
+                           Where-Object { $_.Name -match $reAna }
+                foreach ($ana in $anaDirs) {
+                    Write-Host ("   * Subcarpeta Analisis: {0}" -f $ana.FullName)
+                    $found = Get-ChildItem -Path $ana.FullName -Recurse -File -ErrorAction SilentlyContinue |
+                             Where-Object { $_.Name -notlike '~$*' -and $_.Extension -match '(?i)\.xlsx$' -and $_.Name -match '(?i)Blueprint' }
+                    foreach ($f in $found) {
+                        Write-Host ("     > Excel: {0}" -f $f.FullName) -ForegroundColor Green
+                        $blueprints += $f.FullName
+                    }
+                }
             }
         }
     }
-
-    if ($found -eq 0) {
-        Write-Host "❌ No se encontró '$literal' en el Excel (ni visible ni interno)." -ForegroundColor Red
+}
+elseif ($mode -eq 2) {
+    Write-Host "Usando listado interno de rutas..."
+    foreach ($ruta in $rutasOrigen) {
+        if (-not (Test-Path $ruta)) { Write-Host "Ruta no encontrada: $ruta"; continue }
+        $found = Get-ChildItem -Path $ruta -Recurse -File -ErrorAction SilentlyContinue |
+                 Where-Object { $_.Name -notlike '~$*' -and $_.Extension -match '(?i)\.xlsx$' -and $_.Name -match '(?i)Blueprint' }
+        foreach ($f in $found) {
+            Write-Host ("     > Excel: {0}" -f $f.FullName) -ForegroundColor Green
+            $blueprints += $f.FullName
+        }
     }
 }
-catch {
-    Write-Host "⚠️ Error: $($_.Exception.Message)" -ForegroundColor Yellow
+elseif ($mode -eq 5) {
+    Write-Host ""
+    Write-Host "Pega rutas exactas de ficheros .xlsx (una por linea). Enter en blanco para terminar."
+    while ($true) {
+        $r = Read-Host "Ruta Excel"
+        if ([string]::IsNullOrWhiteSpace($r)) { break }
+        if (-not (Test-Path $r)) { Write-Host "  - No existe: $r" -ForegroundColor DarkYellow; continue }
+        if ($r -notmatch '(?i)\.xlsx$') { Write-Host "  - No es .xlsx: $r" -ForegroundColor DarkYellow; continue }
+        $blueprints += (Resolve-Path $r).Path
+        Write-Host ("  + Añadido: {0}" -f $r) -ForegroundColor Green
+    }
 }
-finally {
-    $wb.Close($false)
-    $excel.Quit()
-    [System.Runtime.InteropServices.Marshal]::ReleaseComObject($excel) | Out-Null
+
+if ($mode -eq 4) {
+    if ($blueprints.Count -eq 0) { Write-Host "No se encontraron Excel."; exit }
+    Write-Host "Comparando con la lista interna..."
+    $rutasNorm = $rutasOrigen | ForEach-Object { Normalize $_ }
+    $noContemplados = $blueprints | Where-Object {
+        $bp = Normalize $_
+        -not ($rutasNorm | Where-Object { $bp -like "$_*" })
+    }
+    if ($noContemplados.Count -gt 0) {
+        Write-Host ("No contemplados: {0}" -f $noContemplados.Count) -ForegroundColor Red
+        $noContemplados | ForEach-Object { Write-Host (" + {0}" -f $_) -ForegroundColor Red }
+    } else {
+        Write-Host "Todos los Blueprints estan contemplados." -ForegroundColor Green
+    }
+    return
+}
+
+if ($blueprints.Count -eq 0) { Write-Host "No se encontraron Excel."; exit }
+
+# ------------------ PREPARAR EXCEL COM --------------------
+$excel = $null
+$excelCreated = $false
+
+try {
+    # Si Excel ya esta abierto, reutilizarlo
+    try {
+        $excel = [Runtime.InteropServices.Marshal]::GetActiveObject("Excel.Application")
+    } catch { }
+
+    if (-not $excel) {
+        $excel = New-Object -ComObject Excel.Application
+        $excelCreated = $true
+    }
+
+    $excel.Visible = $false
+    $excel.DisplayAlerts = $false
+    # No cambiamos calculo ni nada persistente; solo lectura
+} catch {
+    Write-Host "No se pudo inicializar Excel COM: $($_.Exception.Message)" -ForegroundColor Red
+    exit
+}
+
+# ------------------ ANALISIS CON EXCEL --------------------
+$totalEncontrados = 0
+$detalles = @()
+$inicio = Get-Date
+
+foreach ($path in $blueprints) {
+    Write-Host ("Analizando: {0}" -f $path) -ForegroundColor Cyan
+    if (-not (Test-Path $path)) { Write-Host "  - No existe." -ForegroundColor DarkYellow; continue }
+
+    $wb = $null
+    try {
+        # Abrir SIEMPRE en solo lectura, sin actualizar vinculos, sin cambiar nada
+        $wb = $excel.Workbooks.Open($path, $false, $true)
+    } catch {
+        Write-Host ("  - No se pudo abrir en solo lectura: {0}" -f $_.Exception.Message) -ForegroundColor DarkYellow
+        continue
+    }
+
+    try {
+        foreach ($ws in $wb.Worksheets) {
+            $used = $ws.UsedRange
+            if ($null -eq $used) { continue }
+            $vals = $used.Value2
+            if ($null -eq $vals) { continue }
+
+            $rows = 1; $cols = 1
+            if ($vals.GetType().IsArray) {
+                $rows = $vals.GetLength(0)
+                $cols = $vals.GetLength(1)
+            } else {
+                # solo una celda en UsedRange
+                $rows = 1; $cols = 1
+            }
+
+            for ($r=1; $r -le $rows; $r++) {
+                for ($c=1; $c -le $cols; $c++) {
+                    $val = $null
+                    if ($rows -eq 1 -and $cols -eq 1) {
+                        $val = $vals
+                    } else {
+                        $val = $vals[$r,$c]
+                    }
+                    if ($null -eq $val) { continue }
+
+                    $text = [string]$val
+                    if ([string]::IsNullOrWhiteSpace($text)) { continue }
+
+                    # limpieza agresiva y sin tildes
+                    $textClean = Normalize $text
+
+                    if ($textClean -match $pattern) {
+                        $totalEncontrados++
+                        $celda = (ColumnIndexToLetters $c) + $r
+                        $detalles += [PSCustomObject]@{
+                            N       = $totalEncontrados
+                            Fichero = $path
+                            Hoja    = $ws.Name
+                            Celda   = $celda
+                            Valor   = $text
+                        }
+                    }
+                }
+            }
+        }
+    } catch {
+        Write-Host ("  - Error leyendo celdas: {0}" -f $_.Exception.Message) -ForegroundColor DarkYellow
+    } finally {
+        # Cerrar SIEMPRE sin guardar
+        try { if ($wb) { $wb.Close($false) } } catch {}
+    }
+}
+
+# ------------------ CERRAR EXCEL SI LO CREAMOS -----------
+if ($excelCreated -and $excel) {
+    try { $excel.Quit() } catch {}
+    try { [System.Runtime.InteropServices.Marshal]::ReleaseComObject($excel) | Out-Null } catch {}
+}
+
+# ---------------------- RESUMEN FINAL ----------------------
+$fin = Get-Date
+$dur = New-TimeSpan -Start $inicio -End $fin
+
+Write-Host ""
+Write-Host "==============================================" -ForegroundColor DarkCyan
+Write-Host ("RESUMEN FINAL") -ForegroundColor Cyan
+Write-Host ("  Excels analizados     : {0}" -f $blueprints.Count)
+Write-Host ("  Coincidencias totales : {0}" -f $totalEncontrados)
+Write-Host ("  Tiempo total          : {0} min {1:D2} s" -f $dur.Minutes, $dur.Seconds)
+Write-Host "==============================================" -ForegroundColor DarkCyan
+
+if ($detalles.Count -gt 0) {
+    Write-Host ""
+    Write-Host "#   | Fichero completo                                                 | Hoja                | Celda  | Texto" -ForegroundColor White
+    Write-Host "---------------------------------------------------------------------------------------------------------------------------------"
+    foreach ($d in $detalles) {
+        $num = "{0,3}" -f $d.N
+        $fila = ("{0} | {1} | {2} | {3} | " -f $num, $d.Fichero, $d.Hoja, $d.Celda)
+        Write-Host -NoNewline $fila -ForegroundColor Gray
+        Highlight $d.Valor $pattern
+    }
+} else {
+    Write-Host "No se encontraron coincidencias." -ForegroundColor Gray
 }
