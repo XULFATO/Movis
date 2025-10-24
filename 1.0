@@ -1,4 +1,5 @@
-bueno bueno bueno buenoooo# ==========================================================
+
+# ==========================================================
 # Buscar literales en Blueprints (.xlsx) - MÉTODO RÁPIDO OpenXML
 # ==========================================================
 $ErrorActionPreference = "Stop"
@@ -198,28 +199,81 @@ foreach ($path in $blueprints) {
         $tmpDir = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), [System.IO.Path]::GetRandomFileName())
         [System.IO.Compression.ZipFile]::ExtractToDirectory($path, $tmpDir)
 
-        # Buscar en sharedStrings.xml y hojas
-        $archivos = @("$tmpDir\xl\sharedStrings.xml") + 
-                    (Get-ChildItem "$tmpDir\xl\worksheets" -Filter "*.xml" -File -ErrorAction SilentlyContinue)
-
-        $hitsArchivo = 0
-        foreach ($archivo in $archivos) {
-            if (-not (Test-Path $archivo)) { continue }
-            
-            $nombreHoja = if ($archivo -like "*sharedStrings.xml") { 
-                "sharedStrings" 
-            } else { 
-                Split-Path $archivo -Leaf 
+        # 1. OBTENER NOMBRES DE HOJAS desde workbook.xml
+        $workbookFile = "$tmpDir\xl\workbook.xml"
+        $sheetNames = @{}
+        $sheetIdsAnalisis = @()
+        
+        if (Test-Path $workbookFile) {
+            $wbXml = [xml](Get-Content $workbookFile -Raw -Encoding UTF8)
+            foreach ($s in $wbXml.workbook.sheets.sheet) {
+                $sheetId = $s.sheetId
+                $sheetName = $s.name
+                $sheetNames["sheet$sheetId"] = $sheetName
+                
+                # Filtrar solo hojas que contienen "análisis" o "analisis"
+                if ($sheetName -match '(?i)an[aá]lisis') {
+                    $sheetIdsAnalisis += "sheet$sheetId"
+                    Write-Host ("   📋 Hoja detectada: '{0}' (sheet{1})" -f $sheetName, $sheetId) -ForegroundColor Yellow
+                }
             }
+        }
+
+        if ($sheetIdsAnalisis.Count -eq 0) {
+            Write-Host "  ⚠️ No hay hojas con 'Análisis' en este Excel" -ForegroundColor DarkYellow
+            continue
+        }
+
+        # 2. MAPEAR sheet IDs a archivos físicos (sheet1.xml, sheet2.xml, etc.)
+        $relsFile = "$tmpDir\xl\_rels\workbook.xml.rels"
+        $sheetIdToFile = @{}
+        
+        if (Test-Path $relsFile) {
+            $relsXml = [xml](Get-Content $relsFile -Raw -Encoding UTF8)
+            foreach ($rel in $relsXml.Relationships.Relationship) {
+                if ($rel.Type -match "worksheet") {
+                    $target = $rel.Target -replace '^worksheets/', ''
+                    $rId = $rel.Id
+                    $sheetIdToFile[$rId] = $target
+                }
+            }
+        }
+
+        # 3. ENCONTRAR QUÉ ARCHIVOS FÍSICOS CORRESPONDEN A LAS HOJAS DE ANÁLISIS
+        $archivosABuscar = @()
+        if (Test-Path $workbookFile) {
+            $wbXml = [xml](Get-Content $workbookFile -Raw -Encoding UTF8)
+            foreach ($s in $wbXml.workbook.sheets.sheet) {
+                $sheetId = "sheet" + $s.sheetId
+                if ($sheetIdsAnalisis -contains $sheetId) {
+                    $rId = $s.'r:id'
+                    if ($sheetIdToFile.ContainsKey($rId)) {
+                        $archivoFisico = "$tmpDir\xl\worksheets\" + $sheetIdToFile[$rId]
+                        $archivosABuscar += @{
+                            Archivo = $archivoFisico
+                            Nombre = $sheetNames[$sheetId]
+                        }
+                    }
+                }
+            }
+        }
+
+        # 4. BUSCAR EN LOS ARCHIVOS SELECCIONADOS
+        $hitsArchivo = 0
+        foreach ($item in $archivosABuscar) {
+            $archivo = $item.Archivo
+            $nombreHoja = $item.Nombre
+            
+            if (-not (Test-Path $archivo)) { 
+                Write-Host ("  ⚠️ No se encontró archivo físico para hoja: {0}" -f $nombreHoja) -ForegroundColor DarkYellow
+                continue 
+            }
+
+            Write-Host ("   🔍 Buscando en hoja: '{0}'" -f $nombreHoja) -ForegroundColor Cyan
 
             # BÚSQUEDA ULTRA-RÁPIDA: Regex directo en contenido RAW
             $contenido = Get-Content $archivo -Raw -Encoding UTF8
             
-            # Extraer solo hojas que contengan "análisis" o "analisis"
-            if ($archivo -like "*sheet*.xml") {
-                if ($contenido -notmatch '(?i)an[aá]lisis') { continue }
-            }
-
             # Extraer TODO el texto entre tags
             $matches = [regex]::Matches($contenido, '>([^<]+)<')
             
@@ -291,3 +345,6 @@ if ($detalles.Count -gt 0) {
 }
 
 Write-Host "`n✔️ Proceso completado (OpenXML - Método RÁPIDO)" -ForegroundColor Green
+
+
+
