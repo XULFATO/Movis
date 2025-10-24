@@ -1,5 +1,4 @@
 $ErrorActionPreference = "Stop"
-Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 # === CONFIGURA ===
 $path = "C:\Users\Joquina\OneDrive - Automatic Data Processing Inc\Escritorio\PRUEBA\123_PRUEBE\123\01. Documentación Implantación\ANALISIS\J18-Blueprint_v6.1_validado_09102025.xlsx"
@@ -13,51 +12,40 @@ function Remove-Diacritics([string]$s) {
         [Globalization.CharUnicodeInfo]::GetUnicodeCategory($_) -ne [Globalization.UnicodeCategory]::NonSpacingMark
     }) -join ''
 }
-function Normalize([string]$s) {
-    $s = $s -replace '\s+', ' '
-    $s = $s -replace '[\u0000-\u001F]', ''
-    (Remove-Diacritics $s).ToLowerInvariant().Trim()
-}
+function Normalize([string]$s) { (Remove-Diacritics $s).ToLowerInvariant().Trim() }
 
-# === DESCOMPRIMIR Y LEER ===
-$tmpDir = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), [System.IO.Path]::GetRandomFileName())
-[System.IO.Compression.ZipFile]::ExtractToDirectory($path, $tmpDir)
+# === INICIO ===
+Write-Host "`n📘 Analizando Excel REAL (vía COM)...`n" -ForegroundColor Cyan
+$excel = New-Object -ComObject Excel.Application
+$excel.Visible = $false
+$excel.DisplayAlerts = $false
 
-$sheetFiles = Get-ChildItem "$tmpDir\xl\worksheets" -File -ErrorAction SilentlyContinue
-$found = 0
+try {
+    $wb = $excel.Workbooks.Open($path, $false, $true)
+    $found = 0
+    foreach ($ws in $wb.Worksheets) {
+        $vals = $ws.UsedRange.Value2
+        if ($null -eq $vals) { continue }
 
-foreach ($sf in $sheetFiles) {
-    try {
-        [xml]$xml = Get-Content $sf.FullName -Raw -ErrorAction Stop
-        $nodes = $xml.worksheet.sheetData.row.c
-
-        foreach ($c in $nodes) {
-            $txt = ""
-
-            # Celdas con valor directo
-            if ($c.v) { $txt = $c.v }
-
-            # Celdas con rich text inline
-            if ($c.is -or $c.t) {
-                foreach ($t in $c.is.t) { $txt += $t.'#text' }
-                foreach ($r in $c.is.r) {
-                    foreach ($t in $r.t) { $txt += $t.'#text' }
-                }
-            }
-
-            $n = Normalize $txt
-            if ($n -match (Normalize $literal)) {
-                Write-Host "✅ Encontrado en hoja $($sf.Name): '$($txt)'" -ForegroundColor Green
+        foreach ($cell in $vals) {
+            if ($null -eq $cell) { continue }
+            $text = Normalize ([string]$cell)
+            if ($text -match (Normalize $literal)) {
+                Write-Host ("✅ Hoja '{0}' contiene: {1}" -f $ws.Name, $cell) -ForegroundColor Green
                 $found++
             }
         }
-    } catch {
-        Write-Host "⚠️ Error procesando $($sf.Name): $($_.Exception.Message)" -ForegroundColor DarkYellow
+    }
+
+    if ($found -eq 0) {
+        Write-Host "❌ No se encontró '$literal' en el Excel (ni visible ni interno)." -ForegroundColor Red
     }
 }
-
-if ($found -eq 0) {
-    Write-Host "❌ No se encontró '$literal' en ninguna hoja." -ForegroundColor Red
+catch {
+    Write-Host "⚠️ Error: $($_.Exception.Message)" -ForegroundColor Yellow
 }
-
-Remove-Item -Path $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+finally {
+    $wb.Close($false)
+    $excel.Quit()
+    [System.Runtime.InteropServices.Marshal]::ReleaseComObject($excel) | Out-Null
+}
