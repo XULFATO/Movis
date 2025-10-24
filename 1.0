@@ -1,5 +1,5 @@
 # ==========================================================
-# Buscar literales en Blueprints (.xlsx) - MÉTODO RÁPIDO OpenXML
+# Buscar literales en Blueprints (.xlsx) - METODO RAPIDO OpenXML (ASCII)
 # ==========================================================
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -141,7 +141,7 @@ elseif ($mode -eq 5) {
     }
 
     Write-Host ("Usando carpeta por defecto: {0}" -f $defaultDir) -ForegroundColor Yellow
-    $change = Read-Host "¿Quieres cambiarla? (S/N)"
+    $change = Read-Host "Quieres cambiarla? (S/N)"
     if ($change -match '^[sS]$') {
         $dir = Read-Host "Introduce la nueva carpeta con los Excel (.xlsx)"
     } else {
@@ -149,7 +149,7 @@ elseif ($mode -eq 5) {
     }
 
     if (-not (Test-Path $dir)) {
-        Write-Host "Ruta no válida." -ForegroundColor Red
+        Write-Host "Ruta no valida." -ForegroundColor Red
         exit
     }
 
@@ -176,7 +176,7 @@ if ($mode -eq 4) {
 
 if ($blueprints.Count -eq 0) { Write-Host "No se encontraron Excel."; exit }
 
-# ========== ANÁLISIS RÁPIDO CON OPENXML ==========
+# ========== ANALISIS RAPIDO CON OPENXML ==========
 $totalEncontrados = 0
 $detalles = @()
 $inicio = Get-Date
@@ -215,20 +215,20 @@ foreach ($path in $blueprints) {
                     $sheetNames["sheet$sheetId"] = $sheetName
                     if ($sheetName -match '(?i)an[aá]lisis') {
                         $sheetIdsAnalisis += "sheet$sheetId"
-                        Write-Host ("   📋 Hoja detectada: '{0}' (sheet{1})" -f $sheetName, $sheetId) -ForegroundColor Yellow
+                        Write-Host ("   Hoja detectada: '{0}' (sheet{1})" -f $sheetName, $sheetId) -ForegroundColor Yellow
                     }
                 }
             } catch {
-                Write-Host "  ⚠️ Error leyendo workbook.xml → $_" -ForegroundColor DarkYellow
+                Write-Host ("  Error leyendo workbook.xml: {0}" -f $_) -ForegroundColor DarkYellow
             }
         }
 
         if ($sheetIdsAnalisis.Count -eq 0) {
-            Write-Host "  ⚠️ No hay hojas con 'Análisis' en este Excel" -ForegroundColor DarkYellow
+            Write-Host "  No hay hojas con 'Analisis' en este Excel" -ForegroundColor DarkYellow
             continue
         }
 
-        # 2. MAPEAR sheet IDs a archivos físicos (sheetN.xml) con validaciones extra
+        # 2. MAPEAR sheet IDs a archivos fisicos (sheetN.xml) con validaciones extra
         $relsFile = "$tmpDir\xl\_rels\workbook.xml.rels"
         $sheetIdToFile = @{}
         if (Test-Path $relsFile) {
@@ -238,15 +238,14 @@ foreach ($path in $blueprints) {
                 if ($rel.Type -match "worksheet") {
                     $target = [string]($rel.Target -replace '^worksheets/', '')
                     $rId    = [string]$rel.Id
-                    if (-not [string]::IsNullOrWhiteSpace($rId) -and
-                        -not [string]::IsNullOrWhiteSpace($target)) {
+                    if (-not [string]::IsNullOrWhiteSpace($rId) -and -not [string]::IsNullOrWhiteSpace($target)) {
                         $sheetIdToFile[$rId] = $target
                     }
                 }
             }
         }
 
-        # 3. ENCONTRAR QUÉ ARCHIVOS FÍSICOS CORRESPONDEN A LAS HOJAS DE ANÁLISIS (sin ContainsKey con null)
+        # 3. ENCONTRAR archivos fisicos para hojas de Analisis (sin ContainsKey con null)
         $archivosABuscar = @()
         if (Test-Path $workbookFile) {
             $wbXml = [xml](Get-Content $workbookFile -Raw -Encoding UTF8)
@@ -257,11 +256,11 @@ foreach ($path in $blueprints) {
 
                 $rId = [string]$s.'r:id'
                 if ([string]::IsNullOrWhiteSpace($rId)) {
-                    Write-Host ("  ⚠️ Hoja {0} sin relación (r:id), omitida." -f $sheetIdKey) -ForegroundColor DarkYellow
+                    Write-Host ("  Hoja {0} sin relacion (r:id), omitida." -f $sheetIdKey) -ForegroundColor DarkYellow
                     continue
                 }
                 if (-not $sheetIdToFile.ContainsKey($rId)) {
-                    Write-Host ("  ⚠️ No hay entrada en workbook.rels para r:id={0}, omitida." -f $rId) -ForegroundColor DarkYellow
+                    Write-Host ("  No hay entrada en workbook.rels para r:id={0}, omitida." -f $rId) -ForegroundColor DarkYellow
                     continue
                 }
 
@@ -271,17 +270,17 @@ foreach ($path in $blueprints) {
             }
         }
 
-        # 4. BUSCAR EN LOS ARCHIVOS SELECCIONADOS
+        # 4. BUSCAR en los archivos seleccionados
         $hitsArchivo = 0
         foreach ($item in $archivosABuscar) {
             $archivo = $item.Archivo
             $nombreHoja = $item.Nombre
             if (-not (Test-Path $archivo)) {
-                Write-Host ("  ⚠️ No se encontró archivo físico para hoja: {0}" -f $nombreHoja) -ForegroundColor DarkYellow
+                Write-Host ("  No se encontro archivo fisico para hoja: {0}" -f $nombreHoja) -ForegroundColor DarkYellow
                 continue
             }
 
-            Write-Host ("   🔍 Buscando en hoja: '{0}'" -f $nombreHoja) -ForegroundColor Cyan
+            Write-Host ("   Buscando en hoja: '{0}'" -f $nombreHoja) -ForegroundColor Cyan
             $contenido = Get-Content $archivo -Raw -Encoding UTF8
             $matches = [regex]::Matches($contenido, '>([^<]+)<')
             foreach ($m in $matches) {
@@ -291,7 +290,7 @@ foreach ($path in $blueprints) {
                 if ($textoNorm -match $pattern) {
                     $totalEncontrados++
                     $hitsArchivo++
-                    Write-Host ("      ✅ [{0}]: {1}" -f $nombreHoja, $texto) -ForegroundColor Green
+                    Write-Host ("      ENCONTRADO [{0}]: {1}" -f $nombreHoja, $texto) -ForegroundColor Green
                     $detalles += [PSCustomObject]@{
                         N       = $totalEncontrados
                         Fichero = $path
@@ -303,17 +302,17 @@ foreach ($path in $blueprints) {
         }
 
         if ($hitsArchivo -eq 0) {
-            Write-Host "  ⚪ Sin coincidencias" -ForegroundColor DarkGray
+            Write-Host "  Sin coincidencias" -ForegroundColor DarkGray
         } else {
-            Write-Host ("  ✅ {0} coincidencias encontradas" -f $hitsArchivo) -ForegroundColor Green
+            Write-Host ("  Total coincidencias en este archivo: {0}" -f $hitsArchivo) -ForegroundColor Green
         }
 
     } catch {
         $msg = $_.Exception.Message
         if ($msg -match "password|proteg|contrase") {
-            Write-Host "  - Protegido con contraseña, omitido." -ForegroundColor DarkYellow
+            Write-Host "  Protegido con contrasena, omitido." -ForegroundColor DarkYellow
         } else {
-            Write-Host ("  - Error: {0}" -f $msg) -ForegroundColor DarkYellow
+            Write-Host ("  Error: {0}" -f $msg) -ForegroundColor DarkYellow
         }
     } finally {
         if ($tmpDir -and (Test-Path $tmpDir)) {
@@ -348,4 +347,5 @@ if ($detalles.Count -gt 0) {
     Write-Host "No se encontraron coincidencias." -ForegroundColor Gray
 }
 
-Write-Host "`n✔️ Proceso completado (OpenXML - Método RÁPIDO)" -ForegroundColor Green
+Write-Host ""
+Write-Host "Proceso completado (OpenXML - Metodo RAPIDO)" -ForegroundColor Green
