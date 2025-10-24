@@ -1,4 +1,3 @@
-
 # ==========================================================
 # Buscar literales en Blueprints (.xlsx) - MÉTODO RÁPIDO OpenXML
 # ==========================================================
@@ -203,19 +202,30 @@ foreach ($path in $blueprints) {
         $workbookFile = "$tmpDir\xl\workbook.xml"
         $sheetNames = @{}
         $sheetIdsAnalisis = @()
-        
+
         if (Test-Path $workbookFile) {
-            $wbXml = [xml](Get-Content $workbookFile -Raw -Encoding UTF8)
-            foreach ($s in $wbXml.workbook.sheets.sheet) {
-                $sheetId = $s.sheetId
-                $sheetName = $s.name
-                $sheetNames["sheet$sheetId"] = $sheetName
-                
-                # Filtrar solo hojas que contienen "análisis" o "analisis"
-                if ($sheetName -match '(?i)an[aá]lisis') {
-                    $sheetIdsAnalisis += "sheet$sheetId"
-                    Write-Host ("   📋 Hoja detectada: '{0}' (sheet{1})" -f $sheetName, $sheetId) -ForegroundColor Yellow
+            try {
+                $wbXml = [xml](Get-Content $workbookFile -Raw -Encoding UTF8)
+                foreach ($s in $wbXml.workbook.sheets.sheet) {
+                    # Validar que ambos campos existan
+                    if (-not $s.sheetId -or -not $s.name) { continue }
+
+                    $sheetId = [string]$s.sheetId
+                    $sheetName = [string]$s.name
+
+                    if (-not [string]::IsNullOrWhiteSpace($sheetId) -and 
+                        -not [string]::IsNullOrWhiteSpace($sheetName)) {
+                        $sheetNames["sheet$sheetId"] = $sheetName
+
+                        # Filtrar solo hojas que contienen "análisis" o "analisis"
+                        if ($sheetName -match '(?i)an[aá]lisis') {
+                            $sheetIdsAnalisis += "sheet$sheetId"
+                            Write-Host ("   📋 Hoja detectada: '{0}' (sheet{1})" -f $sheetName, $sheetId) -ForegroundColor Yellow
+                        }
+                    }
                 }
+            } catch {
+                Write-Host "  ⚠️ Error leyendo workbook.xml → $_" -ForegroundColor DarkYellow
             }
         }
 
@@ -224,7 +234,7 @@ foreach ($path in $blueprints) {
             continue
         }
 
-        # 2. MAPEAR sheet IDs a archivos físicos (sheet1.xml, sheet2.xml, etc.)
+        # 2. MAPEAR sheet IDs a archivos físicos
         $relsFile = "$tmpDir\xl\_rels\workbook.xml.rels"
         $sheetIdToFile = @{}
         
@@ -271,10 +281,9 @@ foreach ($path in $blueprints) {
 
             Write-Host ("   🔍 Buscando en hoja: '{0}'" -f $nombreHoja) -ForegroundColor Cyan
 
-            # BÚSQUEDA ULTRA-RÁPIDA: Regex directo en contenido RAW
+            # BÚSQUEDA ULTRA-RÁPIDA
             $contenido = Get-Content $archivo -Raw -Encoding UTF8
             
-            # Extraer TODO el texto entre tags
             $matches = [regex]::Matches($contenido, '>([^<]+)<')
             
             foreach ($m in $matches) {
@@ -345,6 +354,3 @@ if ($detalles.Count -gt 0) {
 }
 
 Write-Host "`n✔️ Proceso completado (OpenXML - Método RÁPIDO)" -ForegroundColor Green
-
-
-
