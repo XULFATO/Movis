@@ -1,7 +1,8 @@
 # ==========================================================
-# Buscar literales en Blueprints (.xlsx) usando Excel COM (solo lectura)
+# Buscar literales en Blueprints (.xlsx) - MÉTODO RÁPIDO OpenXML
 # ==========================================================
 $ErrorActionPreference = "Stop"
+Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 $rutasOrigen = @(
     "O:\ADP_SP\Clientes_Bob_LOPD\J18_ANCERT\01. Documentacion Implantacion\03.-ANALISIS",
@@ -57,17 +58,7 @@ function Highlight {
     Write-Host ""
 }
 
-function ColumnIndexToLetters([int]$index) {
-    $letters = ""
-    while ($index -gt 0) {
-        $mod = ($index - 1) % 26
-        $letters = [char](65 + $mod) + $letters
-        $index = [math]::Floor(($index - $mod) / 26)
-    }
-    return $letters
-}
-
-Write-Host "Busqueda en Blueprints (.xlsx) con Excel COM (solo lectura)"
+Write-Host "Busqueda RAPIDA en Blueprints (.xlsx) con OpenXML"
 $mode = Select-Mode
 
 $literals = @()
@@ -88,7 +79,7 @@ $reDoc = '(?i)(documentaci[oó]n\s+implantaci[oó]n)'
 $reAna = '(?i)(an[aá]lisis)'
 $blueprints = @()
 
-# --------- OPCIÓN 1, 2, 3, 4, 5 ---------
+# --------- MISMO CÓDIGO DE LOCALIZACIÓN DE ARCHIVOS ---------
 if ($mode -in 1,3,4) {
     $basePath = Read-Host "Ruta base (p.ej. O:\ADP_SP):"
     if (-not (Test-Path $basePath)) { Write-Host "Ruta no valida."; exit }
@@ -180,32 +171,12 @@ if ($mode -eq 4) {
     } else {
         Write-Host "Todos los Blueprints estan contemplados." -ForegroundColor Green
     }
-    return
+    exit
 }
 
 if ($blueprints.Count -eq 0) { Write-Host "No se encontraron Excel."; exit }
 
-# ========== EXCEL COM OCULTO ==========
-$excel = $null
-$excelCreated = $false
-
-try {
-    try { $excel = [Runtime.InteropServices.Marshal]::GetActiveObject("Excel.Application") } catch {}
-    if (-not $excel) {
-        $excel = New-Object -ComObject Excel.Application
-        $excelCreated = $true
-    }
-    $excel.Visible = $false
-    $excel.DisplayAlerts = $false
-    $excel.ScreenUpdating = $false
-    $excel.Interactive = $false
-    $excel.EnableEvents = $false
-} catch {
-    Write-Host "No se pudo inicializar Excel COM: $($_.Exception.Message)" -ForegroundColor Red
-    exit
-}
-
-# ========== ANALISIS ==========
+# ========== ANÁLISIS RÁPIDO CON OPENXML ==========
 $totalEncontrados = 0
 $detalles = @()
 $inicio = Get-Date
@@ -214,87 +185,83 @@ $totalFiles = $blueprints.Count
 
 foreach ($path in $blueprints) {
     $contador++
-    Write-Host ("[{0,3}/{1}] Analizando: {2}" -f $contador, $totalFiles, $path) -ForegroundColor Cyan
+    Write-Host ("[{0,3}/{1}] Analizando: {2}" -f $contador, $totalFiles, (Split-Path $path -Leaf)) -ForegroundColor Cyan
 
     if (-not (Test-Path $path)) {
         Write-Host "  - No existe." -ForegroundColor DarkYellow
         continue
     }
 
-    $wb = $null
+    $tmpDir = $null
     try {
-        $wb = $excel.Workbooks.Open($path, $false, $true)
-    } catch {
-        $msg = $_.Exception.Message
-        if ($msg -match "password" -or $msg -match "contrase" -or $msg -match "proteg") {
-            Write-Host "  - Protegido con contraseña, omitido." -ForegroundColor DarkYellow
-        } else {
-            Write-Host ("  - Error al abrir: {0}" -f $msg) -ForegroundColor DarkYellow
-        }
-        continue
-    }
+        # Descomprimir Excel
+        $tmpDir = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), [System.IO.Path]::GetRandomFileName())
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($path, $tmpDir)
 
-    try {
-        $hojas = @($wb.Worksheets | Where-Object { $_.Name -match '(?i)an[aá]lisis' })
-        if ($hojas.Count -eq 0) {
-            Write-Host "  ⚪ No hay hojas 'Análisis' en este libro." -ForegroundColor DarkGray
-            continue
-        }
+        # Buscar en sharedStrings.xml y hojas
+        $archivos = @("$tmpDir\xl\sharedStrings.xml") + 
+                    (Get-ChildItem "$tmpDir\xl\worksheets" -Filter "*.xml" -File -ErrorAction SilentlyContinue)
 
-        foreach ($ws in $hojas) {
-            Write-Host ("   -> Revisando hoja: {0}" -f $ws.Name) -ForegroundColor DarkGray
-
-            $used = $ws.UsedRange
-            if ($null -eq $used) { continue }
-            $vals = $used.Value2
-            if ($null -eq $vals) { continue }
-
-            $rows = 1; $cols = 1
-            if ($vals.GetType().IsArray) {
-                $rows = $vals.GetLength(0)
-                $cols = $vals.GetLength(1)
+        $hitsArchivo = 0
+        foreach ($archivo in $archivos) {
+            if (-not (Test-Path $archivo)) { continue }
+            
+            $nombreHoja = if ($archivo -like "*sharedStrings.xml") { 
+                "sharedStrings" 
+            } else { 
+                Split-Path $archivo -Leaf 
             }
 
-            $hitsHoja = 0
-            for ($r=1; $r -le $rows; $r++) {
-                for ($c=1; $c -le $cols; $c++) {
-                    $val = if ($rows -eq 1 -and $cols -eq 1) { $vals } else { $vals[$r,$c] }
-                    if ($null -eq $val) { continue }
+            # BÚSQUEDA ULTRA-RÁPIDA: Regex directo en contenido RAW
+            $contenido = Get-Content $archivo -Raw -Encoding UTF8
+            
+            # Extraer solo hojas que contengan "análisis" o "analisis"
+            if ($archivo -like "*sheet*.xml") {
+                if ($contenido -notmatch '(?i)an[aá]lisis') { continue }
+            }
 
-                    $text = [string]$val
-                    if ([string]::IsNullOrWhiteSpace($text)) { continue }
-
-                    $textClean = Normalize $text
-                    if ($textClean -match $pattern) {
-                        $totalEncontrados++
-                        $celda = (ColumnIndexToLetters $c) + $r
-                        $hitsHoja++
-                        Write-Host ("      ✅ Encontrado en {0}!{1}: {2}" -f $ws.Name, $celda, $text) -ForegroundColor Green
-                        $detalles += [PSCustomObject]@{
-                            N       = $totalEncontrados
-                            Fichero = $path
-                            Hoja    = $ws.Name
-                            Celda   = $celda
-                            Valor   = $text
-                        }
+            # Extraer TODO el texto entre tags
+            $matches = [regex]::Matches($contenido, '>([^<]+)<')
+            
+            foreach ($m in $matches) {
+                $texto = $m.Groups[1].Value
+                if ([string]::IsNullOrWhiteSpace($texto)) { continue }
+                
+                $textoNorm = Normalize $texto
+                if ($textoNorm -match $pattern) {
+                    $totalEncontrados++
+                    $hitsArchivo++
+                    
+                    Write-Host ("      ✅ [{0}]: {1}" -f $nombreHoja, $texto) -ForegroundColor Green
+                    
+                    $detalles += [PSCustomObject]@{
+                        N       = $totalEncontrados
+                        Fichero = $path
+                        Hoja    = $nombreHoja
+                        Valor   = $texto
                     }
                 }
             }
-
-            if ($hitsHoja -eq 0) {
-                Write-Host ("      ⚪ Sin coincidencias en hoja {0}" -f $ws.Name) -ForegroundColor DarkGray
-            }
         }
-    } catch {
-        Write-Host ("  - Error leyendo celdas: {0}" -f $_.Exception.Message) -ForegroundColor DarkYellow
-    } finally {
-        try { if ($wb) { $wb.Close($false) } } catch {}
-    }
-}
 
-if ($excelCreated -and $excel) {
-    try { $excel.Quit() } catch {}
-    try { [System.Runtime.InteropServices.Marshal]::ReleaseComObject($excel) | Out-Null } catch {}
+        if ($hitsArchivo -eq 0) {
+            Write-Host "  ⚪ Sin coincidencias" -ForegroundColor DarkGray
+        } else {
+            Write-Host ("  ✅ {0} coincidencias encontradas" -f $hitsArchivo) -ForegroundColor Green
+        }
+
+    } catch {
+        $msg = $_.Exception.Message
+        if ($msg -match "password|proteg|contrase") {
+            Write-Host "  - Protegido con contraseña, omitido." -ForegroundColor DarkYellow
+        } else {
+            Write-Host ("  - Error: {0}" -f $msg) -ForegroundColor DarkYellow
+        }
+    } finally {
+        if ($tmpDir -and (Test-Path $tmpDir)) {
+            Remove-Item -Path $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 # ========== RESUMEN ==========
@@ -311,14 +278,16 @@ Write-Host "==============================================" -ForegroundColor Dar
 
 if ($detalles.Count -gt 0) {
     Write-Host ""
-    Write-Host "#   | Fichero completo                                                 | Hoja                | Celda  | Texto" -ForegroundColor White
-    Write-Host "---------------------------------------------------------------------------------------------------------------------------------"
+    Write-Host "#   | Fichero | Hoja | Texto" -ForegroundColor White
+    Write-Host "-------------------------------------------------------------"
     foreach ($d in $detalles) {
         $num = "{0,3}" -f $d.N
-        $fila = ("{0} | {1} | {2} | {3} | " -f $num, $d.Fichero, $d.Hoja, $d.Celda)
+        $fila = ("{0} | {1} | {2} | " -f $num, (Split-Path $d.Fichero -Leaf), $d.Hoja)
         Write-Host -NoNewline $fila -ForegroundColor Gray
         Highlight $d.Valor $pattern
     }
 } else {
     Write-Host "No se encontraron coincidencias." -ForegroundColor Gray
 }
+
+Write-Host "`n✔️ Proceso completado (OpenXML - Método RÁPIDO)" -ForegroundColor Green
