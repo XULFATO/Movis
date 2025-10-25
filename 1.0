@@ -1,5 +1,6 @@
+
 # ==========================================================
-# Buscar literales en Blueprints (.xlsx) - MÉTODO RÁPIDO OpenXML
+# Buscar literales en Blueprints (.xlsx) - VERSIÓN ROBUSTA
 # ==========================================================
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -135,7 +136,7 @@ elseif ($mode -eq 2) {
     }
 }
 elseif ($mode -eq 5) {
-    $defaultDir = "C:\Users\XULFATO\Escritorio\RutasExcel"
+    $defaultDir = "C:\Users\Joquina\Escritorio\RutasExcel"
     if (-not (Test-Path $defaultDir)) {
         New-Item -ItemType Directory -Path $defaultDir -Force | Out-Null
     }
@@ -193,13 +194,25 @@ foreach ($path in $blueprints) {
     }
 
     $tmpDir = $null
+    $archivoCopiado = $null
+    
     try {
-        # Descomprimir Excel
+        # SOLUCIÓN 1: Copiar archivo a temporal para evitar bloqueos
         $tmpDir = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), [System.IO.Path]::GetRandomFileName())
-        [System.IO.Compression.ZipFile]::ExtractToDirectory($path, $tmpDir)
+        New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
+        
+        $archivoCopiado = Join-Path $tmpDir "temp.xlsx"
+        Copy-Item -Path $path -Destination $archivoCopiado -Force
+        
+        # Esperar un momento por si hay bloqueos
+        Start-Sleep -Milliseconds 100
+        
+        # Descomprimir el archivo copiado
+        $extractDir = Join-Path $tmpDir "extracted"
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($archivoCopiado, $extractDir)
 
-        # 1. OBTENER NOMBRES DE HOJAS desde workbook.xml
-        $workbookFile = "$tmpDir\xl\workbook.xml"
+        # 1. OBTENER NOMBRES DE HOJAS
+        $workbookFile = "$extractDir\xl\workbook.xml"
         $sheetNames = @{}
         
         if (Test-Path $workbookFile) {
@@ -211,9 +224,9 @@ foreach ($path in $blueprints) {
             }
         }
 
-        # 2. BUSCAR ARCHIVOS FÍSICOS DE HOJAS CON "ANÁLISIS"
+        # 2. BUSCAR EN HOJAS CON "ANÁLISIS" O "CONCEPTOS"
         $archivosABuscar = @()
-        $worksheetsDir = "$tmpDir\xl\worksheets"
+        $worksheetsDir = "$extractDir\xl\worksheets"
 
         if (Test-Path $worksheetsDir) {
             $allSheets = Get-ChildItem $worksheetsDir -Filter "sheet*.xml" -File
@@ -225,7 +238,8 @@ foreach ($path in $blueprints) {
                     
                     if ($sheetNames.ContainsKey($sheetId)) {
                         $nombreHoja = $sheetNames[$sheetId]
-                        if ($nombreHoja -match '(?i)an[aá]lisis') {
+                        # AMPLIADO: Buscar en hojas con "análisis" O "conceptos"
+                        if ($nombreHoja -match '(?i)(an[aá]lisis|concept)') {
                             Write-Host ("   📋 Hoja detectada: '{0}' ({1})" -f $nombreHoja, $sheetFile.Name) -ForegroundColor Yellow
                             $archivosABuscar += @{
                                 Archivo = $sheetFile.FullName
@@ -238,12 +252,41 @@ foreach ($path in $blueprints) {
         }
 
         if ($archivosABuscar.Count -eq 0) {
-            Write-Host "  ⚠️ No hay hojas con 'Análisis' en este Excel" -ForegroundColor DarkYellow
+            Write-Host "  ⚠️ No hay hojas con 'Análisis' o 'Conceptos' en este Excel" -ForegroundColor DarkYellow
             continue
         }
 
         # 3. BUSCAR EN LOS ARCHIVOS SELECCIONADOS
         $hitsArchivo = 0
+        
+        # TAMBIÉN buscar en sharedStrings (textos compartidos)
+        $sharedStringsFile = "$extractDir\xl\sharedStrings.xml"
+        if (Test-Path $sharedStringsFile) {
+            $contenido = Get-Content $sharedStringsFile -Raw -Encoding UTF8
+            $matches = [regex]::Matches($contenido, '>([^<]+)<')
+            
+            foreach ($m in $matches) {
+                $texto = $m.Groups[1].Value
+                if ([string]::IsNullOrWhiteSpace($texto)) { continue }
+                
+                $textoNorm = Normalize $texto
+                if ($textoNorm -match $pattern) {
+                    $totalEncontrados++
+                    $hitsArchivo++
+                    
+                    Write-Host ("      ✅ [sharedStrings]: {0}" -f $texto) -ForegroundColor Green
+                    
+                    $detalles += [PSCustomObject]@{
+                        N       = $totalEncontrados
+                        Fichero = $path
+                        Hoja    = "sharedStrings (múltiples hojas)"
+                        Valor   = $texto
+                    }
+                }
+            }
+        }
+        
+        # Buscar en cada hoja específica
         foreach ($item in $archivosABuscar) {
             $archivo = $item.Archivo
             $nombreHoja = $item.Nombre
@@ -255,10 +298,7 @@ foreach ($path in $blueprints) {
 
             Write-Host ("   🔍 Buscando en hoja: '{0}'" -f $nombreHoja) -ForegroundColor Cyan
 
-            # BÚSQUEDA ULTRA-RÁPIDA: Regex directo en contenido RAW
             $contenido = Get-Content $archivo -Raw -Encoding UTF8
-            
-            # Extraer TODO el texto entre tags
             $matches = [regex]::Matches($contenido, '>([^<]+)<')
             
             foreach ($m in $matches) {
@@ -292,12 +332,21 @@ foreach ($path in $blueprints) {
         $msg = $_.Exception.Message
         if ($msg -match "password|proteg|contrase") {
             Write-Host "  - Protegido con contraseña, omitido." -ForegroundColor DarkYellow
+        } elseif ($msg -match "being used by another process|utilizado.*otro proceso") {
+            Write-Host "  - Archivo bloqueado, reintentando..." -ForegroundColor DarkYellow
+            Start-Sleep -Seconds 2
         } else {
             Write-Host ("  - Error: {0}" -f $msg) -ForegroundColor DarkYellow
         }
     } finally {
+        # Limpiar archivos temporales de forma robusta
         if ($tmpDir -and (Test-Path $tmpDir)) {
-            Remove-Item -Path $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+            try {
+                Start-Sleep -Milliseconds 200
+                Remove-Item -Path $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+            } catch {
+                # Ignorar errores de limpieza
+            }
         }
     }
 }
@@ -328,4 +377,4 @@ if ($detalles.Count -gt 0) {
     Write-Host "No se encontraron coincidencias." -ForegroundColor Gray
 }
 
-Write-Host "`n✔️ Proceso completado (OpenXML - Método RÁPIDO)" -ForegroundColor Green
+Write-Host "`n✔️ Proceso completado (OpenXML - Método RÁPIDO Y ROBUSTO)" -ForegroundColor Green
