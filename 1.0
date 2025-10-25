@@ -1,3 +1,4 @@
+
 # ==========================================================
 # Buscar literales en Blueprints (.xlsx) - SOLO EN "Análisis conceptos"
 # ==========================================================
@@ -221,7 +222,13 @@ foreach ($path in $blueprints) {
             }
         }
 
-        # 2. BUSCAR SOLO LA HOJA "Análisis conceptos" (con o sin tilde)
+        # DEBUGGING: Mostrar todas las hojas detectadas
+        Write-Host "   📋 Hojas detectadas en el Excel:" -ForegroundColor Magenta
+        foreach ($key in $sheetNames.Keys) {
+            Write-Host ("      - {0}: '{1}'" -f $key, $sheetNames[$key]) -ForegroundColor Gray
+        }
+
+        # 2. BUSCAR HOJA "Análisis conceptos" (FLEXIBLE)
         $hojaEncontrada = $null
         $worksheetsDir = "$extractDir\xl\worksheets"
 
@@ -235,11 +242,11 @@ foreach ($path in $blueprints) {
                     
                     if ($sheetNames.ContainsKey($sheetId)) {
                         $nombreHoja = $sheetNames[$sheetId]
-                        
-                        # FILTRO ESTRICTO: Solo "Análisis conceptos" (con o sin tilde)
                         $nombreNormalizado = Normalize $nombreHoja
-                        if ($nombreNormalizado -match '^analisis\s+conceptos?$') {
-                            Write-Host ("   ✅ Hoja encontrada: '{0}' ({1})" -f $nombreHoja, $sheetFile.Name) -ForegroundColor Green
+                        
+                        # FILTRO MÁS FLEXIBLE: contiene "analisis" Y "concept"
+                        if ($nombreNormalizado -match 'analisis' -and $nombreNormalizado -match 'concept') {
+                            Write-Host ("   ✅ Hoja VALIDA encontrada: '{0}' ({1})" -f $nombreHoja, $sheetFile.Name) -ForegroundColor Green
                             $hojaEncontrada = @{
                                 Archivo = $sheetFile.FullName
                                 Nombre = $nombreHoja
@@ -346,4 +353,3 @@ if ($detalles.Count -gt 0) {
 }
 
 Write-Host "`n✔️ Proceso completado - Busqueda solo en 'Analisis conceptos'" -ForegroundColor Green
-
