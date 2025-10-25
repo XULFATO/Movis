@@ -1,6 +1,5 @@
-
-# ==========================================================
-# Buscar literales en Blueprints (.xlsx) - VERSIÓN COMPLETA
+ ==========================================================
+# Buscar literales en Blueprints - MÉTODO HÍBRIDO SIMPLIFICADO
 # ==========================================================
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -59,7 +58,7 @@ function Highlight {
     Write-Host ""
 }
 
-Write-Host "Busqueda en Blueprints - SOLO en hoja 'Analisis conceptos'"
+Write-Host "Busqueda en Blueprints - Metodo HIBRIDO"
 $mode = Select-Mode
 
 $literals = @()
@@ -177,7 +176,7 @@ if ($mode -eq 4) {
 
 if ($blueprints.Count -eq 0) { Write-Host "No se encontraron Excel."; exit }
 
-# ========== ANÁLISIS ==========
+# ========== ANÁLISIS HÍBRIDO ==========
 $totalEncontrados = 0
 $detalles = @()
 $inicio = Get-Date
@@ -207,70 +206,45 @@ foreach ($path in $blueprints) {
         $extractDir = Join-Path $tmpDir "extracted"
         [System.IO.Compression.ZipFile]::ExtractToDirectory($archivoCopiado, $extractDir)
 
-        # 1. OBTENER NOMBRES DE HOJAS
+        # 1. VERIFICAR SI EXISTE "Análisis conceptos"
         $workbookFile = "$extractDir\xl\workbook.xml"
-        $sheetNames = @{}
+        $tieneHojaAnalisis = $false
         
         if (Test-Path $workbookFile) {
             $wbXml = [xml](Get-Content $workbookFile -Raw -Encoding UTF8)
             foreach ($s in $wbXml.workbook.sheets.sheet) {
-                $sheetId = $s.sheetId
-                $sheetName = $s.name
-                $sheetNames["sheet$sheetId"] = $sheetName
-            }
-        }
-
-        # 2. BUSCAR HOJA "Análisis conceptos"
-        $hojaEncontrada = $null
-        $worksheetsDir = "$extractDir\xl\worksheets"
-
-        if (Test-Path $worksheetsDir) {
-            $allSheets = Get-ChildItem $worksheetsDir -Filter "sheet*.xml" -File
-            
-            foreach ($sheetFile in $allSheets) {
-                if ($sheetFile.Name -match 'sheet(\d+)\.xml') {
-                    $sheetNum = $matches[1]
-                    $sheetId = "sheet$sheetNum"
-                    
-                    if ($sheetNames.ContainsKey($sheetId)) {
-                        $nombreHoja = $sheetNames[$sheetId]
-                        $nombreNormalizado = Normalize $nombreHoja
-                        
-                        if ($nombreNormalizado -match 'analisis' -and $nombreNormalizado -match 'concept') {
-                            Write-Host ("   ✅ Hoja VALIDA encontrada: '{0}' ({1})" -f $nombreHoja, $sheetFile.Name) -ForegroundColor Green
-                            $hojaEncontrada = @{
-                                Archivo = $sheetFile.FullName
-                                Nombre = $nombreHoja
-                            }
-                            break
-                        }
-                    }
+                $nombreHoja = $s.name
+                $nombreNormalizado = Normalize $nombreHoja
+                
+                if ($nombreNormalizado -match 'analisis' -and $nombreNormalizado -match 'concept') {
+                    $tieneHojaAnalisis = $true
+                    Write-Host ("   ✅ Hoja encontrada: '{0}'" -f $nombreHoja) -ForegroundColor Green
+                    break
                 }
             }
         }
 
-        if ($null -eq $hojaEncontrada) {
-            Write-Host "  ⚠️ No existe la hoja 'Analisis conceptos' en este Excel" -ForegroundColor DarkYellow
+        if (-not $tieneHojaAnalisis) {
+            Write-Host "  ⚠️ No existe la hoja 'Analisis conceptos'" -ForegroundColor DarkYellow
             continue
         }
 
-        # 3. BUSCAR EN LA HOJA + sharedStrings
-        $archivo = $hojaEncontrada.Archivo
-        $nombreHoja = $hojaEncontrada.Nombre
-        
-        Write-Host ("   🔍 Buscando en hoja: '{0}'" -f $nombreHoja) -ForegroundColor Cyan
+        # 2. BUSCAR EN TODO EL EXCEL (método rápido RAW)
+        Write-Host ("   🔍 Buscando literales en TODO el Excel...") -ForegroundColor Cyan
 
+        $archivosXML = Get-ChildItem "$extractDir\xl" -Recurse -Filter "*.xml" -File -ErrorAction SilentlyContinue
+        
         $hitsArchivo = 0
         $textosEncontrados = @{}
 
-        # PASO A: Buscar en la hoja directamente
-        if (Test-Path $archivo) {
-            $contenido = Get-Content $archivo -Raw -Encoding UTF8
+        foreach ($archivoXML in $archivosXML) {
+            $contenido = Get-Content $archivoXML.FullName -Raw -Encoding UTF8
             $matches = [regex]::Matches($contenido, '>([^<]+)<')
             
             foreach ($m in $matches) {
                 $texto = $m.Groups[1].Value
                 if ([string]::IsNullOrWhiteSpace($texto)) { continue }
+                if ($texto.Length -lt 3) { continue }  # Ignorar textos muy cortos
                 
                 $textoNorm = Normalize $texto
                 if ($textoNorm -match $pattern) {
@@ -279,53 +253,12 @@ foreach ($path in $blueprints) {
                         $totalEncontrados++
                         $hitsArchivo++
                         
-                        Write-Host ("      ✅ Directo en hoja [{0}]: {1}" -f $nombreHoja, $texto) -ForegroundColor Green
+                        Write-Host ("      ✅ ENCONTRADO: {0}" -f $texto) -ForegroundColor Green
                         
                         $detalles += [PSCustomObject]@{
                             N       = $totalEncontrados
                             Fichero = $path
-                            Hoja    = $nombreHoja
-                            Valor   = $texto
-                        }
-                    }
-                }
-            }
-        }
-
-        # PASO B: Buscar en sharedStrings.xml (CLAVE PARA ENCONTRAR "embargo")
-        $sharedStringsFile = "$extractDir\xl\sharedStrings.xml"
-        if (Test-Path $sharedStringsFile) {
-            Write-Host ("   🔍 Buscando TAMBIÉN en sharedStrings.xml...") -ForegroundColor Cyan
-            
-            $contenido = Get-Content $sharedStringsFile -Raw -Encoding UTF8
-            
-            # Extraer textos con <si> (string items)
-            $xml = [xml]$contenido
-            foreach ($si in $xml.sst.si) {
-                $texto = ""
-                # Concatenar todos los textos dentro de <si>
-                foreach ($node in $si.ChildNodes) {
-                    if ($node.t) { $texto += $node.t }
-                    elseif ($node.r) {
-                        foreach ($r in $node.r) { if ($r.t) { $texto += $r.t } }
-                    }
-                }
-                
-                if ([string]::IsNullOrWhiteSpace($texto)) { continue }
-                
-                $textoNorm = Normalize $texto
-                if ($textoNorm -match $pattern) {
-                    if (-not $textosEncontrados.ContainsKey($texto)) {
-                        $textosEncontrados[$texto] = $true
-                        $totalEncontrados++
-                        $hitsArchivo++
-                        
-                        Write-Host ("      ✅ En sharedStrings (usado en '{0}'): {1}" -f $nombreHoja, $texto) -ForegroundColor Green
-                        
-                        $detalles += [PSCustomObject]@{
-                            N       = $totalEncontrados
-                            Fichero = $path
-                            Hoja    = "$nombreHoja (sharedStrings)"
+                            Hoja    = "Analisis conceptos (verificada)"
                             Valor   = $texto
                         }
                     }
@@ -334,7 +267,7 @@ foreach ($path in $blueprints) {
         }
 
         if ($hitsArchivo -eq 0) {
-            Write-Host "  ⚪ Sin coincidencias en 'Analisis conceptos'" -ForegroundColor DarkGray
+            Write-Host "  ⚪ Sin coincidencias" -ForegroundColor DarkGray
         } else {
             Write-Host ("  ✅ {0} coincidencias encontradas" -f $hitsArchivo) -ForegroundColor Green
         }
@@ -343,8 +276,6 @@ foreach ($path in $blueprints) {
         $msg = $_.Exception.Message
         if ($msg -match "password|proteg|contrase") {
             Write-Host "  - Protegido con contraseña, omitido." -ForegroundColor DarkYellow
-        } elseif ($msg -match "being used by another process|utilizado.*otro proceso") {
-            Write-Host "  - Archivo bloqueado temporalmente." -ForegroundColor DarkYellow
         } else {
             Write-Host ("  - Error: {0}" -f $msg) -ForegroundColor DarkYellow
         }
@@ -372,11 +303,11 @@ Write-Host "==============================================" -ForegroundColor Dar
 
 if ($detalles.Count -gt 0) {
     Write-Host ""
-    Write-Host "#   | Fichero | Hoja | Texto" -ForegroundColor White
+    Write-Host "#   | Fichero | Texto" -ForegroundColor White
     Write-Host "-------------------------------------------------------------"
     foreach ($d in $detalles) {
         $num = "{0,3}" -f $d.N
-        $fila = ("{0} | {1} | {2} | " -f $num, (Split-Path $d.Fichero -Leaf), $d.Hoja)
+        $fila = ("{0} | {1} | " -f $num, (Split-Path $d.Fichero -Leaf))
         Write-Host -NoNewline $fila -ForegroundColor Gray
         Highlight $d.Valor $pattern
     }
@@ -384,4 +315,4 @@ if ($detalles.Count -gt 0) {
     Write-Host "No se encontraron coincidencias." -ForegroundColor Gray
 }
 
-Write-Host "`n✔️ Proceso completado" -ForegroundColor Green
+Write-Host "`n✔️ Proceso completado - Metodo HIBRIDO" -ForegroundColor Green
