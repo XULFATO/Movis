@@ -1,5 +1,5 @@
 # ==========================================================
-# Buscar literales en Blueprints (.xlsx) - METODO RAPIDO OpenXML (ASCII)
+# Buscar literales en Blueprints (.xlsx) - MÉTODO RÁPIDO OpenXML
 # ==========================================================
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -79,7 +79,7 @@ $reDoc = '(?i)(documentaci[oó]n\s+implantaci[oó]n)'
 $reAna = '(?i)(an[aá]lisis)'
 $blueprints = @()
 
-# --------- LOCALIZAR ARCHIVOS ---------
+# --------- MISMO CÓDIGO DE LOCALIZACIÓN DE ARCHIVOS ---------
 if ($mode -in 1,3,4) {
     $basePath = Read-Host "Ruta base (p.ej. O:\ADP_SP):"
     if (-not (Test-Path $basePath)) { Write-Host "Ruta no valida."; exit }
@@ -141,7 +141,7 @@ elseif ($mode -eq 5) {
     }
 
     Write-Host ("Usando carpeta por defecto: {0}" -f $defaultDir) -ForegroundColor Yellow
-    $change = Read-Host "Quieres cambiarla? (S/N)"
+    $change = Read-Host "¿Quieres cambiarla? (S/N)"
     if ($change -match '^[sS]$') {
         $dir = Read-Host "Introduce la nueva carpeta con los Excel (.xlsx)"
     } else {
@@ -149,7 +149,7 @@ elseif ($mode -eq 5) {
     }
 
     if (-not (Test-Path $dir)) {
-        Write-Host "Ruta no valida." -ForegroundColor Red
+        Write-Host "Ruta no válida." -ForegroundColor Red
         exit
     }
 
@@ -176,7 +176,7 @@ if ($mode -eq 4) {
 
 if ($blueprints.Count -eq 0) { Write-Host "No se encontraron Excel."; exit }
 
-# ========== ANALISIS RAPIDO CON OPENXML ==========
+# ========== ANÁLISIS RÁPIDO CON OPENXML ==========
 $totalEncontrados = 0
 $detalles = @()
 $inicio = Get-Date
@@ -198,99 +198,80 @@ foreach ($path in $blueprints) {
         $tmpDir = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), [System.IO.Path]::GetRandomFileName())
         [System.IO.Compression.ZipFile]::ExtractToDirectory($path, $tmpDir)
 
-        # 1. OBTENER NOMBRES DE HOJAS desde workbook.xml (con validaciones)
+        # 1. OBTENER NOMBRES DE HOJAS desde workbook.xml
         $workbookFile = "$tmpDir\xl\workbook.xml"
         $sheetNames = @{}
-        $sheetIdsAnalisis = @()
-
-        if (Test-Path $workbookFile) {
-            try {
-                $wbXml = [xml](Get-Content $workbookFile -Raw -Encoding UTF8)
-                foreach ($s in $wbXml.workbook.sheets.sheet) {
-                    if (-not $s.sheetId -or -not $s.name) { continue }
-                    $sheetId   = [string]$s.sheetId
-                    $sheetName = [string]$s.name
-                    if ([string]::IsNullOrWhiteSpace($sheetId) -or [string]::IsNullOrWhiteSpace($sheetName)) { continue }
-
-                    $sheetNames["sheet$sheetId"] = $sheetName
-                    if ($sheetName -match '(?i)an[aá]lisis') {
-                        $sheetIdsAnalisis += "sheet$sheetId"
-                        Write-Host ("   Hoja detectada: '{0}' (sheet{1})" -f $sheetName, $sheetId) -ForegroundColor Yellow
-                    }
-                }
-            } catch {
-                Write-Host ("  Error leyendo workbook.xml: {0}" -f $_) -ForegroundColor DarkYellow
-            }
-        }
-
-        if ($sheetIdsAnalisis.Count -eq 0) {
-            Write-Host "  No hay hojas con 'Analisis' en este Excel" -ForegroundColor DarkYellow
-            continue
-        }
-
-        # 2. MAPEAR sheet IDs a archivos fisicos (sheetN.xml) con validaciones extra
-        $relsFile = "$tmpDir\xl\_rels\workbook.xml.rels"
-        $sheetIdToFile = @{}
-        if (Test-Path $relsFile) {
-            $relsXml = [xml](Get-Content $relsFile -Raw -Encoding UTF8)
-            foreach ($rel in $relsXml.Relationships.Relationship) {
-                if (-not $rel.Id) { continue }
-                if ($rel.Type -match "worksheet") {
-                    $target = [string]($rel.Target -replace '^worksheets/', '')
-                    $rId    = [string]$rel.Id
-                    if (-not [string]::IsNullOrWhiteSpace($rId) -and -not [string]::IsNullOrWhiteSpace($target)) {
-                        $sheetIdToFile[$rId] = $target
-                    }
-                }
-            }
-        }
-
-        # 3. ENCONTRAR archivos fisicos para hojas de Analisis (sin ContainsKey con null)
-        $archivosABuscar = @()
+        
         if (Test-Path $workbookFile) {
             $wbXml = [xml](Get-Content $workbookFile -Raw -Encoding UTF8)
             foreach ($s in $wbXml.workbook.sheets.sheet) {
-                if (-not $s.sheetId) { continue }
-                $sheetIdKey = "sheet$($s.sheetId)"
-                if ($sheetIdsAnalisis -notcontains $sheetIdKey) { continue }
-
-                $rId = [string]$s.'r:id'
-                if ([string]::IsNullOrWhiteSpace($rId)) {
-                    Write-Host ("  Hoja {0} sin relacion (r:id), omitida." -f $sheetIdKey) -ForegroundColor DarkYellow
-                    continue
-                }
-                if (-not $sheetIdToFile.ContainsKey($rId)) {
-                    Write-Host ("  No hay entrada en workbook.rels para r:id={0}, omitida." -f $rId) -ForegroundColor DarkYellow
-                    continue
-                }
-
-                $archivoFisico = Join-Path "$tmpDir\xl\worksheets" $sheetIdToFile[$rId]
-                $nombreHoja = ($sheetNames.ContainsKey($sheetIdKey)) ? $sheetNames[$sheetIdKey] : ("sheet" + $s.sheetId)
-                $archivosABuscar += @{ Archivo = $archivoFisico; Nombre = $nombreHoja }
+                $sheetId = $s.sheetId
+                $sheetName = $s.name
+                $sheetNames["sheet$sheetId"] = $sheetName
             }
         }
 
-        # 4. BUSCAR en los archivos seleccionados
+        # 2. BUSCAR ARCHIVOS FÍSICOS DE HOJAS CON "ANÁLISIS"
+        $archivosABuscar = @()
+        $worksheetsDir = "$tmpDir\xl\worksheets"
+
+        if (Test-Path $worksheetsDir) {
+            $allSheets = Get-ChildItem $worksheetsDir -Filter "sheet*.xml" -File
+            
+            foreach ($sheetFile in $allSheets) {
+                if ($sheetFile.Name -match 'sheet(\d+)\.xml') {
+                    $sheetNum = $matches[1]
+                    $sheetId = "sheet$sheetNum"
+                    
+                    if ($sheetNames.ContainsKey($sheetId)) {
+                        $nombreHoja = $sheetNames[$sheetId]
+                        if ($nombreHoja -match '(?i)an[aá]lisis') {
+                            Write-Host ("   📋 Hoja detectada: '{0}' ({1})" -f $nombreHoja, $sheetFile.Name) -ForegroundColor Yellow
+                            $archivosABuscar += @{
+                                Archivo = $sheetFile.FullName
+                                Nombre = $nombreHoja
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if ($archivosABuscar.Count -eq 0) {
+            Write-Host "  ⚠️ No hay hojas con 'Análisis' en este Excel" -ForegroundColor DarkYellow
+            continue
+        }
+
+        # 3. BUSCAR EN LOS ARCHIVOS SELECCIONADOS
         $hitsArchivo = 0
         foreach ($item in $archivosABuscar) {
             $archivo = $item.Archivo
             $nombreHoja = $item.Nombre
-            if (-not (Test-Path $archivo)) {
-                Write-Host ("  No se encontro archivo fisico para hoja: {0}" -f $nombreHoja) -ForegroundColor DarkYellow
-                continue
+            
+            if (-not (Test-Path $archivo)) { 
+                Write-Host ("  ⚠️ No se encontró archivo físico para hoja: {0}" -f $nombreHoja) -ForegroundColor DarkYellow
+                continue 
             }
 
-            Write-Host ("   Buscando en hoja: '{0}'" -f $nombreHoja) -ForegroundColor Cyan
+            Write-Host ("   🔍 Buscando en hoja: '{0}'" -f $nombreHoja) -ForegroundColor Cyan
+
+            # BÚSQUEDA ULTRA-RÁPIDA: Regex directo en contenido RAW
             $contenido = Get-Content $archivo -Raw -Encoding UTF8
+            
+            # Extraer TODO el texto entre tags
             $matches = [regex]::Matches($contenido, '>([^<]+)<')
+            
             foreach ($m in $matches) {
                 $texto = $m.Groups[1].Value
                 if ([string]::IsNullOrWhiteSpace($texto)) { continue }
+                
                 $textoNorm = Normalize $texto
                 if ($textoNorm -match $pattern) {
                     $totalEncontrados++
                     $hitsArchivo++
-                    Write-Host ("      ENCONTRADO [{0}]: {1}" -f $nombreHoja, $texto) -ForegroundColor Green
+                    
+                    Write-Host ("      ✅ [{0}]: {1}" -f $nombreHoja, $texto) -ForegroundColor Green
+                    
                     $detalles += [PSCustomObject]@{
                         N       = $totalEncontrados
                         Fichero = $path
@@ -302,17 +283,17 @@ foreach ($path in $blueprints) {
         }
 
         if ($hitsArchivo -eq 0) {
-            Write-Host "  Sin coincidencias" -ForegroundColor DarkGray
+            Write-Host "  ⚪ Sin coincidencias" -ForegroundColor DarkGray
         } else {
-            Write-Host ("  Total coincidencias en este archivo: {0}" -f $hitsArchivo) -ForegroundColor Green
+            Write-Host ("  ✅ {0} coincidencias encontradas" -f $hitsArchivo) -ForegroundColor Green
         }
 
     } catch {
         $msg = $_.Exception.Message
         if ($msg -match "password|proteg|contrase") {
-            Write-Host "  Protegido con contrasena, omitido." -ForegroundColor DarkYellow
+            Write-Host "  - Protegido con contraseña, omitido." -ForegroundColor DarkYellow
         } else {
-            Write-Host ("  Error: {0}" -f $msg) -ForegroundColor DarkYellow
+            Write-Host ("  - Error: {0}" -f $msg) -ForegroundColor DarkYellow
         }
     } finally {
         if ($tmpDir -and (Test-Path $tmpDir)) {
@@ -347,5 +328,4 @@ if ($detalles.Count -gt 0) {
     Write-Host "No se encontraron coincidencias." -ForegroundColor Gray
 }
 
-Write-Host ""
-Write-Host "Proceso completado (OpenXML - Metodo RAPIDO)" -ForegroundColor Green
+Write-Host "`n✔️ Proceso completado (OpenXML - Método RÁPIDO)" -ForegroundColor Green
