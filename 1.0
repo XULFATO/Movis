@@ -1,6 +1,5 @@
-
 # ==========================================================
-# Buscar literales en Blueprints (.xlsx) - VERSIÓN ROBUSTA
+# Buscar literales en Blueprints (.xlsx) - SOLO EN "Análisis conceptos"
 # ==========================================================
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -59,7 +58,7 @@ function Highlight {
     Write-Host ""
 }
 
-Write-Host "Busqueda RAPIDA en Blueprints (.xlsx) con OpenXML"
+Write-Host "Busqueda en Blueprints - SOLO en hoja 'Analisis conceptos'"
 $mode = Select-Mode
 
 $literals = @()
@@ -80,7 +79,7 @@ $reDoc = '(?i)(documentaci[oó]n\s+implantaci[oó]n)'
 $reAna = '(?i)(an[aá]lisis)'
 $blueprints = @()
 
-# --------- MISMO CÓDIGO DE LOCALIZACIÓN DE ARCHIVOS ---------
+# --------- LOCALIZACIÓN DE ARCHIVOS ---------
 if ($mode -in 1,3,4) {
     $basePath = Read-Host "Ruta base (p.ej. O:\ADP_SP):"
     if (-not (Test-Path $basePath)) { Write-Host "Ruta no valida."; exit }
@@ -177,7 +176,7 @@ if ($mode -eq 4) {
 
 if ($blueprints.Count -eq 0) { Write-Host "No se encontraron Excel."; exit }
 
-# ========== ANÁLISIS RÁPIDO CON OPENXML ==========
+# ========== ANÁLISIS - SOLO EN "Análisis conceptos" ==========
 $totalEncontrados = 0
 $detalles = @()
 $inicio = Get-Date
@@ -197,17 +196,15 @@ foreach ($path in $blueprints) {
     $archivoCopiado = $null
     
     try {
-        # SOLUCIÓN 1: Copiar archivo a temporal para evitar bloqueos
+        # Copiar archivo a temporal para evitar bloqueos
         $tmpDir = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), [System.IO.Path]::GetRandomFileName())
         New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
         
         $archivoCopiado = Join-Path $tmpDir "temp.xlsx"
         Copy-Item -Path $path -Destination $archivoCopiado -Force
-        
-        # Esperar un momento por si hay bloqueos
         Start-Sleep -Milliseconds 100
         
-        # Descomprimir el archivo copiado
+        # Descomprimir
         $extractDir = Join-Path $tmpDir "extracted"
         [System.IO.Compression.ZipFile]::ExtractToDirectory($archivoCopiado, $extractDir)
 
@@ -224,8 +221,8 @@ foreach ($path in $blueprints) {
             }
         }
 
-        # 2. BUSCAR EN HOJAS CON "ANÁLISIS" O "CONCEPTOS"
-        $archivosABuscar = @()
+        # 2. BUSCAR SOLO LA HOJA "Análisis conceptos" (con o sin tilde)
+        $hojaEncontrada = $null
         $worksheetsDir = "$extractDir\xl\worksheets"
 
         if (Test-Path $worksheetsDir) {
@@ -238,92 +235,64 @@ foreach ($path in $blueprints) {
                     
                     if ($sheetNames.ContainsKey($sheetId)) {
                         $nombreHoja = $sheetNames[$sheetId]
-                        # AMPLIADO: Buscar en hojas con "análisis" O "conceptos"
-                        if ($nombreHoja -match '(?i)(an[aá]lisis|concept)') {
-                            Write-Host ("   📋 Hoja detectada: '{0}' ({1})" -f $nombreHoja, $sheetFile.Name) -ForegroundColor Yellow
-                            $archivosABuscar += @{
+                        
+                        # FILTRO ESTRICTO: Solo "Análisis conceptos" (con o sin tilde)
+                        $nombreNormalizado = Normalize $nombreHoja
+                        if ($nombreNormalizado -match '^analisis\s+conceptos?$') {
+                            Write-Host ("   ✅ Hoja encontrada: '{0}' ({1})" -f $nombreHoja, $sheetFile.Name) -ForegroundColor Green
+                            $hojaEncontrada = @{
                                 Archivo = $sheetFile.FullName
                                 Nombre = $nombreHoja
                             }
+                            break
                         }
                     }
                 }
             }
         }
 
-        if ($archivosABuscar.Count -eq 0) {
-            Write-Host "  ⚠️ No hay hojas con 'Análisis' o 'Conceptos' en este Excel" -ForegroundColor DarkYellow
+        if ($null -eq $hojaEncontrada) {
+            Write-Host "  ⚠️ No existe la hoja 'Analisis conceptos' en este Excel" -ForegroundColor DarkYellow
             continue
         }
 
-        # 3. BUSCAR EN LOS ARCHIVOS SELECCIONADOS
-        $hitsArchivo = 0
+        # 3. BUSCAR SOLO EN ESA HOJA
+        $archivo = $hojaEncontrada.Archivo
+        $nombreHoja = $hojaEncontrada.Nombre
         
-        # TAMBIÉN buscar en sharedStrings (textos compartidos)
-        $sharedStringsFile = "$extractDir\xl\sharedStrings.xml"
-        if (Test-Path $sharedStringsFile) {
-            $contenido = Get-Content $sharedStringsFile -Raw -Encoding UTF8
-            $matches = [regex]::Matches($contenido, '>([^<]+)<')
-            
-            foreach ($m in $matches) {
-                $texto = $m.Groups[1].Value
-                if ([string]::IsNullOrWhiteSpace($texto)) { continue }
-                
-                $textoNorm = Normalize $texto
-                if ($textoNorm -match $pattern) {
-                    $totalEncontrados++
-                    $hitsArchivo++
-                    
-                    Write-Host ("      ✅ [sharedStrings]: {0}" -f $texto) -ForegroundColor Green
-                    
-                    $detalles += [PSCustomObject]@{
-                        N       = $totalEncontrados
-                        Fichero = $path
-                        Hoja    = "sharedStrings (múltiples hojas)"
-                        Valor   = $texto
-                    }
-                }
-            }
+        if (-not (Test-Path $archivo)) { 
+            Write-Host ("  ⚠️ No se encontró archivo físico para hoja: {0}" -f $nombreHoja) -ForegroundColor DarkYellow
+            continue 
         }
+
+        Write-Host ("   🔍 Buscando en hoja: '{0}'" -f $nombreHoja) -ForegroundColor Cyan
+
+        $contenido = Get-Content $archivo -Raw -Encoding UTF8
+        $matches = [regex]::Matches($contenido, '>([^<]+)<')
         
-        # Buscar en cada hoja específica
-        foreach ($item in $archivosABuscar) {
-            $archivo = $item.Archivo
-            $nombreHoja = $item.Nombre
+        $hitsArchivo = 0
+        foreach ($m in $matches) {
+            $texto = $m.Groups[1].Value
+            if ([string]::IsNullOrWhiteSpace($texto)) { continue }
             
-            if (-not (Test-Path $archivo)) { 
-                Write-Host ("  ⚠️ No se encontró archivo físico para hoja: {0}" -f $nombreHoja) -ForegroundColor DarkYellow
-                continue 
-            }
-
-            Write-Host ("   🔍 Buscando en hoja: '{0}'" -f $nombreHoja) -ForegroundColor Cyan
-
-            $contenido = Get-Content $archivo -Raw -Encoding UTF8
-            $matches = [regex]::Matches($contenido, '>([^<]+)<')
-            
-            foreach ($m in $matches) {
-                $texto = $m.Groups[1].Value
-                if ([string]::IsNullOrWhiteSpace($texto)) { continue }
+            $textoNorm = Normalize $texto
+            if ($textoNorm -match $pattern) {
+                $totalEncontrados++
+                $hitsArchivo++
                 
-                $textoNorm = Normalize $texto
-                if ($textoNorm -match $pattern) {
-                    $totalEncontrados++
-                    $hitsArchivo++
-                    
-                    Write-Host ("      ✅ [{0}]: {1}" -f $nombreHoja, $texto) -ForegroundColor Green
-                    
-                    $detalles += [PSCustomObject]@{
-                        N       = $totalEncontrados
-                        Fichero = $path
-                        Hoja    = $nombreHoja
-                        Valor   = $texto
-                    }
+                Write-Host ("      ✅ [{0}]: {1}" -f $nombreHoja, $texto) -ForegroundColor Green
+                
+                $detalles += [PSCustomObject]@{
+                    N       = $totalEncontrados
+                    Fichero = $path
+                    Hoja    = $nombreHoja
+                    Valor   = $texto
                 }
             }
         }
 
         if ($hitsArchivo -eq 0) {
-            Write-Host "  ⚪ Sin coincidencias" -ForegroundColor DarkGray
+            Write-Host "  ⚪ Sin coincidencias en 'Analisis conceptos'" -ForegroundColor DarkGray
         } else {
             Write-Host ("  ✅ {0} coincidencias encontradas" -f $hitsArchivo) -ForegroundColor Green
         }
@@ -333,13 +302,12 @@ foreach ($path in $blueprints) {
         if ($msg -match "password|proteg|contrase") {
             Write-Host "  - Protegido con contraseña, omitido." -ForegroundColor DarkYellow
         } elseif ($msg -match "being used by another process|utilizado.*otro proceso") {
-            Write-Host "  - Archivo bloqueado, reintentando..." -ForegroundColor DarkYellow
-            Start-Sleep -Seconds 2
+            Write-Host "  - Archivo bloqueado temporalmente." -ForegroundColor DarkYellow
         } else {
             Write-Host ("  - Error: {0}" -f $msg) -ForegroundColor DarkYellow
         }
     } finally {
-        # Limpiar archivos temporales de forma robusta
+        # Limpiar archivos temporales
         if ($tmpDir -and (Test-Path $tmpDir)) {
             try {
                 Start-Sleep -Milliseconds 200
@@ -377,4 +345,5 @@ if ($detalles.Count -gt 0) {
     Write-Host "No se encontraron coincidencias." -ForegroundColor Gray
 }
 
-Write-Host "`n✔️ Proceso completado (OpenXML - Método RÁPIDO Y ROBUSTO)" -ForegroundColor Green
+Write-Host "`n✔️ Proceso completado - Busqueda solo en 'Analisis conceptos'" -ForegroundColor Green
+
