@@ -1,6 +1,6 @@
 
 # ==========================================================
-# Buscar literales en Blueprints (.xlsx) - SOLO EN "Análisis conceptos"
+# Buscar literales en Blueprints (.xlsx) - VERSIÓN COMPLETA
 # ==========================================================
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -177,7 +177,7 @@ if ($mode -eq 4) {
 
 if ($blueprints.Count -eq 0) { Write-Host "No se encontraron Excel."; exit }
 
-# ========== ANÁLISIS - SOLO EN "Análisis conceptos" ==========
+# ========== ANÁLISIS ==========
 $totalEncontrados = 0
 $detalles = @()
 $inicio = Get-Date
@@ -197,7 +197,6 @@ foreach ($path in $blueprints) {
     $archivoCopiado = $null
     
     try {
-        # Copiar archivo a temporal para evitar bloqueos
         $tmpDir = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), [System.IO.Path]::GetRandomFileName())
         New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
         
@@ -205,7 +204,6 @@ foreach ($path in $blueprints) {
         Copy-Item -Path $path -Destination $archivoCopiado -Force
         Start-Sleep -Milliseconds 100
         
-        # Descomprimir
         $extractDir = Join-Path $tmpDir "extracted"
         [System.IO.Compression.ZipFile]::ExtractToDirectory($archivoCopiado, $extractDir)
 
@@ -222,13 +220,7 @@ foreach ($path in $blueprints) {
             }
         }
 
-        # DEBUGGING: Mostrar todas las hojas detectadas
-        Write-Host "   📋 Hojas detectadas en el Excel:" -ForegroundColor Magenta
-        foreach ($key in $sheetNames.Keys) {
-            Write-Host ("      - {0}: '{1}'" -f $key, $sheetNames[$key]) -ForegroundColor Gray
-        }
-
-        # 2. BUSCAR HOJA "Análisis conceptos" (FLEXIBLE)
+        # 2. BUSCAR HOJA "Análisis conceptos"
         $hojaEncontrada = $null
         $worksheetsDir = "$extractDir\xl\worksheets"
 
@@ -244,7 +236,6 @@ foreach ($path in $blueprints) {
                         $nombreHoja = $sheetNames[$sheetId]
                         $nombreNormalizado = Normalize $nombreHoja
                         
-                        # FILTRO MÁS FLEXIBLE: contiene "analisis" Y "concept"
                         if ($nombreNormalizado -match 'analisis' -and $nombreNormalizado -match 'concept') {
                             Write-Host ("   ✅ Hoja VALIDA encontrada: '{0}' ({1})" -f $nombreHoja, $sheetFile.Name) -ForegroundColor Green
                             $hojaEncontrada = @{
@@ -263,37 +254,81 @@ foreach ($path in $blueprints) {
             continue
         }
 
-        # 3. BUSCAR SOLO EN ESA HOJA
+        # 3. BUSCAR EN LA HOJA + sharedStrings
         $archivo = $hojaEncontrada.Archivo
         $nombreHoja = $hojaEncontrada.Nombre
         
-        if (-not (Test-Path $archivo)) { 
-            Write-Host ("  ⚠️ No se encontró archivo físico para hoja: {0}" -f $nombreHoja) -ForegroundColor DarkYellow
-            continue 
-        }
-
         Write-Host ("   🔍 Buscando en hoja: '{0}'" -f $nombreHoja) -ForegroundColor Cyan
 
-        $contenido = Get-Content $archivo -Raw -Encoding UTF8
-        $matches = [regex]::Matches($contenido, '>([^<]+)<')
-        
         $hitsArchivo = 0
-        foreach ($m in $matches) {
-            $texto = $m.Groups[1].Value
-            if ([string]::IsNullOrWhiteSpace($texto)) { continue }
+        $textosEncontrados = @{}
+
+        # PASO A: Buscar en la hoja directamente
+        if (Test-Path $archivo) {
+            $contenido = Get-Content $archivo -Raw -Encoding UTF8
+            $matches = [regex]::Matches($contenido, '>([^<]+)<')
             
-            $textoNorm = Normalize $texto
-            if ($textoNorm -match $pattern) {
-                $totalEncontrados++
-                $hitsArchivo++
+            foreach ($m in $matches) {
+                $texto = $m.Groups[1].Value
+                if ([string]::IsNullOrWhiteSpace($texto)) { continue }
                 
-                Write-Host ("      ✅ [{0}]: {1}" -f $nombreHoja, $texto) -ForegroundColor Green
+                $textoNorm = Normalize $texto
+                if ($textoNorm -match $pattern) {
+                    if (-not $textosEncontrados.ContainsKey($texto)) {
+                        $textosEncontrados[$texto] = $true
+                        $totalEncontrados++
+                        $hitsArchivo++
+                        
+                        Write-Host ("      ✅ Directo en hoja [{0}]: {1}" -f $nombreHoja, $texto) -ForegroundColor Green
+                        
+                        $detalles += [PSCustomObject]@{
+                            N       = $totalEncontrados
+                            Fichero = $path
+                            Hoja    = $nombreHoja
+                            Valor   = $texto
+                        }
+                    }
+                }
+            }
+        }
+
+        # PASO B: Buscar en sharedStrings.xml (CLAVE PARA ENCONTRAR "embargo")
+        $sharedStringsFile = "$extractDir\xl\sharedStrings.xml"
+        if (Test-Path $sharedStringsFile) {
+            Write-Host ("   🔍 Buscando TAMBIÉN en sharedStrings.xml...") -ForegroundColor Cyan
+            
+            $contenido = Get-Content $sharedStringsFile -Raw -Encoding UTF8
+            
+            # Extraer textos con <si> (string items)
+            $xml = [xml]$contenido
+            foreach ($si in $xml.sst.si) {
+                $texto = ""
+                # Concatenar todos los textos dentro de <si>
+                foreach ($node in $si.ChildNodes) {
+                    if ($node.t) { $texto += $node.t }
+                    elseif ($node.r) {
+                        foreach ($r in $node.r) { if ($r.t) { $texto += $r.t } }
+                    }
+                }
                 
-                $detalles += [PSCustomObject]@{
-                    N       = $totalEncontrados
-                    Fichero = $path
-                    Hoja    = $nombreHoja
-                    Valor   = $texto
+                if ([string]::IsNullOrWhiteSpace($texto)) { continue }
+                
+                $textoNorm = Normalize $texto
+                if ($textoNorm -match $pattern) {
+                    if (-not $textosEncontrados.ContainsKey($texto)) {
+                        $textosEncontrados[$texto] = $true
+                        $totalEncontrados++
+                        $hitsArchivo++
+                        
+                        Write-Host ("      ✅ En sharedStrings (usado en '{0}'): {1}" -f $nombreHoja, $texto) -ForegroundColor Green
+                        
+                        $detalles += [PSCustomObject]@{
+                            N       = $totalEncontrados
+                            Fichero = $path
+                            Hoja    = "$nombreHoja (sharedStrings)"
+                            Valor   = $texto
+                        }
+                    }
                 }
             }
         }
@@ -314,14 +349,11 @@ foreach ($path in $blueprints) {
             Write-Host ("  - Error: {0}" -f $msg) -ForegroundColor DarkYellow
         }
     } finally {
-        # Limpiar archivos temporales
         if ($tmpDir -and (Test-Path $tmpDir)) {
             try {
                 Start-Sleep -Milliseconds 200
                 Remove-Item -Path $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
-            } catch {
-                # Ignorar errores de limpieza
-            }
+            } catch {}
         }
     }
 }
@@ -352,4 +384,4 @@ if ($detalles.Count -gt 0) {
     Write-Host "No se encontraron coincidencias." -ForegroundColor Gray
 }
 
-Write-Host "`n✔️ Proceso completado - Busqueda solo en 'Analisis conceptos'" -ForegroundColor Green
+Write-Host "`n✔️ Proceso completado" -ForegroundColor Green
