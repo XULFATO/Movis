@@ -1,13 +1,11 @@
 # ============================================
-# Fusionar hojas "Análisis Conceptos" (versión estable para todo tipo de Excel)
+# Fusionar "Análisis Conceptos" (estable sin Copy/Paste)
 # ============================================
 
-# === CONFIGURACIÓN ===
-$carpetaOrigen   = "C:\Ruta\A\TusExcels"              
+$carpetaOrigen   = "C:\Ruta\A\TusExcels"
 $ficheroSalida   = "C:\Users\Javier\Pruebas\Base_Datos.xlsx"
 $nombreHojaFinal = "Consolidado"
 
-# === ARRANQUE ===
 Add-Type -AssemblyName Microsoft.Office.Interop.Excel
 $excel = New-Object -ComObject Excel.Application
 $excel.Visible = $false
@@ -39,18 +37,17 @@ foreach ($archivo in $archivos) {
             continue
         }
 
-        # Detectar última fila/columna válida
+        # Detectar última fila/columna
         $ultimaCelda = $hoja.Cells.Find("*")
         if ($ultimaCelda -eq $null) {
             Write-Host "⚠️ Hoja vacía en $($archivo.Name)"
             $wb.Close($false)
             continue
         }
-
         $ultimaFila = $ultimaCelda.Row
         $ultimaCol = $hoja.Cells.Find("*", $null, $null, $null, 2, 2).Column
 
-        # Buscar fila de inicio
+        # Detectar fila de inicio
         $filaInicio = 1
         for ($i = 1; $i -le [Math]::Min(10, $ultimaFila); $i++) {
             $textoFila = ($hoja.Range("A$i:X$i").Text -join " ") -replace '\s+', ' '
@@ -60,53 +57,29 @@ foreach ($archivo in $archivos) {
             }
         }
 
-        # Comprobar rango válido
-        if ($ultimaFila -lt $filaInicio) {
-            Write-Host "⚠️ Sin datos válidos en $($archivo.Name)"
+        # Leer los valores sin formato
+        $rango = $hoja.Range($hoja.Cells.Item($filaInicio, 1), $hoja.Cells.Item($ultimaFila, $ultimaCol))
+        $valores = $rango.Value2
+
+        if ($valores -eq $null) {
+            Write-Host "⚠️ Sin datos legibles en $($archivo.Name)"
             $wb.Close($false)
             continue
         }
 
-        # Detectar si empieza en columna A o B
-        $colInicio = 1
-        $primeraCelda = $hoja.Cells.Item($filaInicio,1).Text
-        if ([string]::IsNullOrWhiteSpace($primeraCelda)) { $colInicio = 2 }
-
-        # Crear rango origen con control de tipo
-        $rangoOrigen = $null
-        try {
-            $rangoOrigen = $hoja.Range($hoja.Cells.Item($filaInicio, $colInicio),
-                                       $hoja.Cells.Item($ultimaFila, $ultimaCol))
-        } catch {
-            Write-Host "⚠️ No se pudo definir rango en $($archivo.Name): $($_.Exception.Message)"
+        # Escribir valores directamente en la hoja final
+        foreach ($fila in $valores) {
+            if ($fila -eq $null -or ($fila -join '') -eq '') { continue }
+            $col = 2 # empieza en columna B
+            foreach ($celda in $fila) {
+                $wsFinal.Cells.Item($filaDestino, $col) = $celda
+                $col++
+            }
+            # Añadir nombre del archivo en la columna siguiente
+            $wsFinal.Cells.Item($filaDestino, $col) = $archivo.Name
+            $filaDestino++
         }
 
-        if ($rangoOrigen -eq $null) {
-            $wb.Close($false)
-            continue
-        }
-
-        # Copiar con formato, dentro de try
-        try {
-            $rangoOrigen.Copy()
-            $destino = $wsFinal.Cells.Item($filaDestino, 2)
-            $wsFinal.Paste($destino)
-            try { [void]$excel.Range("A1").Select() } catch {}
-        } catch {
-            Write-Host "⚠️ Error al copiar $($archivo.Name): $($_.Exception.Message)"
-            $wb.Close($false)
-            continue
-        }
-
-        # Añadir nombre de archivo
-        $colArchivo = $ultimaCol + 2
-        $wsFinal.Cells.Item($filaDestino, $colArchivo) = "ArchivoOrigen"
-        $filasPegadas = $rangoOrigen.Rows.Count
-        for ($i = 2; $i -le $filasPegadas; $i++) {
-            $wsFinal.Cells.Item($filaDestino + $i - 1, $colArchivo) = $archivo.Name
-        }
-
-        $filaDestino += $filasPegadas + 1
         $wb.Close($false)
     }
     catch {
@@ -124,7 +97,7 @@ try {
         $rangoFinal = $wsFinal.Range($wsFinal.Cells.Item(1,1), $wsFinal.Cells.Item($ultimaFilaFinal, $ultimaColFinal))
         $rangoFinal.RemoveDuplicates(1..$ultimaColFinal, 1) | Out-Null
 
-        # Activar autofiltro y bloquear fila 1
+        # Filtro y encabezado bloqueado
         $rangoFinal.Rows.Item(1).AutoFilter()
         $excel.ActiveWindow.SplitRow = 1
         $excel.ActiveWindow.FreezePanes = $true
@@ -144,4 +117,4 @@ try {
 try { $wbFinal.Close($true) } catch {}
 try { $excel.Quit() } catch {}
 
-Write-Host "🏁 Proceso completado."
+Write-Host "🏁 Proceso completado sin errores COM."
