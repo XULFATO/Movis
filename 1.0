@@ -1,9 +1,9 @@
 # ============================================
-# Fusionar hojas "Análisis Conceptos" (formato, nombre archivo, sin duplicados, ajusta columna A)
+# Fusionar hojas "Análisis Conceptos" (formato + alineado + nombre archivo + sin errores NULL)
 # ============================================
 
 # === CONFIGURACIÓN ===
-$carpetaOrigen   = "C:\Ruta\A\TusExcels"              # <-- cambia esta ruta
+$carpetaOrigen   = "C:\Ruta\A\TusExcels"              
 $ficheroSalida   = "C:\Users\Javier\Pruebas\Base_Datos.xlsx"
 $nombreHojaFinal = "Consolidado"
 
@@ -26,7 +26,7 @@ foreach ($archivo in $archivos) {
         $wb = $excel.Workbooks.Open($archivo.FullName, $false, $true)
         $hoja = $null
 
-        # Buscar hoja que coincida con "Análisis Conceptos"
+        # Buscar hoja "Análisis Conceptos"
         foreach ($h in $wb.Sheets) {
             if ($h.Name -match '(?i)an[aá]lisis\s*conceptos?') {
                 $hoja = $h
@@ -34,87 +34,89 @@ foreach ($archivo in $archivos) {
             }
         }
 
-        if ($hoja -ne $null) {
-            # Detectar última fila/columna con datos
-            $ultimaFila = $hoja.Cells.Find("*", $hoja.Cells.Item(1,1),
-                [Type]::Missing, [Type]::Missing, 1, 2, $false,
-                [Type]::Missing, [Type]::Missing).Row
-            $ultimaCol = $hoja.Cells.Find("*", $hoja.Cells.Item(1,1),
-                [Type]::Missing, [Type]::Missing, 2, 2, $false,
-                [Type]::Missing, [Type]::Missing).Column
-
-            # Detectar fila de inicio (busca encabezados)
-            $filaInicio = 1
-            for ($i = 1; $i -le [Math]::Min(10, $ultimaFila); $i++) {
-                $textoFila = ($hoja.Range("A$i:X$i").Text -join " ") -replace '\s+', ' '
-                if ($textoFila -match '(?i)(c[oó]digo\s*adp|utilizar\s*cliente|c[oó]digo\s*cliente)') {
-                    $filaInicio = $i
-                    break
-                }
-            }
-
-            # Detectar si empieza en la columna A o B
-            $colInicio = 1
-            $primeraCelda = $hoja.Cells.Item($filaInicio, 1).Text
-            if ([string]::IsNullOrWhiteSpace($primeraCelda)) {
-                # Si la columna A está vacía y la tabla comienza en B
-                $colInicio = 2
-            }
-
-            # Definir rango real
-            $rangoOrigen = $hoja.Range($hoja.Cells.Item($filaInicio, $colInicio),
-                                       $hoja.Cells.Item($ultimaFila, $ultimaCol))
-
-            # Copiar con formato completo
-            $rangoOrigen.Copy()
-
-            # Si el origen empieza en A, pegamos en B (columna desplazada)
-            if ($colInicio -eq 1) {
-                $destino = $wsFinal.Cells.Item($filaDestino, 2)   # empieza en columna B
-            } else {
-                $destino = $wsFinal.Cells.Item($filaDestino, 2)   # también B, coherencia total
-            }
-
-            $wsFinal.Paste($destino)
-            try { [void]$excel.Range("A1").Select() } catch {}
-
-            # Añadir nombre de archivo en la siguiente columna disponible
-            $colArchivo = $ultimaCol + 2  # +2 porque todo empieza en B
-            $wsFinal.Cells.Item($filaDestino, $colArchivo) = "ArchivoOrigen"
-
-            $filasPegadas = $rangoOrigen.Rows.Count
-            for ($i = 2; $i -le $filasPegadas; $i++) {
-                $wsFinal.Cells.Item($filaDestino + $i - 1, $colArchivo) = $archivo.Name
-            }
-
-            $filaDestino += $filasPegadas + 1
+        if ($hoja -eq $null) {
+            Write-Host "⚠️ Hoja no encontrada en $($archivo.Name)"
+            $wb.Close($false)
+            continue
         }
 
+        # Detectar última fila/columna (controlando NULL)
+        $ultimaCeldaFila = $hoja.Cells.Find("*")
+        if ($ultimaCeldaFila -eq $null) {
+            Write-Host "⚠️ Hoja vacía en $($archivo.Name)"
+            $wb.Close($false)
+            continue
+        }
+
+        $ultimaFila = $ultimaCeldaFila.Row
+        $ultimaCol = $hoja.Cells.Find("*", $null, $null, $null, 2, 2).Column
+
+        # Detectar fila de inicio (encabezados)
+        $filaInicio = 1
+        for ($i = 1; $i -le [Math]::Min(10, $ultimaFila); $i++) {
+            $textoFila = ($hoja.Range("A$i:X$i").Text -join " ") -replace '\s+', ' '
+            if ($textoFila -match '(?i)(c[oó]digo\s*adp|utilizar\s*cliente|c[oó]digo\s*cliente)') {
+                $filaInicio = $i
+                break
+            }
+        }
+
+        # Detectar si empieza en col A o B
+        $colInicio = 1
+        $primeraCelda = $hoja.Cells.Item($filaInicio,1).Text
+        if ([string]::IsNullOrWhiteSpace($primeraCelda)) { $colInicio = 2 }
+
+        # Rango de datos
+        $rangoOrigen = $hoja.Range($hoja.Cells.Item($filaInicio, $colInicio),
+                                   $hoja.Cells.Item($ultimaFila, $ultimaCol))
+
+        # Copiar con formato
+        $rangoOrigen.Copy()
+
+        # Pegar en consolidado (siempre comenzando en columna B)
+        $destino = $wsFinal.Cells.Item($filaDestino, 2)
+        $wsFinal.Paste($destino)
+        try { [void]$excel.Range("A1").Select() } catch {}
+
+        # Añadir nombre de archivo en última columna
+        $colArchivo = $ultimaCol + 2
+        $wsFinal.Cells.Item($filaDestino, $colArchivo) = "ArchivoOrigen"
+        $filasPegadas = $rangoOrigen.Rows.Count
+        for ($i = 2; $i -le $filasPegadas; $i++) {
+            $wsFinal.Cells.Item($filaDestino + $i - 1, $colArchivo) = $archivo.Name
+        }
+
+        $filaDestino += $filasPegadas + 1
         $wb.Close($false)
-    } catch {
-        Write-Host "❌ Error procesando $($archivo.Name): $_"
+    }
+    catch {
+        Write-Host "❌ Error procesando $($archivo.Name): $($_.Exception.Message)"
+        try { $wb.Close($false) } catch {}
     }
 }
 
 # === ELIMINAR DUPLICADOS ===
 try {
-    $ultimaFilaFinal = $wsFinal.Cells.Find("*", $wsFinal.Cells.Item(1,1),
-        [Type]::Missing, [Type]::Missing, 1, 2, $false,
-        [Type]::Missing, [Type]::Missing).Row
-    $ultimaColFinal = $wsFinal.Cells.Find("*", $wsFinal.Cells.Item(1,1),
-        [Type]::Missing, [Type]::Missing, 2, 2, $false,
-        [Type]::Missing, [Type]::Missing).Column
-
-    $rangoFinal = $wsFinal.Range($wsFinal.Cells.Item(1,1), $wsFinal.Cells.Item($ultimaFilaFinal, $ultimaColFinal))
-    $rangoFinal.RemoveDuplicates(1..$ultimaColFinal, 1) | Out-Null
+    $ultimaCeldaFinal = $wsFinal.Cells.Find("*")
+    if ($ultimaCeldaFinal -ne $null) {
+        $ultimaFilaFinal = $ultimaCeldaFinal.Row
+        $ultimaColFinal = $wsFinal.Cells.Find("*", $null, $null, $null, 2, 2).Column
+        $rangoFinal = $wsFinal.Range($wsFinal.Cells.Item(1,1), $wsFinal.Cells.Item($ultimaFilaFinal, $ultimaColFinal))
+        $rangoFinal.RemoveDuplicates(1..$ultimaColFinal, 1) | Out-Null
+    }
 } catch {
-    Write-Host "⚠️ No se pudo eliminar duplicados: $_"
+    Write-Host "⚠️ No se pudieron eliminar duplicados: $($_.Exception.Message)"
 }
 
 # === GUARDAR Y CERRAR ===
-$wbFinal.SaveAs($ficheroSalida)
-$wbFinal.Close($true)
-$excel.Quit()
+Start-Sleep -Seconds 2
+try {
+    $wbFinal.SaveAs($ficheroSalida)
+    Write-Host "✅ Consolidado generado en: $ficheroSalida"
+} catch {
+    Write-Host "⚠️ Error al guardar archivo final: $($_.Exception.Message)"
+}
+try { $wbFinal.Close($true) } catch {}
+try { $excel.Quit() } catch {}
 
-Write-Host "✅ Consolidado generado correctamente en:"
-Write-Host "   $ficheroSalida"
+Write-Host "🏁 Proceso completado."
