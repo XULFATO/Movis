@@ -5,11 +5,11 @@
 # === CONFIGURACIÓN ===
 $carpetaOrigen   = "C:\Ruta\A\TusExcels"           # <-- cambia esta ruta
 $ficheroSalida   = "C:\Users\Javier\Pruebas\Base_Datos.xlsx"
-$columnaFiltro   = 4                                # Columna D
+$columnaFiltro   = 4                                # Columna D (para excluir)
 $valoresExcluidos = @("XXXX", "ZZZZZ")              # Valores a excluir
 $nombreHojaFinal = "Consolidado"
 
-# === INICIO ===
+# === ARRANQUE ===
 Add-Type -AssemblyName Microsoft.Office.Interop.Excel
 $excel = New-Object -ComObject Excel.Application
 $excel.Visible = $false
@@ -20,7 +20,7 @@ $wsFinal = $wbFinal.Sheets.Item(1)
 $wsFinal.Name = $nombreHojaFinal
 $filaDestino = 1
 
-$archivos = Get-ChildItem -Path $carpetaOrigen -Filter *.xls* -File
+$archivos = Get-ChildItem -Path $carpetaOrigen -Filter *.xls* -File -Recurse
 Write-Host "📂 Procesando $($archivos.Count) archivos..."
 
 foreach ($archivo in $archivos) {
@@ -28,7 +28,7 @@ foreach ($archivo in $archivos) {
         $wb = $excel.Workbooks.Open($archivo.FullName, $false, $true)
         $hoja = $null
 
-        # Buscar hoja que coincida con "Análisis Conceptos" (tildes, plural, etc.)
+        # Buscar hoja tipo "Análisis Conceptos"
         foreach ($h in $wb.Sheets) {
             if ($h.Name -match '(?i)an[aá]lisis\s*conceptos?') {
                 $hoja = $h
@@ -37,7 +37,8 @@ foreach ($archivo in $archivos) {
         }
 
         if ($hoja -ne $null) {
-            # Detectar última fila y columna con datos
+            # Buscar fila de inicio detectando encabezados conocidos
+            $filaInicio = $null
             $ultimaFila = $hoja.Cells.Find("*", $hoja.Cells.Item(1,1),
                 [Type]::Missing, [Type]::Missing, 1, 2, $false,
                 [Type]::Missing, [Type]::Missing).Row
@@ -45,31 +46,34 @@ foreach ($archivo in $archivos) {
                 [Type]::Missing, [Type]::Missing, 2, 2, $false,
                 [Type]::Missing, [Type]::Missing).Column
 
-            $rangoOrigen = $hoja.Range($hoja.Cells.Item(1,1), $hoja.Cells.Item($ultimaFila, $ultimaCol))
+            for ($i = 1; $i -le [Math]::Min(10, $ultimaFila); $i++) {
+                $textoFila = ($hoja.Range("A$i:X$i").Text -join " ") -replace '\s+', ' '
+                if ($textoFila -match '(?i)(c[oó]digo\s*adp|utilizar\s*cliente|c[oó]digo\s*cliente)') {
+                    $filaInicio = $i
+                    break
+                }
+            }
+            if (-not $filaInicio) { $filaInicio = 1 }
 
-            # Aplicar filtro temporal para excluir valores
-            $hoja.AutoFilterMode = $false
-            $rangoOrigen.AutoFilter(4, "<>XXXX", 7) | Out-Null
-            $rangoOrigen.AutoFilter(4, "<>ZZZZZ", 7) | Out-Null
+            $rangoOrigen = $hoja.Range($hoja.Cells.Item($filaInicio, 1), $hoja.Cells.Item($ultimaFila, $ultimaCol))
 
-            # Copiar el rango visible (con formato)
-            $rangoVisible = $rangoOrigen.SpecialCells(12) # xlCellTypeVisible = 12
-            $rangoVisible.Copy()
+            # Copiar con formato completo
+            $rangoOrigen.Copy()
 
-            # Pegar en el consolidado (manteniendo formato)
+            # Pegar en el consolidado
             $destino = $wsFinal.Cells.Item($filaDestino, 1)
             $wsFinal.Paste($destino)
             $excel.CutCopyMode = $false
 
-            # Añadir nombre de archivo en la siguiente columna vacía
+            # Añadir nombre del archivo en la siguiente columna vacía
             $colArchivo = $ultimaCol + 1
             $wsFinal.Cells.Item($filaDestino, $colArchivo) = "ArchivoOrigen"
-            for ($i = 2; $i -le ($rangoVisible.Rows.Count); $i++) {
+            $filasPegadas = $rangoOrigen.Rows.Count
+            for ($i = 2; $i -le $filasPegadas; $i++) {
                 $wsFinal.Cells.Item($filaDestino + $i - 1, $colArchivo) = $archivo.Name
             }
 
-            # Avanzar fila destino
-            $filaDestino += $rangoVisible.Rows.Count + 1
+            $filaDestino += $filasPegadas + 1
         }
 
         $wb.Close($false)
