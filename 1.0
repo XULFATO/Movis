@@ -1,223 +1,52 @@
-# Script para extraer contenido de archivos Excel a texto plano
-# Permite buscar en Excel usando Notepad++ u otros editores de texto
+# ================================================
+# EXTRAER XML DE "sheet1" DE CADA EXCEL EN UNA CARPETA
+# ================================================
 
-# ============= CONFIGURACIÓN =============
-$carpetaExcels = "C:\Ruta\A\Tus\Excels"
-$carpetaTextos = "C:\Ruta\Destino\Textos"  # Donde se guardarán los .txt
-$incluirNombreArchivo = $true  # Incluir nombre del archivo al inicio
-$incluirNombreHoja = $true     # Incluir nombre de cada pestaña
-$separadorColumnas = "`t"      # Tabulador (puedes usar "," o "|")
-# =========================================
-
-Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "CONVERTIR EXCEL A TEXTO PLANO" -ForegroundColor Cyan
-Write-Host "========================================" -ForegroundColor Cyan
+# === CONFIGURACIÓN ===
+$carpetaOrigen = "C:\Ruta\A\TusExcels"        # <-- CAMBIA ESTA RUTA
+$carpetaSalida = "C:\Ruta\Salida_XML"         # <-- donde se guardarán los XML
 
 # Crear carpeta destino si no existe
-if (-not (Test-Path $carpetaTextos)) {
-    New-Item -Path $carpetaTextos -ItemType Directory -Force | Out-Null
-    Write-Host "✓ Carpeta destino creada" -ForegroundColor Green
+if (-not (Test-Path $carpetaSalida)) {
+    New-Item -ItemType Directory -Path $carpetaSalida | Out-Null
 }
 
-# Crear objeto Excel
-Write-Host "`nIniciando Excel..." -ForegroundColor Yellow
-$excel = New-Object -ComObject Excel.Application
-$excel.Visible = $false
-$excel.DisplayAlerts = $false
+# Obtener todos los Excel .xlsx y .xlsm
+$archivos = Get-ChildItem -Path $carpetaOrigen -Recurse -Include *.xlsx, *.xlsm | Where-Object { $_.Name -notmatch '^~\$' }
 
-# Obtener archivos Excel
-$archivosExcel = Get-ChildItem -Path $carpetaExcels -Filter *.xlsx -Recurse | Where-Object { $_.Name -notlike "~$*" }
+Write-Host "`nProcesando $($archivos.Count) archivos Excel..." -ForegroundColor Cyan
 
-Write-Host "Encontrados $($archivosExcel.Count) archivos Excel" -ForegroundColor Cyan
-Write-Host "`nProcesando archivos...`n" -ForegroundColor Cyan
-
-$contador = 0
-$exitosos = 0
-
-foreach ($archivo in $archivosExcel) {
-    $contador++
-    Write-Host "[$contador/$($archivosExcel.Count)] $($archivo.Name)" -ForegroundColor Yellow
-    
+foreach ($archivo in $archivos) {
     try {
-        # Abrir Excel
-        $libro = $excel.Workbooks.Open($archivo.FullName, [Type]::Missing, $true)
-        
-        # Crear archivo de texto con el mismo nombre
-        $nombreTexto = [System.IO.Path]::GetFileNameWithoutExtension($archivo.Name) + ".txt"
-        $rutaTexto = Join-Path -Path $carpetaTextos -ChildPath $nombreTexto
-        
-        # Construir contenido de texto
-        $contenidoCompleto = ""
-        
-        if ($incluirNombreArchivo) {
-            $contenidoCompleto += "=" * 80 + "`r`n"
-            $contenidoCompleto += "ARCHIVO: $($archivo.Name)`r`n"
-            $contenidoCompleto += "RUTA: $($archivo.FullName)`r`n"
-            $contenidoCompleto += "=" * 80 + "`r`n`r`n"
+        Write-Host "📄 $($archivo.Name)" -ForegroundColor Yellow
+
+        $tempDir = Join-Path $env:TEMP ("xlsextract_" + [guid]::NewGuid().ToString())
+        New-Item -ItemType Directory -Path $tempDir | Out-Null
+
+        # Copiar y renombrar como zip temporal
+        $tempZip = Join-Path $tempDir ($archivo.BaseName + ".zip")
+        Copy-Item $archivo.FullName -Destination $tempZip -Force
+
+        # Descomprimir contenido
+        Expand-Archive -Path $tempZip -DestinationPath $tempDir -Force
+
+        # Buscar el XML de la hoja principal
+        $xmlPath = Join-Path $tempDir "xl\worksheets\sheet1.xml"
+
+        if (Test-Path $xmlPath) {
+            $destXml = Join-Path $carpetaSalida ($archivo.BaseName + ".xml")
+            Copy-Item $xmlPath -Destination $destXml -Force
+            Write-Host "   ✓ Extraído como $($archivo.BaseName).xml" -ForegroundColor Green
+        } else {
+            Write-Host "   ⚠ No se encontró sheet1.xml en $($archivo.Name)" -ForegroundColor DarkYellow
         }
-        
-        # Procesar cada hoja
-        foreach ($hoja in $libro.Worksheets) {
-            Write-Host "  → Procesando hoja: $($hoja.Name)" -ForegroundColor Gray
-            
-            if ($incluirNombreHoja) {
-                $contenidoCompleto += "-" * 80 + "`r`n"
-                $contenidoCompleto += "PESTAÑA: $($hoja.Name)`r`n"
-                $contenidoCompleto += "-" * 80 + "`r`n"
-            }
-            
-            # Obtener rango usado
-            $rangoUsado = $hoja.UsedRange
-            
-            if ($rangoUsado -ne $null) {
-                $filas = $rangoUsado.Rows.Count
-                $columnas = $rangoUsado.Columns.Count
-                
-                # Extraer datos fila por fila
-                for ($f = 1; $f -le $filas; $f++) {
-                    $lineaTexto = ""
-                    $hayDatos = $false
-                    
-                    for ($c = 1; $c -le $columnas; $c++) {
-                        $valor = $hoja.Cells.Item($f, $c).Text
-                        
-                        if ($valor -ne $null -and $valor.ToString().Trim() -ne "") {
-                            $hayDatos = $true
-                            $lineaTexto += $valor.ToString()
-                        }
-                        
-                        if ($c -lt $columnas) {
-                            $lineaTexto += $separadorColumnas
-                        }
-                    }
-                    
-                    # Solo agregar líneas que tengan datos
-                    if ($hayDatos) {
-                        $contenidoCompleto += $lineaTexto + "`r`n"
-                    }
-                }
-            }
-            
-            $contenidoCompleto += "`r`n`r`n"
-        }
-        
-        # Guardar archivo de texto
-        [System.IO.File]::WriteAllText($rutaTexto, $contenidoCompleto, [System.Text.Encoding]::UTF8)
-        
-        Write-Host "  ✓ Convertido a texto: $nombreTexto" -ForegroundColor Green
-        $exitosos++
-        
-        # Cerrar libro
-        $libro.Close($false)
-        
+
+        # Limpiar temporales
+        Remove-Item $tempDir -Recurse -Force
+
     } catch {
-        Write-Host "  ✗ Error: $($_.Exception.Message)" -ForegroundColor Red
-        try { $libro.Close($false) } catch { }
+        Write-Host "   ❌ Error procesando $($archivo.Name): $($_.Exception.Message)" -ForegroundColor Red
     }
 }
 
-# Cerrar Excel
-$excel.Quit()
-[System.Runtime.Interopservices.Marshal]::ReleaseComObject($excel) | Out-Null
-[System.GC]::Collect()
-[System.GC]::WaitForPendingFinalizers()
-
-# Resumen
-Write-Host "`n========================================" -ForegroundColor Cyan
-Write-Host "RESUMEN" -ForegroundColor Cyan
-Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "Archivos procesados: $contador" -ForegroundColor White
-Write-Host "Convertidos exitosamente: $exitosos" -ForegroundColor Green
-Write-Host "Archivos de texto creados en:" -ForegroundColor White
-Write-Host "  $carpetaTextos" -ForegroundColor Yellow
-Write-Host "`n✓ Ahora puedes buscar en todos los archivos" -ForegroundColor Cyan
-Write-Host "  usando Notepad++ → Buscar → Buscar en archivos" -ForegroundColor Cyan
-Write-Host "========================================" -ForegroundColor Cyan
-
-
-
-
-
-
-
-
-# Script para mover archivos específicos a otra carpeta según una lista
-
-# ============= CONFIGURACIÓN =============
-$carpetaOrigen = "C:\Ruta\Carpeta\Origen"
-$carpetaDestino = "C:\Ruta\Carpeta\Destino"
-
-# Lista de archivos a mover (solo el nombre del archivo)
-$listaArchivos = @(
-    "archivo1.xlsx",
-    "archivo2.xlsx",
-    "documento3.pdf",
-    "informe4.docx",
-    "datos5.xlsx"
-)
-# =========================================
-
-Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "MOVER ARCHIVOS SEGÚN LISTA" -ForegroundColor Cyan
-Write-Host "========================================" -ForegroundColor Cyan
-
-# Verificar que la carpeta origen existe
-if (-not (Test-Path $carpetaOrigen)) {
-    Write-Host "✗ ERROR: La carpeta origen no existe: $carpetaOrigen" -ForegroundColor Red
-    exit
-}
-
-# Crear carpeta destino si no existe
-if (-not (Test-Path $carpetaDestino)) {
-    Write-Host "⚠ Carpeta destino no existe. Creándola..." -ForegroundColor Yellow
-    New-Item -Path $carpetaDestino -ItemType Directory -Force | Out-Null
-    Write-Host "✓ Carpeta destino creada" -ForegroundColor Green
-}
-
-Write-Host "`nCarpeta origen: $carpetaOrigen" -ForegroundColor White
-Write-Host "Carpeta destino: $carpetaDestino" -ForegroundColor White
-Write-Host "Total de archivos en la lista: $($listaArchivos.Count)" -ForegroundColor White
-Write-Host "`nProcesando archivos...`n" -ForegroundColor Cyan
-
-$contadorMovidos = 0
-$contadorNoEncontrados = 0
-$contadorErrores = 0
-
-foreach ($nombreArchivo in $listaArchivos) {
-    $rutaOrigen = Join-Path -Path $carpetaOrigen -ChildPath $nombreArchivo
-    $rutaDestino = Join-Path -Path $carpetaDestino -ChildPath $nombreArchivo
-    
-    Write-Host "Procesando: $nombreArchivo" -ForegroundColor Yellow
-    
-    # Verificar si el archivo existe en origen
-    if (Test-Path $rutaOrigen) {
-        try {
-            # Verificar si ya existe en destino
-            if (Test-Path $rutaDestino) {
-                Write-Host "  ⚠ Ya existe en destino. Sobrescribiendo..." -ForegroundColor Yellow
-                Remove-Item $rutaDestino -Force
-            }
-            
-            # Mover archivo
-            Move-Item -Path $rutaOrigen -Destination $rutaDestino -Force
-            Write-Host "  ✓ Movido exitosamente" -ForegroundColor Green
-            $contadorMovidos++
-            
-        } catch {
-            Write-Host "  ✗ Error al mover: $($_.Exception.Message)" -ForegroundColor Red
-            $contadorErrores++
-        }
-    } else {
-        Write-Host "  ✗ No encontrado en carpeta origen" -ForegroundColor Red
-        $contadorNoEncontrados++
-    }
-}
-
-# Resumen final
-Write-Host "`n========================================" -ForegroundColor Cyan
-Write-Host "RESUMEN" -ForegroundColor Cyan
-Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "Archivos movidos exitosamente: $contadorMovidos" -ForegroundColor Green
-Write-Host "Archivos no encontrados: $contadorNoEncontrados" -ForegroundColor Red
-Write-Host "Errores durante el movimiento: $contadorErrores" -ForegroundColor Red
-Write-Host "========================================" -ForegroundColor Cyan
+Write-Host "`n🏁 Proceso completado. Archivos XML en: $carpetaSalida" -ForegroundColor Cyan
