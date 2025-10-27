@@ -1,43 +1,140 @@
+# ==========================================================
+# FUSIONAR "ANÁLISIS CONCEPTOS"  –  versión robusta y limpia
+# ==========================================================
+
+# --- CONFIGURACIÓN ---
+$carpetaOrigen   = "C:\Ruta\A\TusExcels"              # <-- cambia esta ruta
+$ficheroSalida   = "C:\Users\Javier\Pruebas\Base_Datos.xlsx"
+$nombreHojaFinal = "Consolidado"
+
+# --- ARRANQUE ---
 Add-Type -AssemblyName Microsoft.Office.Interop.Excel
-$excel = New-Object -ComObject Excel.Application
-$excel.Visible = $false
+$excel     = New-Object -ComObject Excel.Application
+$excel.Visible       = $false
 $excel.DisplayAlerts = $false
 
-# CAMBIA esta ruta por uno de los Excel que sabes que tiene la hoja correcta
-$fichero = "C:\Ruta\A\TusExcels\ejemplo_valido.xlsx"
-$wb = $excel.Workbooks.Open($fichero, $false, $true)
+$wbFinal  = $excel.Workbooks.Add()
+$wsFinal  = $wbFinal.Sheets.Item(1)
+$wsFinal.Name = $nombreHojaFinal
+$filaDestino  = 1
 
-# Busca hoja tipo "Análisis Conceptos"
-$hoja = $null
-foreach ($h in $wb.Sheets) {
-    if ($h.Name -match '(?i)an[aá]lisis\s*conceptos?') { $hoja = $h; break }
-}
-if ($hoja -eq $null) {
-    Write-Host "❌ Hoja no encontrada"
-    $wb.Close($false); $excel.Quit(); exit
-}
+$archivos = Get-ChildItem -Path $carpetaOrigen -Filter *.xls* -File -Recurse
+$total = $archivos.Count
+Write-Host "📂 Procesando $total archivos..."
 
-# Detecta última fila/columna
-$ultima = $hoja.Cells.Find("*")
-if ($ultima -eq $null) {
-    Write-Host "❌ Hoja vacía"
-    $wb.Close($false); $excel.Quit(); exit
-}
+foreach ($archivo in $archivos) {
+    try {
+        $wb = $excel.Workbooks.Open($archivo.FullName, $false, $true)
+        $hoja = $null
+        foreach ($h in $wb.Sheets) {
+            if ($h.Name -match '(?i)an[aá]lisis\s*conceptos?') { $hoja = $h; break }
+        }
 
-$ultimaFila = $ultima.Row
-$ultimaCol  = $hoja.Cells.Find("*", $null, $null, $null, 2, 2).Column
-$filaInicio = 1
-for ($i=1; $i -le [Math]::Min(10,$ultimaFila); $i++){
-    $textoFila = ($hoja.Range("A$i:X$i").Text -join " ") -replace '\s+',' '
-    if ($textoFila -match '(?i)(c[oó]digo\s*adp|utilizar\s*cliente|c[oó]digo\s*cliente)'){
-        $filaInicio=$i;break
+        if ($hoja -eq $null) {
+            Write-Host "⚠️ Hoja no encontrada en $($archivo.Name)"
+            $wb.Close($false)
+            continue
+        }
+
+        # --- Rango usado (sin errores COM) ---
+        $used = $hoja.UsedRange
+        if ($used -eq $null -or $used.Rows.Count -eq 0) {
+            Write-Host "⚠️ Hoja vacía en $($archivo.Name)"
+            $wb.Close($false)
+            continue
+        }
+
+        $ultimaFila = $used.Rows.Count
+        $ultimaCol  = $used.Columns.Count
+
+        # --- Buscar fila de encabezado ---
+        $filaInicio = 1
+        for ($i=1; $i -le [Math]::Min(10,$ultimaFila); $i++) {
+            $texto = ($hoja.Range("A$i:X$i").Text -join " ") -replace '\s+',' '
+            if ($texto -match '(?i)(c[oó]digo\s*adp|utilizar\s*cliente|c[oó]digo\s*cliente)') { 
+                $filaInicio = $i; break 
+            }
+        }
+
+        # --- Leer todos los valores ---
+        $rango = $hoja.Range($hoja.Cells.Item($filaInicio,1),$hoja.Cells.Item($ultimaFila,$ultimaCol))
+        $valores = $null
+        try { $valores = $rango.Value2 } catch { $valores = $null }
+
+        if ($valores -eq $null) {
+            Write-Host "⚠️ Modo seguro en $($archivo.Name)"
+            for ($r=$filaInicio; $r -le $ultimaFila; $r++) {
+                $vacia = $true
+                for ($c=1; $c -le $ultimaCol; $c++) {
+                    $txt = $hoja.Cells.Item($r,$c).Text
+                    if (-not [string]::IsNullOrWhiteSpace($txt)) { $vacia=$false; break }
+                }
+                if ($vacia) { continue }
+
+                $colDest=2
+                for ($c=1; $c -le $ultimaCol; $c++) {
+                    $wsFinal.Cells.Item($filaDestino,$colDest) = $hoja.Cells.Item($r,$c).Text
+                    $colDest++
+                }
+                $wsFinal.Cells.Item($filaDestino,$colDest) = $archivo.Name
+                $filaDestino++
+            }
+        }
+        else {
+            # --- Escribir valores rápidos ---
+            $rows=$valores.GetLength(0)
+            $cols=$valores.GetLength(1)
+            for ($r=0; $r -lt $rows; $r++) {
+                $todoVacio=$true
+                for ($c=0; $c -lt $cols; $c++) {
+                    $v=$valores[$r,$c]
+                    if ($v -ne $null -and "$v".Trim().Length -gt 0) { $todoVacio=$false; break }
+                }
+                if ($todoVacio) { continue }
+
+                $colDest=2
+                for ($c=0; $c -lt $cols; $c++) {
+                    $wsFinal.Cells.Item($filaDestino,$colDest) = $valores[$r,$c]
+                    $colDest++
+                }
+                $wsFinal.Cells.Item($filaDestino,$colDest) = $archivo.Name
+                $filaDestino++
+            }
+        }
+
+        $wb.Close($false)
+    }
+    catch {
+        Write-Host "❌ Error procesando $($archivo.Name): $($_.Exception.Message)"
+        try { $wb.Close($false) } catch {}
     }
 }
 
-Write-Host "Hoja encontrada:" $hoja.Name
-Write-Host "Fila inicio:" $filaInicio "  Última fila:" $ultimaFila "  Última col:" $ultimaCol
-Write-Host "Primeras 5 filas:"
-$rango=$hoja.Range($hoja.Cells.Item($filaInicio,1),$hoja.Cells.Item([Math]::Min($filaInicio+4,$ultimaFila),$ultimaCol))
-$rango.Value2 | Format-Table -AutoSize
+# --- ELIMINAR DUPLICADOS Y FILTRO ---
+try {
+    $ultimaCelda = $wsFinal.Cells.Find("*")
+    if ($ultimaCelda -ne $null) {
+        $ultimaFila = $ultimaCelda.Row
+        $ultimaCol  = $wsFinal.Cells.Find("*",$null,$null,$null,2,2).Column
+        $rangoFin   = $wsFinal.Range($wsFinal.Cells.Item(1,1),$wsFinal.Cells.Item($ultimaFila,$ultimaCol))
+        $rangoFin.RemoveDuplicates(1..$ultimaCol,1) | Out-Null
+        $rangoFin.Rows.Item(1).AutoFilter()
+        $excel.ActiveWindow.SplitRow = 1
+        $excel.ActiveWindow.FreezePanes = $true
+    }
+} catch {
+    Write-Host "⚠️ No se pudieron eliminar duplicados o aplicar filtros: $($_.Exception.Message)"
+}
 
-$wb.Close($false); $excel.Quit()
+# --- GUARDAR Y CERRAR ---
+Start-Sleep -Seconds 1
+try {
+    $wbFinal.SaveAs($ficheroSalida)
+    Write-Host "✅ Consolidado generado en: $ficheroSalida"
+} catch {
+    Write-Host "⚠️ Error al guardar archivo final: $($_.Exception.Message)"
+}
+try { $wbFinal.Close($true) } catch {}
+try { $excel.Quit() } catch {}
+
+Write-Host "🏁 Proceso completado. Todos los Excels incluidos correctamente."
