@@ -1,206 +1,117 @@
-# Script para consolidar pestañas "análisis conceptos" de múltiples archivos Excel
-# NO requiere instalar módulos - usa COM Objects nativo de Windows
+# ==========================================================
+# FUSIONAR "ANÁLISIS CONCEPTOS" CON FORMATO (ROBUSTO)
+# ==========================================================
 
-# ============= CONFIGURACIÓN =============
-$carpetaOrigen = "C:\Ruta\A\Tus\Excels"  # Cambia esta ruta
-$archivoDestino = "C:\Ruta\Destino\Consolidado.xlsx"  # Cambia esta ruta
-$nombrePestana = "análisis conceptos"
-$textoBusqueda = "utilizada Cliente"
-$columnaFinalTexto = "convenios afectados"
-# =========================================
+# === CONFIGURACIÓN ===
+$carpetaOrigen = "C:\Ruta\A\TusExcels"               # <-- CAMBIA
+$ficheroSalida = "C:\Users\Javier\Pruebas\Base_Datos.xlsx"
+$nombreHojaFinal = "Consolidado"
+$regexHoja = '(?i)an[aá]lisis\s*conceptos?'          # admite tilde y singular/plural
+$excluirColD = @("XXXX","ZZZZZ")                     # valores a excluir en col D (origen)
 
-Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "CONSOLIDADOR DE EXCELS" -ForegroundColor Cyan
-Write-Host "========================================" -ForegroundColor Cyan
+# === UTILIDADES ===
+function Get-ColLetter([int]$n){
+    $s=""; while($n -gt 0){ $n--; $s=[char](65+($n%26))+$s; $n=[math]::Floor($n/26) } ; return $s
+}
 
-# Crear objeto Excel
-Write-Host "`nIniciando Excel..." -ForegroundColor Yellow
+# === ARRANQUE EXCEL ===
+Add-Type -AssemblyName Microsoft.Office.Interop.Excel
 $excel = New-Object -ComObject Excel.Application
 $excel.Visible = $false
 $excel.DisplayAlerts = $false
 
-# Crear libro destino
-$libroDestino = $excel.Workbooks.Add()
-$hojaDestino = $libroDestino.Worksheets.Item(1)
-$hojaDestino.Name = "Consolidado"
+$wbOut = $excel.Workbooks.Add()
+$wsOut = $wbOut.Sheets.Item(1)
+$wsOut.Name = $nombreHojaFinal
+$filaDestino = 1
 
-$filaDestinoActual = 1
-$contadorArchivos = 0
-$contadorExitosos = 0
-$primeraVez = $true
+$archivos = Get-ChildItem -Path $carpetaOrigen -Filter *.xls* -File -Recurse | Where-Object { $_.Name -notmatch '^~\$' }
+Write-Host "Procesando $($archivos.Count) archivos..."
 
-# Obtener todos los archivos Excel
-$archivosExcel = Get-ChildItem -Path $carpetaOrigen -Filter *.xlsx -Recurse | Where-Object { $_.Name -notlike "~$*" -and $_.Name -notlike "*Consolidado*" }
+foreach($archivo in $archivos){
+  try{
+    $wb = $excel.Workbooks.Open($archivo.FullName, $false, $true)
+    # Buscar hoja válida
+    $ws = $null
+    foreach($h in $wb.Sheets){ if($h.Name -match $regexHoja){ $ws=$h; break } }
+    if(-not $ws){ $wb.Close($false); continue }
 
-Write-Host "Encontrados $($archivosExcel.Count) archivos Excel" -ForegroundColor Cyan
-Write-Host "`nProcesando archivos...`n" -ForegroundColor Cyan
+    # Rango usado REAL (corrige comienzos en fila/col no-1)
+    $ur = $ws.UsedRange
+    if(-not $ur -or $ur.Rows.Count -eq 0){ $wb.Close($false); continue }
+    $iniFila = $ur.Row
+    $iniCol  = $ur.Column
+    $ultFila = $iniFila + $ur.Rows.Count - 1
+    $ultCol  = $iniCol + $ur.Columns.Count - 1
 
-foreach ($archivo in $archivosExcel) {
-    $contadorArchivos++
-    Write-Host "[$contadorArchivos/$($archivosExcel.Count)] $($archivo.Name)" -ForegroundColor Yellow
-    
-    try {
-        # Abrir archivo
-        $libroOrigen = $excel.Workbooks.Open($archivo.FullName, [Type]::Missing, $true)
-        
-        # Buscar la pestaña
-        $hojaEncontrada = $null
-        foreach ($hoja in $libroOrigen.Worksheets) {
-            if ($hoja.Name -like "*$nombrePestana*") {
-                $hojaEncontrada = $hoja
-                break
-            }
-        }
-        
-        if ($hojaEncontrada -eq $null) {
-            Write-Host "  ✗ No tiene la pestaña '$nombrePestana'" -ForegroundColor Gray
-            $libroOrigen.Close($false)
-            continue
-        }
-        
-        Write-Host "  ✓ Pestaña encontrada: $($hojaEncontrada.Name)" -ForegroundColor Green
-        
-        # Buscar "utilizada Cliente" en las primeras 10 filas y 10 columnas
-        $filaInicio = 0
-        $colInicio = 0
-        $encontrado = $false
-        
-        for ($f = 1; $f -le 10; $f++) {
-            for ($c = 1; $c -le 10; $c++) {
-                $valor = $hojaEncontrada.Cells.Item($f, $c).Text
-                if ($valor -like "*$textoBusqueda*") {
-                    $filaInicio = $f
-                    $colInicio = $c
-                    $encontrado = $true
-                    break
-                }
-            }
-            if ($encontrado) { break }
-        }
-        
-        if (-not $encontrado) {
-            Write-Host "  ✗ No se encontró '$textoBusqueda'" -ForegroundColor Red
-            $libroOrigen.Close($false)
-            continue
-        }
-        
-        Write-Host "  ✓ Encabezado en fila $filaInicio, columna $colInicio" -ForegroundColor Green
-        
-        # Buscar columna "convenios afectados"
-        $colFinal = 0
-        for ($c = $colInicio; $c -le 50; $c++) {
-            $valor = $hojaEncontrada.Cells.Item($filaInicio, $c).Text
-            if ($valor -like "*$columnaFinalTexto*") {
-                $colFinal = $c
-                break
-            }
-        }
-        
-        if ($colFinal -eq 0) {
-            # Si no encuentra la columna, usar hasta 20 columnas después del inicio
-            $colFinal = $colInicio + 19
-            Write-Host "  ⚠ No se encontró '$columnaFinalTexto', usando columnas hasta $colFinal" -ForegroundColor Yellow
-        } else {
-            Write-Host "  ✓ Columna final en posición $colFinal" -ForegroundColor Green
-        }
-        
-        # Encontrar última fila con datos
-        $ultimaFilaConDatos = $hojaEncontrada.Cells($hojaEncontrada.Rows.Count, $colInicio).End(-4162).Row
-        
-        if ($ultimaFilaConDatos -lt $filaInicio) {
-            Write-Host "  ✗ No hay datos después del encabezado" -ForegroundColor Red
-            $libroOrigen.Close($false)
-            continue
-        }
-        
-        $totalFilas = $ultimaFilaConDatos - $filaInicio + 1
-        Write-Host "  ✓ Extrayendo $totalFilas filas" -ForegroundColor Green
-        
-        # Copiar datos
-        $totalColumnas = $colFinal - $colInicio + 1
-        
-        # Si es la primera vez, copiar encabezados
-        $filaOrigenInicio = $filaInicio
-        if (-not $primeraVez) {
-            $filaOrigenInicio = $filaInicio + 1  # Saltar encabezado en siguientes archivos
-        }
-        
-        # Copiar fila por fila
-        for ($f = $filaOrigenInicio; $f -le $ultimaFilaConDatos; $f++) {
-            # Copiar cada celda de la fila
-            for ($c = 0; $c -lt $totalColumnas; $c++) {
-                $valorCelda = $hojaEncontrada.Cells.Item($f, $colInicio + $c).Value2
-                $hojaDestino.Cells.Item($filaDestinoActual, $c + 1).Value2 = $valorCelda
-            }
-            
-            # Añadir nombre del archivo en la última columna
-            $hojaDestino.Cells.Item($filaDestinoActual, $totalColumnas + 1).Value2 = $archivo.Name
-            
-            $filaDestinoActual++
-        }
-        
-        # Si era la primera vez, añadir encabezado para columna de archivo
-        if ($primeraVez) {
-            $hojaDestino.Cells.Item(1, $totalColumnas + 1).Value2 = "Archivo_Origen"
-            $primeraVez = $false
-        }
-        
-        $contadorExitosos++
-        Write-Host "  ✓ Datos copiados exitosamente" -ForegroundColor Green
-        
-        $libroOrigen.Close($false)
-        
-    } catch {
-        Write-Host "  ✗ Error: $($_.Exception.Message)" -ForegroundColor Red
-        try { $libroOrigen.Close($false) } catch { }
+    # Detectar FILA DE CABECERA (primeras 10 filas del rango usado)
+    $filaCab = $iniFila
+    $scanHasta = [Math]::Min($iniFila+9, $ultFila)
+    $letraUlt = Get-ColLetter $ultCol
+    for($r=$iniFila; $r -le $scanHasta; $r++){
+      $txt = ($ws.Range("$([Get-ColLetter $iniCol])$r:$letraUlt$r").Text -join " ") -replace '\s+',' '
+      if($txt -match '(?i)(c[oó]digo\s*adp|utilizar\s*cliente|c[oó]digo\s*cliente)'){ $filaCab = $r; break }
     }
+
+    # Rango de datos desde cabecera hasta el final
+    $rango = $ws.Range($ws.Cells.Item($filaCab,$iniCol), $ws.Cells.Item($ultFila,$ultCol))
+
+    # --- PEGAR CON FORMATO siempre comenzando en COLUMNA B (A vacía) ---
+    $destino = $wsOut.Cells.Item($filaDestino, 2)   # columna B
+    # Copy(Destination) evita problemas de CutCopyMode/clipboard
+    $rango.Copy($destino)
+
+    # Medidas pegadas
+    $filasPeg = $rango.Rows.Count
+    $colsPeg  = $rango.Columns.Count
+
+    # Añadir columna ArchivoOrigen (una a la derecha del bloque pegado)
+    $colArchivoOut = 2 + $colsPeg
+    $wsOut.Cells.Item($filaDestino, $colArchivoOut) = "ArchivoOrigen"
+    for($rr=$filaDestino+1; $rr -le $filaDestino+$filasPeg-1; $rr++){
+      $wsOut.Cells.Item($rr, $colArchivoOut) = $archivo.Name
+    }
+
+    # --- ELIMINAR FILAS con D = XXXX/ZZZZZ (D del ORIGEN mapea a columna B+(4-1)=5) ---
+    $colDOut = 2 + (4 - 1)  # = 5 (columna E) respecto a hoja de salida
+    for($rr=$filaDestino+$filasPeg-1; $rr -ge $filaDestino+1; $rr--){
+      $val = $wsOut.Cells.Item($rr, $colDOut).Text
+      if($excluirColD -contains $val){ $wsOut.Rows.Item($rr).Delete() | Out-Null }
+    }
+
+    # Dejar un hueco de una fila entre bloques
+    $filaDestino = ($wsOut.Cells.Find("*")).Row + 2
+
+    $wb.Close($false)
+  } catch {
+    try{ $wb.Close($false) }catch{}
+    Write-Host "Error en $($archivo.Name): $($_.Exception.Message)"
+  }
+}
+
+# --- ELIMINAR DUPLICADOS + AUTOFILTRO + BLOQUEO FILA 1 ---
+try{
+  $endCell = $wsOut.Cells.Find("*")
+  if($endCell){
+    $ultFilaOut = $endCell.Row
+    $ultColOut  = $wsOut.Cells.Find("*",$null,$null,$null,2,2).Column
+    $rngOut = $wsOut.Range($wsOut.Cells.Item(1,1), $wsOut.Cells.Item($ultFilaOut,$ultColOut))
+    $rngOut.RemoveDuplicates( (1..$ultColOut), 1 ) | Out-Null
+    $rngOut.Rows.Item(1).AutoFilter()
+    $excel.ActiveWindow.SplitRow = 1
+    $excel.ActiveWindow.FreezePanes = $true
+  }
+}catch{
+  Write-Host "Aviso al consolidar: $($_.Exception.Message)"
 }
 
 # Guardar y cerrar
-Write-Host "`n========================================" -ForegroundColor Cyan
-if ($contadorExitosos -gt 0) {
-    Write-Host "Guardando archivo consolidado..." -ForegroundColor Cyan
-    
-    try {
-        # Eliminar archivo destino si existe
-        if (Test-Path $archivoDestino) {
-            Remove-Item $archivoDestino -Force
-        }
-        
-        # Formatear encabezados
-        $rangoEncabezado = $hojaDestino.Range($hojaDestino.Cells.Item(1, 1), $hojaDestino.Cells.Item(1, $hojaDestino.UsedRange.Columns.Count))
-        $rangoEncabezado.Font.Bold = $true
-        $rangoEncabezado.Interior.Color = 15773696  # Color gris claro
-        
-        # Autoajustar columnas
-        $hojaDestino.UsedRange.Columns.AutoFit() | Out-Null
-        
-        # Guardar
-        $libroDestino.SaveAs($archivoDestino, 51)  # 51 = xlOpenXMLWorkbook (.xlsx)
-        
-        Write-Host "✓ Archivo consolidado creado exitosamente" -ForegroundColor Green
-        Write-Host "  Ubicación: $archivoDestino" -ForegroundColor White
-        Write-Host "  Total de filas: $($filaDestinoActual - 1)" -ForegroundColor White
-        Write-Host "  Archivos procesados: $contadorExitosos de $contadorArchivos" -ForegroundColor White
-        
-    } catch {
-        Write-Host "✗ Error al guardar: $($_.Exception.Message)" -ForegroundColor Red
-    }
-} else {
-    Write-Host "✗ No se encontraron datos para consolidar" -ForegroundColor Red
+try{
+  $wbOut.SaveAs($ficheroSalida, 51)   # 51 = .xlsx
+  Write-Host "OK -> $ficheroSalida"
+}catch{
+  Write-Host "Error al guardar: $($_.Exception.Message)"
 }
-
-# Cerrar Excel
-$libroDestino.Close($false)
-$excel.Quit()
-
-# Liberar objetos COM
-[System.Runtime.Interopservices.Marshal]::ReleaseComObject($hojaDestino) | Out-Null
-[System.Runtime.Interopservices.Marshal]::ReleaseComObject($libroDestino) | Out-Null
-[System.Runtime.Interopservices.Marshal]::ReleaseComObject($excel) | Out-Null
-[System.GC]::Collect()
-[System.GC]::WaitForPendingFinalizers()
-
-Write-Host "`n========================================" -ForegroundColor Cyan
-Write-Host "Proceso completado" -ForegroundColor Cyan
-Write-Host "========================================" -ForegroundColor Cyan
+try{ $wbOut.Close($true) }catch{}
+try{ $excel.Quit() }catch{}
+[System.GC]::Collect(); [System.GC]::WaitForPendingFinalizers()
