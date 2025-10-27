@@ -1,69 +1,166 @@
-# --- RANGO A LEER ---
-$rango = $hoja.Range($hoja.Cells.Item($filaInicio, 1), $hoja.Cells.Item($ultimaFila, $ultimaCol))
+# ============================================
+# Fusionar hojas "Análisis Conceptos" (robusto, incluye todos los Excels)
+# ============================================
 
-# === MODO RÁPIDO (Value2) ===
-$valores = $null
-$fastOk = $true
+# === CONFIGURACIÓN ===
+$carpetaOrigen   = "C:\Ruta\A\TusExcels"              # <-- cambia esta ruta
+$ficheroSalida   = "C:\Users\Javier\Pruebas\Base_Datos.xlsx"
+$nombreHojaFinal = "Consolidado"
+
+# === ARRANQUE ===
+Add-Type -AssemblyName Microsoft.Office.Interop.Excel
+$excel = New-Object -ComObject Excel.Application
+$excel.Visible = $false
+$excel.DisplayAlerts = $false
+
+$wbFinal = $excel.Workbooks.Add()
+$wsFinal = $wbFinal.Sheets.Item(1)
+$wsFinal.Name = $nombreHojaFinal
+$filaDestino = 1
+
+$archivos = Get-ChildItem -Path $carpetaOrigen -Filter *.xls* -File -Recurse
+$total = $archivos.Count
+$contador = 0
+Write-Host "📂 Procesando $total archivos..."
+
+foreach ($archivo in $archivos) {
+    $contador++
+    Write-Host ("[{0}/{1}] {2}" -f $contador, $total, $archivo.Name)
+
+    try {
+        $wb = $excel.Workbooks.Open($archivo.FullName, $false, $true)
+        $hoja = $null
+
+        # Buscar hoja que coincida con "Análisis Conceptos"
+        foreach ($h in $wb.Sheets) {
+            if ($h.Name -match '(?i)an[aá]lisis\s*conceptos?') {
+                $hoja = $h
+                break
+            }
+        }
+
+        if ($hoja -eq $null) {
+            Write-Host "⚠️ Hoja no encontrada en $($archivo.Name)"
+            $wb.Close($false)
+            continue
+        }
+
+        # Detectar última fila/columna
+        $ultimaCelda = $hoja.Cells.Find("*")
+        if ($ultimaCelda -eq $null) {
+            Write-Host "⚠️ Hoja vacía en $($archivo.Name)"
+            $wb.Close($false)
+            continue
+        }
+        $ultimaFila = $ultimaCelda.Row
+        $ultimaCol = $hoja.Cells.Find("*", $null, $null, $null, 2, 2).Column
+
+        # Buscar fila de inicio (por encabezados)
+        $filaInicio = 1
+        for ($i = 1; $i -le [Math]::Min(10, $ultimaFila); $i++) {
+            $textoFila = ($hoja.Range("A$i:X$i").Text -join " ") -replace '\s+', ' '
+            if ($textoFila -match '(?i)(c[oó]digo\s*adp|utilizar\s*cliente|c[oó]digo\s*cliente)') {
+                $filaInicio = $i
+                break
+            }
+        }
+
+        # === MODO RÁPIDO (Value2) ===
+        $rango = $hoja.Range($hoja.Cells.Item($filaInicio, 1), $hoja.Cells.Item($ultimaFila, $ultimaCol))
+        $valores = $null
+        $fastOk = $true
+        try {
+            $valores = $rango.Value2
+            if ($valores -ne $null -and -not ($valores -is [Object[,]))) {
+                $tmp = New-Object 'object[,]' 1,1
+                $tmp[0,0] = $valores
+                $valores = $tmp
+            }
+        } catch {
+            $fastOk = $false
+        }
+
+        if ($fastOk -and $valores -ne $null) {
+            $rows = $valores.GetLength(0)
+            $cols = $valores.GetLength(1)
+            for ($r=0; $r -lt $rows; $r++) {
+                $todoVacio = $true
+                $vline = @()
+                for ($c=0; $c -lt $cols; $c++) {
+                    $v = $valores[$r,$c]
+                    if ($v -ne $null -and "$v".Trim().Length -gt 0) { $todoVacio = $false }
+                    $vline += $v
+                }
+                if ($todoVacio) { continue }
+
+                $colDest = 2  # siempre desde columna B
+                foreach ($cel in $vline) {
+                    $wsFinal.Cells.Item($filaDestino, $colDest) = $cel
+                    $colDest++
+                }
+                $wsFinal.Cells.Item($filaDestino, $colDest) = $archivo.Name
+                $filaDestino++
+            }
+        }
+        else {
+            # === MODO SEGURO (lento pero infalible) ===
+            Write-Host "⚠️ Modo seguro en $($archivo.Name)"
+            try {
+                for ($r=$filaInicio; $r -le $ultimaFila; $r++) {
+                    $filaVacia = $true
+                    for ($c=1; $c -le $ultimaCol; $c++) {
+                        $txt = $hoja.Cells.Item($r,$c).Text
+                        if (-not [string]::IsNullOrWhiteSpace($txt)) { $filaVacia = $false; break }
+                    }
+                    if ($filaVacia) { continue }
+
+                    $colDest = 2
+                    for ($c=1; $c -le $ultimaCol; $c++) {
+                        $wsFinal.Cells.Item($filaDestino, $colDest) = $hoja.Cells.Item($r,$c).Text
+                        $colDest++
+                    }
+                    $wsFinal.Cells.Item($filaDestino, $colDest) = $archivo.Name
+                    $filaDestino++
+                }
+            } catch {
+                Write-Host "❌ Modo seguro también falló en $($archivo.Name): $($_.Exception.Message)"
+            }
+        }
+
+        $wb.Close($false)
+    }
+    catch {
+        Write-Host "❌ Error procesando $($archivo.Name): $($_.Exception.Message)"
+        try { $wb.Close($false) } catch {}
+    }
+}
+
+# === ELIMINAR DUPLICADOS + FILTRO ===
 try {
-    $valores = $rango.Value2
-    # Normaliza a 2D: si es celda única, lo convierto en matriz 1x1
-    if ($valores -ne $null -and -not ($valores -is [Object[,]))) {
-        $tmp = New-Object 'object[,]' 1,1
-        $tmp[0,0] = $valores
-        $valores = $tmp
+    $ultimaCeldaFinal = $wsFinal.Cells.Find("*")
+    if ($ultimaCeldaFinal -ne $null) {
+        $ultimaFilaFinal = $ultimaCeldaFinal.Row
+        $ultimaColFinal = $wsFinal.Cells.Find("*", $null, $null, $null, 2, 2).Column
+        $rangoFinal = $wsFinal.Range($wsFinal.Cells.Item(1,1), $wsFinal.Cells.Item($ultimaFilaFinal, $ultimaColFinal))
+        $rangoFinal.RemoveDuplicates(1..$ultimaColFinal, 1) | Out-Null
+        $rangoFinal.Rows.Item(1).AutoFilter()
+        $excel.ActiveWindow.SplitRow = 1
+        $excel.ActiveWindow.FreezePanes = $true
     }
 } catch {
-    $fastOk = $false
+    Write-Host "⚠️ No se pudieron eliminar duplicados o aplicar filtros: $($_.Exception.Message)"
 }
 
-if ($fastOk -and $valores -ne $null) {
-    # --- VOLCADO (rápido) ---
-    $rows = $valores.GetLength(0)
-    $cols = $valores.GetLength(1)
-    for ($r=0; $r -lt $rows; $r++) {
-        # salta filas completamente vacías
-        $vline = @()
-        $todoVacio = $true
-        for ($c=0; $c -lt $cols; $c++) {
-            $v = $valores[$r,$c]
-            if ($v -ne $null -and "$v".Trim().Length -gt 0) { $todoVacio = $false }
-            $vline += $v
-        }
-        if ($todoVacio) { continue }
-
-        $colDest = 2  # siempre desde columna B
-        foreach ($cel in $vline) {
-            $wsFinal.Cells.Item($filaDestino, $colDest) = $cel
-            $colDest++
-        }
-        # ArchivoOrigen al final
-        $wsFinal.Cells.Item($filaDestino, $colDest) = $archivo.Name
-        $filaDestino++
-    }
+# === GUARDAR Y CERRAR ===
+Start-Sleep -Seconds 2
+try {
+    $wbFinal.SaveAs($ficheroSalida)
+    Write-Host "✅ Consolidado generado correctamente en:"
+    Write-Host "   $ficheroSalida"
+} catch {
+    Write-Host "⚠️ Error al guardar archivo final: $($_.Exception.Message)"
 }
-else {
-    # === MODO SEGURO (lento, pero incluye TODO) ===
-    try {
-        for ($r=$filaInicio; $r -le $ultimaFila; $r++) {
-            # Comprueba si la fila está vacía
-            $filaVacia = $true
-            for ($c=1; $c -le $ultimaCol; $c++) {
-                $txt = $hoja.Cells.Item($r,$c).Text
-                if (-not [string]::IsNullOrWhiteSpace($txt)) { $filaVacia = $false; break }
-            }
-            if ($filaVacia) { continue }
+try { $wbFinal.Close($true) } catch {}
+try { $excel.Quit() } catch {}
 
-            # Vuelca celda a celda usando .Text
-            $colDest = 2  # empezar en B
-            for ($c=1; $c -le $ultimaCol; $c++) {
-                $wsFinal.Cells.Item($filaDestino, $colDest) = $hoja.Cells.Item($r,$c).Text
-                $colDest++
-            }
-            # ArchivoOrigen
-            $wsFinal.Cells.Item($filaDestino, $colDest) = $archivo.Name
-            $filaDestino++
-        }
-    } catch {
-        Write-Host "⚠️ Modo seguro también falló en $($archivo.Name): $($_.Exception.Message)"
-    }
-}
+Write-Host "🏁 Proceso completado, todos los Excels incluidos."
