@@ -1,12 +1,12 @@
 # ============================================
-# Fusionar hojas "Análisis Conceptos" manteniendo formato
+# Fusionar hojas "Análisis Conceptos" (formato + nombre de archivo + sin duplicados)
 # ============================================
 
 # === CONFIGURACIÓN ===
-$carpetaOrigen   = "C:\Ruta\A\TusExcels"           # <-- cambia esta ruta
+$carpetaOrigen   = "C:\Ruta\A\TusExcels"              # <-- cambia esta ruta
 $ficheroSalida   = "C:\Users\Javier\Pruebas\Base_Datos.xlsx"
-$columnaFiltro   = 4                                # Columna D (para excluir)
-$valoresExcluidos = @("XXXX", "ZZZZZ")              # Valores a excluir
+$columnaFiltro   = 4                                   # Columna D (para excluir valores)
+$valoresExcluidos = @("XXXX", "ZZZZZ")                 # Valores a excluir
 $nombreHojaFinal = "Consolidado"
 
 # === ARRANQUE ===
@@ -20,6 +20,7 @@ $wsFinal = $wbFinal.Sheets.Item(1)
 $wsFinal.Name = $nombreHojaFinal
 $filaDestino = 1
 
+# === LISTA DE ARCHIVOS ===
 $archivos = Get-ChildItem -Path $carpetaOrigen -Filter *.xls* -File -Recurse
 Write-Host "📂 Procesando $($archivos.Count) archivos..."
 
@@ -28,7 +29,7 @@ foreach ($archivo in $archivos) {
         $wb = $excel.Workbooks.Open($archivo.FullName, $false, $true)
         $hoja = $null
 
-        # Buscar hoja tipo "Análisis Conceptos"
+        # Buscar hoja que coincida con "Análisis Conceptos" (con variaciones)
         foreach ($h in $wb.Sheets) {
             if ($h.Name -match '(?i)an[aá]lisis\s*conceptos?') {
                 $hoja = $h
@@ -37,8 +38,7 @@ foreach ($archivo in $archivos) {
         }
 
         if ($hoja -ne $null) {
-            # Buscar fila de inicio detectando encabezados conocidos
-            $filaInicio = $null
+            # Detectar última fila/columna con datos
             $ultimaFila = $hoja.Cells.Find("*", $hoja.Cells.Item(1,1),
                 [Type]::Missing, [Type]::Missing, 1, 2, $false,
                 [Type]::Missing, [Type]::Missing).Row
@@ -46,6 +46,8 @@ foreach ($archivo in $archivos) {
                 [Type]::Missing, [Type]::Missing, 2, 2, $false,
                 [Type]::Missing, [Type]::Missing).Column
 
+            # Detectar fila de inicio (encabezados)
+            $filaInicio = 1
             for ($i = 1; $i -le [Math]::Min(10, $ultimaFila); $i++) {
                 $textoFila = ($hoja.Range("A$i:X$i").Text -join " ") -replace '\s+', ' '
                 if ($textoFila -match '(?i)(c[oó]digo\s*adp|utilizar\s*cliente|c[oó]digo\s*cliente)') {
@@ -53,19 +55,17 @@ foreach ($archivo in $archivos) {
                     break
                 }
             }
-            if (-not $filaInicio) { $filaInicio = 1 }
 
+            # Rango de datos reales
             $rangoOrigen = $hoja.Range($hoja.Cells.Item($filaInicio, 1), $hoja.Cells.Item($ultimaFila, $ultimaCol))
 
-            # Copiar con formato completo
+            # Copiar con formato
             $rangoOrigen.Copy()
-
-            # Pegar en el consolidado
             $destino = $wsFinal.Cells.Item($filaDestino, 1)
             $wsFinal.Paste($destino)
-            $excel.CutCopyMode = $false
+            try { [void]$excel.Range("A1").Select() } catch {}  # limpia modo copiar
 
-            # Añadir nombre del archivo en la siguiente columna vacía
+            # Añadir nombre de archivo en la siguiente columna
             $colArchivo = $ultimaCol + 1
             $wsFinal.Cells.Item($filaDestino, $colArchivo) = "ArchivoOrigen"
             $filasPegadas = $rangoOrigen.Rows.Count
@@ -73,6 +73,7 @@ foreach ($archivo in $archivos) {
                 $wsFinal.Cells.Item($filaDestino + $i - 1, $colArchivo) = $archivo.Name
             }
 
+            # Avanzar posición de pegado
             $filaDestino += $filasPegadas + 1
         }
 
@@ -82,7 +83,22 @@ foreach ($archivo in $archivos) {
     }
 }
 
-# === Guardar y cerrar ===
+# === ELIMINAR DUPLICADOS ===
+try {
+    $ultimaFilaFinal = $wsFinal.Cells.Find("*", $wsFinal.Cells.Item(1,1),
+        [Type]::Missing, [Type]::Missing, 1, 2, $false,
+        [Type]::Missing, [Type]::Missing).Row
+    $ultimaColFinal = $wsFinal.Cells.Find("*", $wsFinal.Cells.Item(1,1),
+        [Type]::Missing, [Type]::Missing, 2, 2, $false,
+        [Type]::Missing, [Type]::Missing).Column
+
+    $rangoFinal = $wsFinal.Range($wsFinal.Cells.Item(1,1), $wsFinal.Cells.Item($ultimaFilaFinal, $ultimaColFinal))
+    $rangoFinal.RemoveDuplicates(1..$ultimaColFinal, 1) | Out-Null
+} catch {
+    Write-Host "⚠️ No se pudo eliminar duplicados: $_"
+}
+
+# === GUARDAR Y CERRAR ===
 $wbFinal.SaveAs($ficheroSalida)
 $wbFinal.Close($true)
 $excel.Quit()
