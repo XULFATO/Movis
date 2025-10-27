@@ -1,117 +1,78 @@
 # ==========================================================
-# FUSIONAR "ANÁLISIS CONCEPTOS" CON FORMATO (ROBUSTO)
+# ELIMINAR TODAS LAS HOJAS SALVO "ANÁLISIS CONCEPTOS" (con variaciones)
 # ==========================================================
 
 # === CONFIGURACIÓN ===
-$carpetaOrigen = "C:\Ruta\A\TusExcels"               # <-- CAMBIA
-$ficheroSalida = "C:\Users\Javier\Pruebas\Base_Datos.xlsx"
-$nombreHojaFinal = "Consolidado"
-$regexHoja = '(?i)an[aá]lisis\s*conceptos?'          # admite tilde y singular/plural
-$excluirColD = @("XXXX","ZZZZZ")                     # valores a excluir en col D (origen)
+$carpetaOrigen = "C:\Ruta\A\TusExcels"      # <-- CAMBIA ESTA RUTA
+$regexHoja = '(?i)^an[aá]lisis\s*conceptos?$'   # admite tilde/no tilde y singular/plural
+$backupCarpeta = "$carpetaOrigen\_backup"
 
-# === UTILIDADES ===
-function Get-ColLetter([int]$n){
-    $s=""; while($n -gt 0){ $n--; $s=[char](65+($n%26))+$s; $n=[math]::Floor($n/26) } ; return $s
+# === OPCIONAL: Crear copia de seguridad ===
+if (-not (Test-Path $backupCarpeta)) {
+    Write-Host "Creando carpeta de backup en $backupCarpeta" -ForegroundColor Cyan
+    New-Item -ItemType Directory -Path $backupCarpeta | Out-Null
 }
 
-# === ARRANQUE EXCEL ===
+# === ARRANQUE DE EXCEL ===
 Add-Type -AssemblyName Microsoft.Office.Interop.Excel
 $excel = New-Object -ComObject Excel.Application
 $excel.Visible = $false
 $excel.DisplayAlerts = $false
 
-$wbOut = $excel.Workbooks.Add()
-$wsOut = $wbOut.Sheets.Item(1)
-$wsOut.Name = $nombreHojaFinal
-$filaDestino = 1
-
 $archivos = Get-ChildItem -Path $carpetaOrigen -Filter *.xls* -File -Recurse | Where-Object { $_.Name -notmatch '^~\$' }
-Write-Host "Procesando $($archivos.Count) archivos..."
 
-foreach($archivo in $archivos){
-  try{
-    $wb = $excel.Workbooks.Open($archivo.FullName, $false, $true)
-    # Buscar hoja válida
-    $ws = $null
-    foreach($h in $wb.Sheets){ if($h.Name -match $regexHoja){ $ws=$h; break } }
-    if(-not $ws){ $wb.Close($false); continue }
+Write-Host "`nProcesando $($archivos.Count) archivos Excel..." -ForegroundColor Cyan
 
-    # Rango usado REAL (corrige comienzos en fila/col no-1)
-    $ur = $ws.UsedRange
-    if(-not $ur -or $ur.Rows.Count -eq 0){ $wb.Close($false); continue }
-    $iniFila = $ur.Row
-    $iniCol  = $ur.Column
-    $ultFila = $iniFila + $ur.Rows.Count - 1
-    $ultCol  = $iniCol + $ur.Columns.Count - 1
+foreach ($archivo in $archivos) {
+    Write-Host "📄 $($archivo.Name)" -ForegroundColor Yellow
+    try {
+        # Copia de seguridad (solo la primera vez o si no existe)
+        $destinoBackup = Join-Path $backupCarpeta $archivo.Name
+        if (-not (Test-Path $destinoBackup)) {
+            Copy-Item $archivo.FullName -Destination $destinoBackup -Force
+        }
 
-    # Detectar FILA DE CABECERA (primeras 10 filas del rango usado)
-    $filaCab = $iniFila
-    $scanHasta = [Math]::Min($iniFila+9, $ultFila)
-    $letraUlt = Get-ColLetter $ultCol
-    for($r=$iniFila; $r -le $scanHasta; $r++){
-      $txt = ($ws.Range("$([Get-ColLetter $iniCol])$r:$letraUlt$r").Text -join " ") -replace '\s+',' '
-      if($txt -match '(?i)(c[oó]digo\s*adp|utilizar\s*cliente|c[oó]digo\s*cliente)'){ $filaCab = $r; break }
+        $wb = $excel.Workbooks.Open($archivo.FullName, $false, $false)
+        $hojas = @($wb.Sheets)
+        $hojaPrincipal = $null
+
+        # Buscar la hoja válida
+        foreach ($h in $hojas) {
+            if ($h.Name -match $regexHoja) {
+                $hojaPrincipal = $h
+                break
+            }
+        }
+
+        if ($hojaPrincipal -eq $null) {
+            Write-Host "   ⚠ No se encontró ninguna hoja 'Análisis Conceptos'" -ForegroundColor Red
+            $wb.Close($false)
+            continue
+        }
+
+        # Borrar todas las demás hojas
+        foreach ($h in $hojas) {
+            if ($h.Name -ne $hojaPrincipal.Name) {
+                try {
+                    $h.Delete()
+                } catch {
+                    Write-Host "   ⚠ No se pudo eliminar hoja '$($h.Name)': $($_.Exception.Message)" -ForegroundColor DarkYellow
+                }
+            }
+        }
+
+        # Guardar cambios
+        $wb.Save()
+        $wb.Close($false)
+        Write-Host "   ✅ Solo se dejó la hoja '$($hojaPrincipal.Name)'" -ForegroundColor Green
     }
-
-    # Rango de datos desde cabecera hasta el final
-    $rango = $ws.Range($ws.Cells.Item($filaCab,$iniCol), $ws.Cells.Item($ultFila,$ultCol))
-
-    # --- PEGAR CON FORMATO siempre comenzando en COLUMNA B (A vacía) ---
-    $destino = $wsOut.Cells.Item($filaDestino, 2)   # columna B
-    # Copy(Destination) evita problemas de CutCopyMode/clipboard
-    $rango.Copy($destino)
-
-    # Medidas pegadas
-    $filasPeg = $rango.Rows.Count
-    $colsPeg  = $rango.Columns.Count
-
-    # Añadir columna ArchivoOrigen (una a la derecha del bloque pegado)
-    $colArchivoOut = 2 + $colsPeg
-    $wsOut.Cells.Item($filaDestino, $colArchivoOut) = "ArchivoOrigen"
-    for($rr=$filaDestino+1; $rr -le $filaDestino+$filasPeg-1; $rr++){
-      $wsOut.Cells.Item($rr, $colArchivoOut) = $archivo.Name
+    catch {
+        Write-Host "   ❌ Error en $($archivo.Name): $($_.Exception.Message)" -ForegroundColor Red
+        try { $wb.Close($false) } catch {}
     }
-
-    # --- ELIMINAR FILAS con D = XXXX/ZZZZZ (D del ORIGEN mapea a columna B+(4-1)=5) ---
-    $colDOut = 2 + (4 - 1)  # = 5 (columna E) respecto a hoja de salida
-    for($rr=$filaDestino+$filasPeg-1; $rr -ge $filaDestino+1; $rr--){
-      $val = $wsOut.Cells.Item($rr, $colDOut).Text
-      if($excluirColD -contains $val){ $wsOut.Rows.Item($rr).Delete() | Out-Null }
-    }
-
-    # Dejar un hueco de una fila entre bloques
-    $filaDestino = ($wsOut.Cells.Find("*")).Row + 2
-
-    $wb.Close($false)
-  } catch {
-    try{ $wb.Close($false) }catch{}
-    Write-Host "Error en $($archivo.Name): $($_.Exception.Message)"
-  }
 }
 
-# --- ELIMINAR DUPLICADOS + AUTOFILTRO + BLOQUEO FILA 1 ---
-try{
-  $endCell = $wsOut.Cells.Find("*")
-  if($endCell){
-    $ultFilaOut = $endCell.Row
-    $ultColOut  = $wsOut.Cells.Find("*",$null,$null,$null,2,2).Column
-    $rngOut = $wsOut.Range($wsOut.Cells.Item(1,1), $wsOut.Cells.Item($ultFilaOut,$ultColOut))
-    $rngOut.RemoveDuplicates( (1..$ultColOut), 1 ) | Out-Null
-    $rngOut.Rows.Item(1).AutoFilter()
-    $excel.ActiveWindow.SplitRow = 1
-    $excel.ActiveWindow.FreezePanes = $true
-  }
-}catch{
-  Write-Host "Aviso al consolidar: $($_.Exception.Message)"
-}
-
-# Guardar y cerrar
-try{
-  $wbOut.SaveAs($ficheroSalida, 51)   # 51 = .xlsx
-  Write-Host "OK -> $ficheroSalida"
-}catch{
-  Write-Host "Error al guardar: $($_.Exception.Message)"
-}
-try{ $wbOut.Close($true) }catch{}
-try{ $excel.Quit() }catch{}
+$excel.Quit()
 [System.GC]::Collect(); [System.GC]::WaitForPendingFinalizers()
+
+Write-Host "`n🏁 Proceso completado. Copias de seguridad en $backupCarpeta" -ForegroundColor Cyan
