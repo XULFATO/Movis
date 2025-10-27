@@ -1,140 +1,131 @@
-# ==========================================================
-# FUSIONAR "ANÁLISIS CONCEPTOS"  –  versión robusta y limpia
-# ==========================================================
+# Script para consolidar pestañas "análisis conceptos" de múltiples archivos Excel
+# Requiere el módulo ImportExcel: Install-Module -Name ImportExcel -Scope CurrentUser
 
-# --- CONFIGURACIÓN ---
-$carpetaOrigen   = "C:\Ruta\A\TusExcels"              # <-- cambia esta ruta
-$ficheroSalida   = "C:\Users\Javier\Pruebas\Base_Datos.xlsx"
-$nombreHojaFinal = "Consolidado"
+# ============= CONFIGURACIÓN =============
+$carpetaOrigen = "C:\Ruta\A\Tus\Excels"  # Cambia esta ruta
+$archivoDestino = "C:\Ruta\Destino\Consolidado.xlsx"  # Cambia esta ruta
+$nombrePestana = "análisis conceptos"
+$textoBusqueda = "utilizada Cliente"
+$columnaFinal = "convenios afectados"
+# =========================================
 
-# --- ARRANQUE ---
-Add-Type -AssemblyName Microsoft.Office.Interop.Excel
-$excel     = New-Object -ComObject Excel.Application
-$excel.Visible       = $false
-$excel.DisplayAlerts = $false
+# Verificar si el módulo ImportExcel está instalado
+if (-not (Get-Module -ListAvailable -Name ImportExcel)) {
+    Write-Host "ERROR: El módulo ImportExcel no está instalado." -ForegroundColor Red
+    Write-Host "Ejecuta: Install-Module -Name ImportExcel -Scope CurrentUser" -ForegroundColor Yellow
+    exit
+}
 
-$wbFinal  = $excel.Workbooks.Add()
-$wsFinal  = $wbFinal.Sheets.Item(1)
-$wsFinal.Name = $nombreHojaFinal
-$filaDestino  = 1
+Import-Module ImportExcel
 
-$archivos = Get-ChildItem -Path $carpetaOrigen -Filter *.xls* -File -Recurse
-$total = $archivos.Count
-Write-Host "📂 Procesando $total archivos..."
+# Array para almacenar todos los datos consolidados
+$datosConsolidados = @()
+$contadorArchivos = 0
+$contadorExitosos = 0
 
-foreach ($archivo in $archivos) {
+# Obtener todos los archivos Excel
+$archivosExcel = Get-ChildItem -Path $carpetaOrigen -Filter *.xlsx -Recurse | Where-Object { $_.Name -notlike "~$*" }
+
+Write-Host "Encontrados $($archivosExcel.Count) archivos Excel en la carpeta" -ForegroundColor Cyan
+Write-Host "Procesando archivos..." -ForegroundColor Cyan
+
+foreach ($archivo in $archivosExcel) {
+    $contadorArchivos++
+    Write-Host "`n[$contadorArchivos/$($archivosExcel.Count)] Procesando: $($archivo.Name)" -ForegroundColor Yellow
+    
     try {
-        $wb = $excel.Workbooks.Open($archivo.FullName, $false, $true)
-        $hoja = $null
-        foreach ($h in $wb.Sheets) {
-            if ($h.Name -match '(?i)an[aá]lisis\s*conceptos?') { $hoja = $h; break }
-        }
-
-        if ($hoja -eq $null) {
-            Write-Host "⚠️ Hoja no encontrada en $($archivo.Name)"
-            $wb.Close($false)
-            continue
-        }
-
-        # --- Rango usado (sin errores COM) ---
-        $used = $hoja.UsedRange
-        if ($used -eq $null -or $used.Rows.Count -eq 0) {
-            Write-Host "⚠️ Hoja vacía en $($archivo.Name)"
-            $wb.Close($false)
-            continue
-        }
-
-        $ultimaFila = $used.Rows.Count
-        $ultimaCol  = $used.Columns.Count
-
-        # --- Buscar fila de encabezado ---
-        $filaInicio = 1
-        for ($i=1; $i -le [Math]::Min(10,$ultimaFila); $i++) {
-            $texto = ($hoja.Range("A$i:X$i").Text -join " ") -replace '\s+',' '
-            if ($texto -match '(?i)(c[oó]digo\s*adp|utilizar\s*cliente|c[oó]digo\s*cliente)') { 
-                $filaInicio = $i; break 
+        # Obtener las pestañas del archivo
+        $pestanas = Get-ExcelSheetInfo -Path $archivo.FullName
+        
+        # Buscar la pestaña "análisis conceptos"
+        $pestanaObjetivo = $pestanas | Where-Object { $_.Name -like "*$nombrePestana*" }
+        
+        if ($pestanaObjetivo) {
+            Write-Host "  ✓ Pestaña '$nombrePestana' encontrada" -ForegroundColor Green
+            
+            # Leer toda la hoja
+            $datos = Import-Excel -Path $archivo.FullName -WorksheetName $pestanaObjetivo.Name -DataOnly
+            
+            if ($datos.Count -eq 0) {
+                Write-Host "  ✗ La pestaña está vacía" -ForegroundColor Red
+                continue
             }
-        }
-
-        # --- Leer todos los valores ---
-        $rango = $hoja.Range($hoja.Cells.Item($filaInicio,1),$hoja.Cells.Item($ultimaFila,$ultimaCol))
-        $valores = $null
-        try { $valores = $rango.Value2 } catch { $valores = $null }
-
-        if ($valores -eq $null) {
-            Write-Host "⚠️ Modo seguro en $($archivo.Name)"
-            for ($r=$filaInicio; $r -le $ultimaFila; $r++) {
-                $vacia = $true
-                for ($c=1; $c -le $ultimaCol; $c++) {
-                    $txt = $hoja.Cells.Item($r,$c).Text
-                    if (-not [string]::IsNullOrWhiteSpace($txt)) { $vacia=$false; break }
+            
+            # Buscar la fila que contiene "utilizada Cliente"
+            $filaInicio = $null
+            $columnaInicio = $null
+            
+            # Obtener las propiedades (columnas) del primer objeto
+            $columnas = $datos[0].PSObject.Properties.Name
+            
+            # Buscar en qué fila y columna está "utilizada Cliente"
+            for ($i = 0; $i -lt $datos.Count; $i++) {
+                foreach ($col in $columnas) {
+                    if ($datos[$i].$col -like "*$textoBusqueda*") {
+                        $filaInicio = $i
+                        $columnaInicio = $col
+                        break
+                    }
                 }
-                if ($vacia) { continue }
-
-                $colDest=2
-                for ($c=1; $c -le $ultimaCol; $c++) {
-                    $wsFinal.Cells.Item($filaDestino,$colDest) = $hoja.Cells.Item($r,$c).Text
-                    $colDest++
-                }
-                $wsFinal.Cells.Item($filaDestino,$colDest) = $archivo.Name
-                $filaDestino++
+                if ($filaInicio -ne $null) { break }
             }
-        }
-        else {
-            # --- Escribir valores rápidos ---
-            $rows=$valores.GetLength(0)
-            $cols=$valores.GetLength(1)
-            for ($r=0; $r -lt $rows; $r++) {
-                $todoVacio=$true
-                for ($c=0; $c -lt $cols; $c++) {
-                    $v=$valores[$r,$c]
-                    if ($v -ne $null -and "$v".Trim().Length -gt 0) { $todoVacio=$false; break }
-                }
-                if ($todoVacio) { continue }
-
-                $colDest=2
-                for ($c=0; $c -lt $cols; $c++) {
-                    $wsFinal.Cells.Item($filaDestino,$colDest) = $valores[$r,$c]
-                    $colDest++
-                }
-                $wsFinal.Cells.Item($filaDestino,$colDest) = $archivo.Name
-                $filaDestino++
+            
+            if ($filaInicio -eq $null) {
+                Write-Host "  ✗ No se encontró '$textoBusqueda' en la pestaña" -ForegroundColor Red
+                continue
             }
+            
+            Write-Host "  ✓ Encabezado encontrado en fila $($filaInicio + 1)" -ForegroundColor Green
+            
+            # Extraer datos desde la fila del encabezado hasta el final
+            $datosExtraidos = $datos[$filaInicio..($datos.Count - 1)]
+            
+            # Añadir columna con el nombre del archivo
+            foreach ($fila in $datosExtraidos) {
+                $fila | Add-Member -NotePropertyName "Archivo_Origen" -NotePropertyValue $archivo.Name -Force
+            }
+            
+            # Añadir al array consolidado
+            $datosConsolidados += $datosExtraidos
+            $contadorExitosos++
+            
+            Write-Host "  ✓ Extraídas $($datosExtraidos.Count) filas (incluyendo encabezado)" -ForegroundColor Green
+            
+        } else {
+            Write-Host "  ✗ No tiene la pestaña '$nombrePestana'" -ForegroundColor Gray
         }
-
-        $wb.Close($false)
-    }
-    catch {
-        Write-Host "❌ Error procesando $($archivo.Name): $($_.Exception.Message)"
-        try { $wb.Close($false) } catch {}
+        
+    } catch {
+        Write-Host "  ✗ Error al procesar: $($_.Exception.Message)" -ForegroundColor Red
     }
 }
 
-# --- ELIMINAR DUPLICADOS Y FILTRO ---
-try {
-    $ultimaCelda = $wsFinal.Cells.Find("*")
-    if ($ultimaCelda -ne $null) {
-        $ultimaFila = $ultimaCelda.Row
-        $ultimaCol  = $wsFinal.Cells.Find("*",$null,$null,$null,2,2).Column
-        $rangoFin   = $wsFinal.Range($wsFinal.Cells.Item(1,1),$wsFinal.Cells.Item($ultimaFila,$ultimaCol))
-        $rangoFin.RemoveDuplicates(1..$ultimaCol,1) | Out-Null
-        $rangoFin.Rows.Item(1).AutoFilter()
-        $excel.ActiveWindow.SplitRow = 1
-        $excel.ActiveWindow.FreezePanes = $true
+# Exportar datos consolidados
+if ($datosConsolidados.Count -gt 0) {
+    Write-Host "`n========================================" -ForegroundColor Cyan
+    Write-Host "Generando archivo consolidado..." -ForegroundColor Cyan
+    
+    try {
+        # Eliminar archivo destino si existe
+        if (Test-Path $archivoDestino) {
+            Remove-Item $archivoDestino -Force
+        }
+        
+        # Exportar a Excel
+        $datosConsolidados | Export-Excel -Path $archivoDestino -WorksheetName "Consolidado" -AutoSize -FreezeTopRow -BoldTopRow
+        
+        Write-Host "✓ Archivo consolidado creado exitosamente" -ForegroundColor Green
+        Write-Host "  Ubicación: $archivoDestino" -ForegroundColor White
+        Write-Host "  Total de filas: $($datosConsolidados.Count)" -ForegroundColor White
+        Write-Host "  Archivos procesados exitosamente: $contadorExitosos de $contadorArchivos" -ForegroundColor White
+        
+    } catch {
+        Write-Host "✗ Error al crear el archivo consolidado: $($_.Exception.Message)" -ForegroundColor Red
     }
-} catch {
-    Write-Host "⚠️ No se pudieron eliminar duplicados o aplicar filtros: $($_.Exception.Message)"
+    
+} else {
+    Write-Host "`n✗ No se encontraron datos para consolidar" -ForegroundColor Red
 }
 
-# --- GUARDAR Y CERRAR ---
-Start-Sleep -Seconds 1
-try {
-    $wbFinal.SaveAs($ficheroSalida)
-    Write-Host "✅ Consolidado generado en: $ficheroSalida"
-} catch {
-    Write-Host "⚠️ Error al guardar archivo final: $($_.Exception.Message)"
-}
-try { $wbFinal.Close($true) } catch {}
-try { $excel.Quit() } catch {}
-
-Write-Host "🏁 Proceso completado. Todos los Excels incluidos correctamente."
+Write-Host "`n========================================" -ForegroundColor Cyan
+Write-Host "Proceso completado" -ForegroundColor Cyan
