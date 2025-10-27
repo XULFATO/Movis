@@ -1,30 +1,34 @@
 # ============================================
-# Fusionar hojas "Análisis Conceptos" en un Excel único
+# Fusionar hojas "Análisis Conceptos" manteniendo formato
 # ============================================
 
 # === CONFIGURACIÓN ===
-$carpetaOrigen   = "C:\Ruta\A\TusExcels"         # <-- cambia esta ruta
+$carpetaOrigen   = "C:\Ruta\A\TusExcels"           # <-- cambia esta ruta
 $ficheroSalida   = "C:\Users\Javier\Pruebas\Base_Datos.xlsx"
-$columnaFiltro   = 4                              # columna D
-$valoresExcluidos = @("XXXX", "ZZZZZ")            # valores a excluir
+$columnaFiltro   = 4                                # Columna D
+$valoresExcluidos = @("XXXX", "ZZZZZ")              # Valores a excluir
 $nombreHojaFinal = "Consolidado"
-$maxFilas = 100000                                # seguridad
 
-# === ARRANQUE ===
+# === INICIO ===
 Add-Type -AssemblyName Microsoft.Office.Interop.Excel
 $excel = New-Object -ComObject Excel.Application
 $excel.Visible = $false
 $excel.DisplayAlerts = $false
 
-$resultados = @()
+$wbFinal = $excel.Workbooks.Add()
+$wsFinal = $wbFinal.Sheets.Item(1)
+$wsFinal.Name = $nombreHojaFinal
+$filaDestino = 1
+
 $archivos = Get-ChildItem -Path $carpetaOrigen -Filter *.xls* -File
 Write-Host "📂 Procesando $($archivos.Count) archivos..."
 
 foreach ($archivo in $archivos) {
     try {
-        $wb = $excel.Workbooks.Open($archivo.FullName)
-        # Buscar hoja válida (Análisis / Analisis, Concepto / Conceptos)
+        $wb = $excel.Workbooks.Open($archivo.FullName, $false, $true)
         $hoja = $null
+
+        # Buscar hoja que coincida con "Análisis Conceptos" (tildes, plural, etc.)
         foreach ($h in $wb.Sheets) {
             if ($h.Name -match '(?i)an[aá]lisis\s*conceptos?') {
                 $hoja = $h
@@ -33,72 +37,50 @@ foreach ($archivo in $archivos) {
         }
 
         if ($hoja -ne $null) {
-            # Calcular rango real de datos
-            $ultimaFila = $hoja.UsedRange.Rows.Count
-            $ultimaCol = $hoja.UsedRange.Columns.Count
-            if ($ultimaFila -gt $maxFilas) { $ultimaFila = $maxFilas }
+            # Detectar última fila y columna con datos
+            $ultimaFila = $hoja.Cells.Find("*", $hoja.Cells.Item(1,1),
+                [Type]::Missing, [Type]::Missing, 1, 2, $false,
+                [Type]::Missing, [Type]::Missing).Row
+            $ultimaCol = $hoja.Cells.Find("*", $hoja.Cells.Item(1,1),
+                [Type]::Missing, [Type]::Missing, 2, 2, $false,
+                [Type]::Missing, [Type]::Missing).Column
 
-            $letraUltCol = [char](64 + $ultimaCol)
-            $rango = $hoja.Range("A1:$letraUltCol$ultimaFila")
-            $valores = $rango.Value2
+            $rangoOrigen = $hoja.Range($hoja.Cells.Item(1,1), $hoja.Cells.Item($ultimaFila, $ultimaCol))
 
-            foreach ($fila in $valores) {
-                if ($fila -eq $null -or ($fila -join '') -eq '') { continue }
+            # Aplicar filtro temporal para excluir valores
+            $hoja.AutoFilterMode = $false
+            $rangoOrigen.AutoFilter(4, "<>XXXX", 7) | Out-Null
+            $rangoOrigen.AutoFilter(4, "<>ZZZZZ", 7) | Out-Null
 
-                $valorFiltro = $fila[$columnaFiltro - 1]
-                if ($valoresExcluidos -contains $valorFiltro) { continue }
+            # Copiar el rango visible (con formato)
+            $rangoVisible = $rangoOrigen.SpecialCells(12) # xlCellTypeVisible = 12
+            $rangoVisible.Copy()
 
-                $filaObj = [ordered]@{}
-                for ($i=0; $i -lt $ultimaCol; $i++) {
-                    $colName = [char](65 + $i)
-                    $filaObj["Col_$colName"] = $fila[$i]
-                }
-                $filaObj["ArchivoOrigen"] = $archivo.Name
-                $resultados += New-Object PSObject -Property $filaObj
+            # Pegar en el consolidado (manteniendo formato)
+            $destino = $wsFinal.Cells.Item($filaDestino, 1)
+            $wsFinal.Paste($destino)
+            $excel.CutCopyMode = $false
+
+            # Añadir nombre de archivo en la siguiente columna vacía
+            $colArchivo = $ultimaCol + 1
+            $wsFinal.Cells.Item($filaDestino, $colArchivo) = "ArchivoOrigen"
+            for ($i = 2; $i -le ($rangoVisible.Rows.Count); $i++) {
+                $wsFinal.Cells.Item($filaDestino + $i - 1, $colArchivo) = $archivo.Name
             }
+
+            # Avanzar fila destino
+            $filaDestino += $rangoVisible.Rows.Count + 1
         }
+
         $wb.Close($false)
     } catch {
-        Write-Host "❌ Error en $($archivo.Name): $_"
+        Write-Host "❌ Error procesando $($archivo.Name): $_"
     }
 }
 
+# === Guardar y cerrar ===
+$wbFinal.SaveAs($ficheroSalida)
+$wbFinal.Close($true)
 $excel.Quit()
 
-# === Eliminar duplicados ===
-if ($resultados.Count -gt 0) {
-    $resultados = $resultados | Sort-Object * -Unique
-}
-
-# === Crear Excel final ===
-Write-Host "📝 Creando Excel final..."
-$excelOut = New-Object -ComObject Excel.Application
-$excelOut.Visible = $false
-$excelOut.DisplayAlerts = $false
-$wbOut = $excelOut.Workbooks.Add()
-$wsOut = $wbOut.Sheets.Item(1)
-$wsOut.Name = $nombreHojaFinal
-
-# Escribir cabeceras
-$headers = $resultados[0].PSObject.Properties.Name
-for ($j=0; $j -lt $headers.Count; $j++) {
-    $wsOut.Cells.Item(1, $j + 1) = $headers[$j]
-}
-
-# Escribir datos
-$row = 2
-foreach ($fila in $resultados) {
-    for ($j=0; $j -lt $headers.Count; $j++) {
-        $valor = $fila.($headers[$j])
-        if ($valor -ne $null) { $wsOut.Cells.Item($row, $j + 1) = $valor }
-    }
-    $row++
-}
-
-$wbOut.SaveAs($ficheroSalida)
-$wbOut.Close($true)
-$excelOut.Quit()
-
-Write-Host "✅ Excel generado correctamente en:"
-Write-Host "   $ficheroSalida"
-Write-Host "📊 Filas exportadas: $($resultados.Count)"
+Write-Host "✅ Consolidado generado en: $ficheroSalida"
