@@ -1,12 +1,10 @@
 # ============================================
-# Fusionar hojas "Análisis Conceptos" (formato + nombre de archivo + sin duplicados)
+# Fusionar hojas "Análisis Conceptos" (formato, nombre archivo, sin duplicados, ajusta columna A)
 # ============================================
 
 # === CONFIGURACIÓN ===
 $carpetaOrigen   = "C:\Ruta\A\TusExcels"              # <-- cambia esta ruta
 $ficheroSalida   = "C:\Users\Javier\Pruebas\Base_Datos.xlsx"
-$columnaFiltro   = 4                                   # Columna D (para excluir valores)
-$valoresExcluidos = @("XXXX", "ZZZZZ")                 # Valores a excluir
 $nombreHojaFinal = "Consolidado"
 
 # === ARRANQUE ===
@@ -20,7 +18,6 @@ $wsFinal = $wbFinal.Sheets.Item(1)
 $wsFinal.Name = $nombreHojaFinal
 $filaDestino = 1
 
-# === LISTA DE ARCHIVOS ===
 $archivos = Get-ChildItem -Path $carpetaOrigen -Filter *.xls* -File -Recurse
 Write-Host "📂 Procesando $($archivos.Count) archivos..."
 
@@ -29,7 +26,7 @@ foreach ($archivo in $archivos) {
         $wb = $excel.Workbooks.Open($archivo.FullName, $false, $true)
         $hoja = $null
 
-        # Buscar hoja que coincida con "Análisis Conceptos" (con variaciones)
+        # Buscar hoja que coincida con "Análisis Conceptos"
         foreach ($h in $wb.Sheets) {
             if ($h.Name -match '(?i)an[aá]lisis\s*conceptos?') {
                 $hoja = $h
@@ -46,7 +43,7 @@ foreach ($archivo in $archivos) {
                 [Type]::Missing, [Type]::Missing, 2, 2, $false,
                 [Type]::Missing, [Type]::Missing).Column
 
-            # Detectar fila de inicio (encabezados)
+            # Detectar fila de inicio (busca encabezados)
             $filaInicio = 1
             for ($i = 1; $i -le [Math]::Min(10, $ultimaFila); $i++) {
                 $textoFila = ($hoja.Range("A$i:X$i").Text -join " ") -replace '\s+', ' '
@@ -56,24 +53,40 @@ foreach ($archivo in $archivos) {
                 }
             }
 
-            # Rango de datos reales
-            $rangoOrigen = $hoja.Range($hoja.Cells.Item($filaInicio, 1), $hoja.Cells.Item($ultimaFila, $ultimaCol))
+            # Detectar si empieza en la columna A o B
+            $colInicio = 1
+            $primeraCelda = $hoja.Cells.Item($filaInicio, 1).Text
+            if ([string]::IsNullOrWhiteSpace($primeraCelda)) {
+                # Si la columna A está vacía y la tabla comienza en B
+                $colInicio = 2
+            }
 
-            # Copiar con formato
+            # Definir rango real
+            $rangoOrigen = $hoja.Range($hoja.Cells.Item($filaInicio, $colInicio),
+                                       $hoja.Cells.Item($ultimaFila, $ultimaCol))
+
+            # Copiar con formato completo
             $rangoOrigen.Copy()
-            $destino = $wsFinal.Cells.Item($filaDestino, 1)
-            $wsFinal.Paste($destino)
-            try { [void]$excel.Range("A1").Select() } catch {}  # limpia modo copiar
 
-            # Añadir nombre de archivo en la siguiente columna
-            $colArchivo = $ultimaCol + 1
+            # Si el origen empieza en A, pegamos en B (columna desplazada)
+            if ($colInicio -eq 1) {
+                $destino = $wsFinal.Cells.Item($filaDestino, 2)   # empieza en columna B
+            } else {
+                $destino = $wsFinal.Cells.Item($filaDestino, 2)   # también B, coherencia total
+            }
+
+            $wsFinal.Paste($destino)
+            try { [void]$excel.Range("A1").Select() } catch {}
+
+            # Añadir nombre de archivo en la siguiente columna disponible
+            $colArchivo = $ultimaCol + 2  # +2 porque todo empieza en B
             $wsFinal.Cells.Item($filaDestino, $colArchivo) = "ArchivoOrigen"
+
             $filasPegadas = $rangoOrigen.Rows.Count
             for ($i = 2; $i -le $filasPegadas; $i++) {
                 $wsFinal.Cells.Item($filaDestino + $i - 1, $colArchivo) = $archivo.Name
             }
 
-            # Avanzar posición de pegado
             $filaDestino += $filasPegadas + 1
         }
 
@@ -103,4 +116,5 @@ $wbFinal.SaveAs($ficheroSalida)
 $wbFinal.Close($true)
 $excel.Quit()
 
-Write-Host "✅ Consolidado generado en: $ficheroSalida"
+Write-Host "✅ Consolidado generado correctamente en:"
+Write-Host "   $ficheroSalida"
