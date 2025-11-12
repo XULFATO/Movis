@@ -1,122 +1,94 @@
-Sub FusionarVR()
-    ' === CONFIGURA AQUÍ ===
-    Dim INPUT_HTML, INPUT_JSON, OUTPUT_HTML
-    INPUT_HTML = "C:\Users\TuUsuario\OneDrive\Automatic Data Processing Inc\Diccionario\TABLAS VR\fusion_total.html"
-    INPUT_JSON = "C:\Users\TuUsuario\OneDrive\Automatic Data Processing Inc\Diccionario\TABLAS VR\2_TIPOS.JSON"
-    OUTPUT_HTML = "C:\Users\TuUsuario\OneDrive\Automatic Data Processing Inc\Diccionario\TABLAS VR\fusion_final.html"
-    ' =======================
+Option Explicit
 
-    Dim fso, html, json, re, m, dict, k
-    Set fso = CreateObject("Scripting.FileSystemObject")
-    html = fso.OpenTextFile(INPUT_HTML, 1).ReadAll
-    json = fso.OpenTextFile(INPUT_JSON, 1).ReadAll
+Sub Comparar_Contabilidad_LRVTOT()
+    Dim wsMapeo As Worksheet, wsDest As Worksheet, wsRes As Worksheet
+    Dim ultFila As Long, i As Long, filaRes As Long
+    Dim valorD As String, valorF As Variant, valorG As Variant
+    Dim hojaLRV As Worksheet, encontrada As Boolean
+    Dim cel As Range, rngBuscar As Range, celBuscada As Range
+    Dim valorN As Variant, diferencia As Variant
+    Dim hojaNombre As String
 
-    Set dict = CreateObject("Scripting.Dictionary")
-    dict.CompareMode = 1
-
-    ' 🧩 REGEX adaptada a tu formato con comillas dobles duplicadas
-    Set re = CreateObject("VBScript.RegExp")
-    re.IgnoreCase = True
-    re.Global = True
-    re.Pattern = "file\""\s*:\s*\""+([^""]+)\""+[^>]*?elemento\""\s*:\s*\""+([^""]+)\""+[^>]*?comentario\""\s*:\s*\""+([^""]+)\""+"
-
-    Dim matches : Set matches = re.Execute(json)
-    WScript.Echo "Comentarios detectados: " & matches.Count
-
-    For Each m In matches
-        Dim fName, elemento, comentario, clave
-        fName = LimpiarTexto(m.SubMatches(0))
-        elemento = LimpiarTexto(m.SubMatches(1))
-        comentario = HtmlDecode(LimpiarTexto(m.SubMatches(2)))
-
-        ' quitar etiquetas raras del nombre
-        fName = Replace(fName, "</p>", "")
-        fName = Replace(fName, "</span>", "")
-        fName = Replace(fName, "x/span>", "")
-        fName = Replace(fName, ">", "")
-        fName = Trim(fName)
-
-        clave = UCase(fName & elemento)
-        If Not dict.Exists(clave) Then dict.Add clave, comentario
-    Next
-
-    ' --- procesar HTML ---
-    Dim reTr, reTd, reTags, fila, matchesTd, outHtml
-    Set reTr = CreateObject("VBScript.RegExp")
-    reTr.Global = True
-    reTr.IgnoreCase = True
-    reTr.Pattern = "<tr[^>]*>([\s\S]*?)</tr>"
-
-    Set reTd = CreateObject("VBScript.RegExp")
-    reTd.Global = True
-    reTd.IgnoreCase = True
-    reTd.Pattern = "<td[^>]*>([\s\S]*?)</td>"
-
-    Set reTags = CreateObject("VBScript.RegExp")
-    reTags.Global = True
-    reTags.IgnoreCase = True
-    reTags.Pattern = "<[^>]+>"
-
-    outHtml = "<!doctype html><html><head><meta charset='utf-8'><title>Fusión</title>" & _
-        "<style>body{font-family:Segoe UI,Arial;margin:20px}th,td{border:1px solid #ccc;padding:4px}</style></head><body>" & _
-        "<h2>Fusión de tablas</h2><table><thead><tr><th>Tabla</th><th>Elemento</th><th>TieneComentario</th><th>Comentario</th></tr></thead><tbody>"
-
-    Dim rows : Set rows = reTr.Execute(html)
-    For Each fila In rows
-        Set matchesTd = reTd.Execute(fila)
-        If matchesTd.Count > 1 Then
-            Dim tabla, elem, clave2, comment, hasHref
-            tabla = Trim(reTags.Replace(matchesTd(0).SubMatches(0), " "))
-            elem = Trim(reTags.Replace(matchesTd(1).SubMatches(0), " "))
-            hasHref = (InStr(1, matchesTd(1).SubMatches(0), "<a ", vbTextCompare) > 0)
-            clave2 = UCase(tabla & elem)
-            If dict.Exists(clave2) Then
-                comment = dict(clave2)
-            Else
-                comment = ""
+    Application.ScreenUpdating = False
+    Application.DisplayAlerts = False
+    
+    '=== Hoja origen ===
+    Set wsMapeo = ThisWorkbook.Sheets("Contabilidad Mapeo")
+    
+    '=== Crear/limpiar hoja de resultados ===
+    On Error Resume Next
+    ThisWorkbook.Sheets("Resultados").Delete
+    On Error GoTo 0
+    Set wsRes = ThisWorkbook.Sheets.Add
+    wsRes.Name = "Resultados"
+    
+    ' Cabecera
+    wsRes.Range("A1:E1").Value = Array("Código (D)", "Valor F (Contab)", "Valor N (LRVTOT)", "Diferencia", "Estado")
+    wsRes.Rows(1).Font.Bold = True
+    filaRes = 2
+    
+    ' Última fila con datos en columna D
+    ultFila = wsMapeo.Cells(wsMapeo.Rows.Count, "D").End(xlUp).Row
+    
+    ' Recorrer filas desde D3 hasta última
+    For i = 3 To ultFila
+        ' Saltar celdas combinadas
+        If wsMapeo.Cells(i, "D").MergeCells = False Then
+            valorD = Trim(wsMapeo.Cells(i, "D").Value)
+            If Len(valorD) > 0 Then
+                valorF = wsMapeo.Cells(i, "F").Value
+                valorG = wsMapeo.Cells(i, "G").Value
+                
+                encontrada = False
+                valorN = ""
+                
+                ' Buscar en hojas que empiecen por LRVTOT
+                For Each hojaLRV In ThisWorkbook.Worksheets
+                    If hojaLRV.Name Like "LRVTOT*" Then
+                        Set rngBuscar = hojaLRV.Columns("A")
+                        Set celBuscada = rngBuscar.Find(What:=valorD, LookIn:=xlValues, LookAt:=xlWhole)
+                        If Not celBuscada Is Nothing Then
+                            valorN = hojaLRV.Cells(celBuscada.Row, "N").Value
+                            encontrada = True
+                            Exit For
+                        End If
+                    End If
+                Next hojaLRV
+                
+                ' Resultado
+                wsRes.Cells(filaRes, "A").Value = valorD
+                wsRes.Cells(filaRes, "B").Value = valorF
+                wsRes.Cells(filaRes, "C").Value = valorN
+                
+                If encontrada Then
+                    If IsNumeric(valorF) And IsNumeric(valorN) Then
+                        diferencia = CDbl(valorF) - CDbl(valorN)
+                        wsRes.Cells(filaRes, "D").Value = diferencia
+                        If Abs(diferencia) < 0.0001 Then
+                            wsRes.Cells(filaRes, "E").Value = "Igual"
+                            wsRes.Rows(filaRes).Interior.Color = RGB(198, 239, 206) ' Verde
+                        Else
+                            wsRes.Cells(filaRes, "E").Value = "Diferente"
+                            wsRes.Rows(filaRes).Interior.Color = RGB(255, 199, 206) ' Rojo
+                        End If
+                    Else
+                        wsRes.Cells(filaRes, "E").Value = "Datos no numéricos"
+                        wsRes.Rows(filaRes).Interior.Color = RGB(255, 235, 156) ' Amarillo
+                    End If
+                Else
+                    wsRes.Cells(filaRes, "E").Value = "No encontrado"
+                    wsRes.Rows(filaRes).Interior.Color = RGB(255, 235, 156) ' Amarillo
+                End If
+                
+                filaRes = filaRes + 1
             End If
-            outHtml = outHtml & "<tr><td>" & tabla & "</td><td>" & elem & "</td><td>" & IIf(hasHref And Len(comment) > 0, "S", "N") & "</td><td>" & comment & "</td></tr>"
         End If
-    Next
-
-    outHtml = outHtml & "</tbody></table></body></html>"
-    Dim tf : Set tf = fso.CreateTextFile(OUTPUT_HTML, True, True)
-    tf.Write outHtml
-    tf.Close
-
-    WScript.Echo "HTML fusionado generado: " & OUTPUT_HTML
+    Next i
+    
+    ' Formato
+    wsRes.Columns("A:E").AutoFit
+    wsRes.Range("D2:D" & filaRes - 1).NumberFormat = "#,##0.00"
+    
+    Application.ScreenUpdating = True
+    MsgBox "Comparación completada. Resultados creados en la hoja 'Resultados'.", vbInformation
 End Sub
-
-
-' ===== Funciones auxiliares =====
-Function LimpiarTexto(s)
-    s = Replace(s, vbCr, " ")
-    s = Replace(s, vbLf, " ")
-    s = Replace(s, "&nbsp;", " ")
-    Do While InStr(s, "  ") > 0
-        s = Replace(s, "  ", " ")
-    Loop
-    LimpiarTexto = Trim(s)
-End Function
-
-Function HtmlDecode(s)
-    s = Replace(s, "&aacute;", "á")
-    s = Replace(s, "&eacute;", "é")
-    s = Replace(s, "&iacute;", "í")
-    s = Replace(s, "&oacute;", "ó")
-    s = Replace(s, "&uacute;", "ú")
-    s = Replace(s, "&ntilde;", "ñ")
-    s = Replace(s, "&#225;", "á")
-    s = Replace(s, "&#233;", "é")
-    s = Replace(s, "&#237;", "í")
-    s = Replace(s, "&#243;", "ó")
-    s = Replace(s, "&#250;", "ú")
-    s = Replace(s, "&#241;", "ñ")
-    HtmlDecode = s
-End Function
-
-Function IIf(cond, vTrue, vFalse)
-    If cond Then IIf = vTrue Else IIf = vFalse
-End Function
-
-Call FusionarVR
