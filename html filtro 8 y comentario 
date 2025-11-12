@@ -1,10 +1,46 @@
 Option Explicit
 
-' ======================================================================
-'  FUNCIONES AUXILIARES
-' ======================================================================
+'======================== UTILIDADES ========================
 
-' Limpia y normaliza códigos de columna D.
+Private Function SheetExists(shName As String, Optional wb As Workbook) As Boolean
+    Dim s As Worksheet
+    If wb Is Nothing Then Set wb = ThisWorkbook
+    On Error Resume Next
+    Set s = wb.Worksheets(shName)
+    SheetExists = Not s Is Nothing
+    On Error GoTo 0
+End Function
+
+' Devuelve una hoja con ese nombre: si existe la limpia, si no existe la crea.
+Private Function GetOrCreateSheet(shName As String, Optional wb As Workbook) As Worksheet
+    If wb Is Nothing Then Set wb = ThisWorkbook
+    Application.DisplayAlerts = False
+    If SheetExists(shName, wb) Then
+        Set GetOrCreateSheet = wb.Worksheets(shName)
+        ' limpiamos sin borrar (evita problemas de memoria/renombrado)
+        GetOrCreateSheet.Cells.Clear
+        GetOrCreateSheet.Visible = xlSheetVisible
+        GetOrCreateSheet.Activate
+    Else
+        ' creamos y nombramos de forma segura (si falla, reintentamos)
+        Set GetOrCreateSheet = wb.Worksheets.Add(After:=wb.Worksheets(wb.Worksheets.Count))
+        On Error Resume Next
+        GetOrCreateSheet.Name = shName
+        If Err.Number <> 0 Then
+            ' plan B: buscar un nombre libre
+            Dim n As Long: n = 2
+            Err.Clear
+            Do
+                GetOrCreateSheet.Name = shName & " (" & n & ")"
+                n = n + 1
+            Loop While Err.Number <> 0
+        End If
+        On Error GoTo 0
+    End If
+    Application.DisplayAlerts = True
+End Function
+
+' Normaliza el código de D: quita apóstrofe, espacios y ceros a la izquierda si es numérico
 Private Function NormalizarCodigo(v As Variant) As String
     Dim s As String
     s = Trim(CStr(v))
@@ -18,7 +54,7 @@ Private Function NormalizarCodigo(v As Variant) As String
     NormalizarCodigo = s
 End Function
 
-' Determina si F está informada con número válido (sin "-", ".", vacío, texto).
+' F válida = numérica; descartamos vacío/espacios, "-" y "."
 Private Function EsFValida(v As Variant) As Boolean
     Dim s As String
     s = Trim(CStr(v))
@@ -27,105 +63,102 @@ Private Function EsFValida(v As Variant) As Boolean
     EsFValida = IsNumeric(s)
 End Function
 
-' Devuelve el título del bloque al que pertenece la fila.
-' SEGURA: nunca entra en bucle infinito.
+' Devuelve el título de bloque (celda combinada superior en D) sin bucle infinito
 Private Function ObtenerTituloBloque(ws As Worksheet, fila As Long) As String
-    Dim cel As Range
-    Set cel = ws.Cells(fila, "D")
-
-    ' Si la celda pertenece a una zona combinada, devolvemos ese título
-    If cel.MergeCells Then
-        ObtenerTituloBloque = cel.MergeArea.Cells(1, 1).Value
-    Else
-        ' Buscamos hacia arriba la última celda combinada
-        Do While fila > 1
-            fila = fila - 1
-            If ws.Cells(fila, "D").MergeCells Then
-                ObtenerTituloBloque = ws.Cells(fila, "D").MergeArea.Cells(1, 1).Value
-                Exit Do
-            End If
-        Loop
-        ' Si no encuentra ninguna celda combinada, devuelve vacío
-        If fila = 1 Then ObtenerTituloBloque = ""
+    Dim f As Long
+    f = fila
+    If ws.Cells(f, "D").MergeCells Then
+        ObtenerTituloBloque = ws.Cells(f, "D").MergeArea.Cells(1, 1).Value
+        Exit Function
     End If
+    Do While f > 1
+        f = f - 1
+        If ws.Cells(f, "D").MergeCells Then
+            ObtenerTituloBloque = ws.Cells(f, "D").MergeArea.Cells(1, 1).Value
+            Exit Function
+        End If
+    Loop
+    ObtenerTituloBloque = "" ' sin título arriba
 End Function
 
-' ======================================================================
-'  MACRO PRINCIPAL (versión segura)
-' ======================================================================
+'======================== MACRO PRINCIPAL ========================
 
-Sub Comparar_Mapeo_LRVTOT_Final_v6()
+Sub Comparar_Mapeo_LRVTOT_SeguroMemoria()
+    Dim wb As Workbook: Set wb = ThisWorkbook
     Dim wsMap As Worksheet, wsRes As Worksheet, wsL As Worksheet
-    Dim dict As Object
-    Dim rngA As Range, cel As Range
-    Dim ultFila As Long, filaR As Long, i As Long
-    Dim codMap As String, valE, valF, valQ, codL As String
-    Dim tituloBloque As String
-
-    Application.ScreenUpdating = False
+    Dim dict As Object ' key=Codigo(A) normalizado, value=Q
+    Dim ultFila As Long, i As Long, filaR As Long
+    Dim codMap As String, valE, valF, valQ
+    Dim titulo As String
+    
+    ' --- proteger memoria / rendimiento ---
+    Dim oldCalc As XlCalculation, oldScr As Boolean, oldEvt As Boolean
+    oldCalc = Application.Calculation: Application.Calculation = xlCalculationManual
+    oldScr = Application.ScreenUpdating: Application.ScreenUpdating = False
+    oldEvt = Application.EnableEvents:   Application.EnableEvents = False
     Application.DisplayAlerts = False
-
-    Set wsMap = ThisWorkbook.Sheets("Contabilidad_mapeo")
-
-    ' Crear hoja de resultados
-    On Error Resume Next
-    ThisWorkbook.Sheets("Resultados").Delete
-    On Error GoTo 0
-    Set wsRes = ThisWorkbook.Sheets.Add
-    wsRes.Name = "Resultados"
-
+    
+    Set wsMap = wb.Worksheets("Contabilidad_mapeo")
+    Set wsRes = GetOrCreateSheet("Resultados", wb) ' << evita el fallo de Name/Delete
+    
     ' Cabecera
-    wsRes.Range("A1:G1").Value = Array( _
-        "Título del bloque (celda combinada D)", _
-        "Código (D) Contabilidad", _
-        "Código LRVTOT/LRUBTOT", _
-        "Valor E (Contabilidad)", _
-        "Valor F (Contabilidad)", _
-        "Valor Q (LRVTOT/LRUBTOT)", _
-        "Resultado (F vs Q)" _
-    )
-    wsRes.Rows(1).Font.Bold = True
+    With wsRes
+        .Range("A1:G1").Value = Array( _
+            "Título del bloque (celda combinada D)", _
+            "Código (D) Contabilidad", _
+            "Código LRVTOT/LRUBTOT", _
+            "Valor E (Contabilidad)", _
+            "Valor F (Contabilidad)", _
+            "Valor Q (LRVTOT/LRUBTOT)", _
+            "Resultado (F vs Q)" _
+        )
+        .Rows(1).Font.Bold = True
+    End With
     filaR = 2
-
-    ' Construir índice de LRVTOT/LRUBTOT
+    
+    ' --- Construir índice LRVTOT/LRUBTOT leyendo en arrays (rápido y con poca memoria) ---
     Set dict = CreateObject("Scripting.Dictionary")
-    For Each wsL In ThisWorkbook.Worksheets
+    Dim lastA As Long, arrA As Variant, arrQ As Variant, r As Long
+    For Each wsL In wb.Worksheets
         If wsL.Name Like "LRVTOT*" Or wsL.Name Like "LRUBTOT*" Then
-            Set rngA = wsL.Range("A1", wsL.Cells(wsL.Rows.Count, "A").End(xlUp))
-            For Each cel In rngA
-                If Len(Trim(cel.Value)) > 0 Then
-                    codL = NormalizarCodigo(cel.Value)
-                    If Not dict.Exists(codL) Then
-                        dict.Add codL, wsL.Cells(cel.Row, "Q").Value
+            lastA = wsL.Cells(wsL.Rows.Count, "A").End(xlUp).Row
+            If lastA >= 1 Then
+                arrA = wsL.Range("A1:A" & lastA).Value
+                arrQ = wsL.Range("Q1:Q" & lastA).Value
+                For r = 1 To UBound(arrA, 1)
+                    If Len(Trim(arrA(r, 1))) > 0 Then
+                        Dim k As String: k = NormalizarCodigo(arrA(r, 1))
+                        If Not dict.Exists(k) Then dict.Add k, arrQ(r, 1)
                     End If
-                End If
-            Next cel
+                Next r
+            End If
         End If
     Next wsL
-
-    ' Recorrer todas las filas de D
+    
+    ' --- Recorrer Contabilidad_mapeo: TODA la columna D desde fila 3, sin borrar nada ---
     ultFila = wsMap.Cells(wsMap.Rows.Count, "D").End(xlUp).Row
     For i = 3 To ultFila
+        ' saltar bloques combinados en D
         If Not wsMap.Cells(i, "D").MergeCells Then
-            ' Filtramos solo filas válidas (F numérica)
+            ' F debe ser numérica (descarta "", "-", ".")
             If EsFValida(wsMap.Cells(i, "F").Value) Then
                 codMap = NormalizarCodigo(wsMap.Cells(i, "D").Value)
                 If codMap <> "" Then
                     valE = wsMap.Cells(i, "E").Value
                     valF = wsMap.Cells(i, "F").Value
-                    tituloBloque = ObtenerTituloBloque(wsMap, i)
-
-                    ' Escribir en Resultados
-                    wsRes.Cells(filaR, "A").Value = tituloBloque
+                    titulo = ObtenerTituloBloque(wsMap, i)
+                    
+                    ' escribir resultado
+                    wsRes.Cells(filaR, "A").Value = titulo
                     wsRes.Cells(filaR, "B").Value = wsMap.Cells(i, "D").Value
-
+                    
                     If dict.Exists(codMap) Then
                         valQ = dict(codMap)
                         wsRes.Cells(filaR, "C").Value = codMap
                         wsRes.Cells(filaR, "D").Value = valE
                         wsRes.Cells(filaR, "E").Value = valF
                         wsRes.Cells(filaR, "F").Value = valQ
-
+                        
                         If IsNumeric(valF) And IsNumeric(valQ) Then
                             If CDbl(valF) = CDbl(valQ) Then
                                 wsRes.Cells(filaR, "G").Value = "Igual"
@@ -151,10 +184,14 @@ Sub Comparar_Mapeo_LRVTOT_Final_v6()
             End If
         End If
     Next i
-
+    
     wsRes.Columns("A:G").AutoFit
-    MsgBox "✅ Comparación completada sin bucles. Bloques detectados correctamente.", vbInformation
-
+    
+    ' --- restaurar estado de Excel ---
     Application.DisplayAlerts = True
-    Application.ScreenUpdating = True
+    Application.Calculation = oldCalc
+    Application.EnableEvents = oldEvt
+    Application.ScreenUpdating = oldScr
+    
+    MsgBox "✅ Hecho. Hoja 'Resultados' creada/reciclada sin errores de memoria.", vbInformation
 End Sub
