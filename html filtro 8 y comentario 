@@ -13,10 +13,10 @@ Private Function NormalizarCodigo(v) As String
     NormalizarCodigo = s
 End Function
 
-Sub Comparar_Mapeo_LRVTOT_Final_v2()
+Sub Comparar_Mapeo_LRVTOT_Final_v3()
     Dim wsMap As Worksheet, wsRes As Worksheet, wsL As Worksheet
     Dim ultFila As Long, filaR As Long, i As Long
-    Dim codMap As String, valF, codL As String, valN
+    Dim codMap As String, valE, valF, valN, codL As String
     Dim dict As Object, cel As Range, rngA As Range
     Dim startRow As Long, buscarHasta As Long
     Dim bloque As Range, txtBloque As String
@@ -26,10 +26,9 @@ Sub Comparar_Mapeo_LRVTOT_Final_v2()
     
     Set wsMap = ThisWorkbook.Sheets("Contabilidad_mapeo")
     
-    ' Buscar bloque que contenga la palabra "CONCEPTOS FIJOS"
+    ' 1) Encontrar el bloque combinado que CONTENGA "Conceptos Fijos"
     buscarHasta = wsMap.Cells(wsMap.Rows.Count, "D").End(xlUp).Row
     startRow = 0
-    
     For Each cel In wsMap.Range("D1:D" & buscarHasta)
         If cel.MergeCells Then
             Set bloque = cel.MergeArea
@@ -38,27 +37,27 @@ Sub Comparar_Mapeo_LRVTOT_Final_v2()
                 startRow = bloque.Row + bloque.Rows.Count
                 Exit For
             End If
-            ' saltamos al final del bloque
+            ' saltar al final del bloque para no iterarlo celda a celda
             Set cel = bloque.Cells(bloque.Rows.Count, 1)
         End If
     Next cel
     
     If startRow = 0 Then
-        MsgBox "No se encontró ninguna celda combinada que contenga 'Conceptos Fijos' en la columna D.", vbExclamation
+        MsgBox "No se encontró ninguna celda combinada que contenga 'Conceptos Fijos' en D.", vbExclamation
         GoTo Salir
     End If
 
-    ' Crear hoja Resultados
+    ' 2) Crear hoja Resultados
     On Error Resume Next
     ThisWorkbook.Sheets("Resultados").Delete
     On Error GoTo 0
     Set wsRes = ThisWorkbook.Sheets.Add
     wsRes.Name = "Resultados"
-    wsRes.Range("A1:E1").Value = Array("Código Contabilidad", "Código LRVTOT", "Valor F", "Valor N", "Resultado")
+    wsRes.Range("A1:F1").Value = Array("Código (D)", "Código LRVTOT", "Valor E (Cont.)", "Valor F (Cont.)", "Valor N (LRVTOT)", "Resultado")
     wsRes.Rows(1).Font.Bold = True
     filaR = 2
 
-    ' Crear índice de todas las hojas LRVTOT/LRUBTOT
+    ' 3) Índice de todas las hojas LRVTOT/LRUBTOT → key -> valor N
     Set dict = CreateObject("Scripting.Dictionary")
     For Each wsL In ThisWorkbook.Worksheets
         If wsL.Name Like "LRVTOT*" Or wsL.Name Like "LRUBTOT*" Then
@@ -74,46 +73,57 @@ Sub Comparar_Mapeo_LRVTOT_Final_v2()
         End If
     Next wsL
 
-    ' Recorrer desde Conceptos Fijos (tolerante al texto)
+    ' 4) Recorrer Contabilidad_mapeo desde startRow
     ultFila = wsMap.Cells(wsMap.Rows.Count, "D").End(xlUp).Row
     For i = startRow To ultFila
+        ' saltar celdas combinadas en D
         If Not wsMap.Cells(i, "D").MergeCells Then
-            codMap = NormalizarCodigo(wsMap.Cells(i, "D").Value)
-            If codMap <> "" Then
-                valF = wsMap.Cells(i, "F").Value
-                wsRes.Cells(filaR, "A").Value = wsMap.Cells(i, "D").Value
-                
-                If dict.Exists(codMap) Then
-                    valN = dict(codMap)
-                    wsRes.Cells(filaR, "B").Value = codMap
-                    wsRes.Cells(filaR, "C").Value = valF
-                    wsRes.Cells(filaR, "D").Value = valN
-                    If IsNumeric(valF) And IsNumeric(valN) Then
-                        If CDbl(valF) = CDbl(valN) Then
-                            wsRes.Cells(filaR, "E").Value = "Igual"
-                            wsRes.Rows(filaR).Interior.Color = RGB(198, 239, 206)
+            ' exigir F informada (no vacía)
+            If Len(Trim(CStr(wsMap.Cells(i, "F").Value))) > 0 Then
+                codMap = NormalizarCodigo(wsMap.Cells(i, "D").Value)
+                If codMap <> "" Then
+                    valE = wsMap.Cells(i, "E").Value
+                    valF = wsMap.Cells(i, "F").Value
+                    
+                    ' salida: código original en A
+                    wsRes.Cells(filaR, "A").Value = wsMap.Cells(i, "D").Value
+                    
+                    If dict.Exists(codMap) Then
+                        valN = dict(codMap)
+                        wsRes.Cells(filaR, "B").Value = codMap           ' código hallado
+                        wsRes.Cells(filaR, "C").Value = valE             ' E contab
+                        wsRes.Cells(filaR, "D").Value = valF             ' F contab
+                        wsRes.Cells(filaR, "E").Value = valN             ' N LRVTOT
+                        
+                        If IsNumeric(valF) And IsNumeric(valN) Then
+                            If CDbl(valF) = CDbl(valN) Then
+                                wsRes.Cells(filaR, "F").Value = "Igual"
+                                wsRes.Rows(filaR).Interior.Color = RGB(198, 239, 206)
+                            Else
+                                wsRes.Cells(filaR, "F").Value = "Diferente"
+                                wsRes.Rows(filaR).Interior.Color = RGB(255, 199, 206)
+                            End If
                         Else
-                            wsRes.Cells(filaR, "E").Value = "Diferente"
-                            wsRes.Rows(filaR).Interior.Color = RGB(255, 199, 206)
+                            wsRes.Cells(filaR, "F").Value = "Texto/No numérico"
+                            wsRes.Rows(filaR).Interior.Color = RGB(255, 235, 156)
                         End If
                     Else
-                        wsRes.Cells(filaR, "E").Value = "Texto/No numérico"
+                        ' no encontrado
+                        wsRes.Cells(filaR, "B").Value = ""               ' en blanco
+                        wsRes.Cells(filaR, "C").Value = valE
+                        wsRes.Cells(filaR, "D").Value = valF
+                        wsRes.Cells(filaR, "F").Value = "No encontrado"
                         wsRes.Rows(filaR).Interior.Color = RGB(255, 235, 156)
                     End If
-                Else
-                    wsRes.Cells(filaR, "B").Value = ""
-                    wsRes.Cells(filaR, "C").Value = valF
-                    wsRes.Cells(filaR, "E").Value = "No encontrado"
-                    wsRes.Rows(filaR).Interior.Color = RGB(255, 235, 156)
+                    
+                    filaR = filaR + 1
                 End If
-                
-                filaR = filaR + 1
             End If
         End If
     Next i
-    
-    wsRes.Columns("A:E").AutoFit
-    MsgBox "Comparación terminada desde el bloque que contiene 'Conceptos Fijos'.", vbInformation
+
+    wsRes.Columns("A:F").AutoFit
+    MsgBox "Listo. Solo se han comparado filas con F informada, incluyendo E en la salida.", vbInformation
 
 Salir:
     Application.DisplayAlerts = True
