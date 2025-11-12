@@ -13,36 +13,41 @@ Private Function NormalizarCodigo(v) As String
     NormalizarCodigo = s
 End Function
 
-Sub Comparar_Mapeo_LRVTOT_Final()
+Sub Comparar_Mapeo_LRVTOT_Seguro()
     Dim wsMap As Worksheet, wsRes As Worksheet, wsL As Worksheet
     Dim ultFila As Long, filaR As Long, i As Long
     Dim codMap As String, valF, codL As String, valN
-    Dim hojaHit As String, dict As Object, cel As Range, rngA As Range
-    Dim startRow As Long
-    Dim c As Range
-
+    Dim dict As Object, cel As Range, rngA As Range
+    Dim startRow As Long, buscarHasta As Long
+    Dim bloque As Range
+    
     Application.ScreenUpdating = False
     Application.DisplayAlerts = False
     
     Set wsMap = ThisWorkbook.Sheets("Contabilidad_mapeo")
     
-    '=== Buscar la fila donde comienza "Conceptos Fijos" ===
+    ' Buscar la fila del bloque "Conceptos Fijos"
+    buscarHasta = wsMap.Cells(wsMap.Rows.Count, "D").End(xlUp).Row
     startRow = 0
-    For Each c In wsMap.Range("D1:D" & wsMap.Rows.Count)
-        If c.MergeCells Then
-            If Trim(UCase(c.MergeArea.Cells(1, 1).Value)) = UCase("Conceptos Fijos") Then
-                startRow = c.MergeArea.Row + c.MergeArea.Rows.Count
+    
+    For Each cel In wsMap.Range("D1:D" & buscarHasta)
+        If cel.MergeCells Then
+            Set bloque = cel.MergeArea
+            If Trim(UCase(bloque.Cells(1, 1).Value)) = UCase("Conceptos Fijos") Then
+                startRow = bloque.Row + bloque.Rows.Count
                 Exit For
             End If
+            ' Saltar directamente al final del bloque para no re-evaluar todas sus celdas
+            Set cel = bloque.Cells(bloque.Rows.Count, 1)
         End If
-    Next c
+    Next cel
     
     If startRow = 0 Then
-        MsgBox "No se encontró el bloque 'Conceptos Fijos' en la columna D.", vbExclamation
-        Exit Sub
+        MsgBox "No se encontró la celda combinada 'Conceptos Fijos' en la columna D.", vbExclamation
+        GoTo Salir
     End If
 
-    '=== Crear hoja Resultados ===
+    ' Crear hoja Resultados
     On Error Resume Next
     ThisWorkbook.Sheets("Resultados").Delete
     On Error GoTo 0
@@ -52,7 +57,7 @@ Sub Comparar_Mapeo_LRVTOT_Final()
     wsRes.Rows(1).Font.Bold = True
     filaR = 2
 
-    '=== Crear índice de todas las hojas LRVTOT/LRUBTOT ===
+    ' Crear índice LRVTOT/LRUBTOT
     Set dict = CreateObject("Scripting.Dictionary")
     For Each wsL In ThisWorkbook.Worksheets
         If wsL.Name Like "LRVTOT*" Or wsL.Name Like "LRUBTOT*" Then
@@ -68,7 +73,7 @@ Sub Comparar_Mapeo_LRVTOT_Final()
         End If
     Next wsL
 
-    '=== Recorrer Contabilidad_mapeo desde Conceptos Fijos ===
+    ' Recorrer desde Conceptos Fijos
     ultFila = wsMap.Cells(wsMap.Rows.Count, "D").End(xlUp).Row
     For i = startRow To ultFila
         If Not wsMap.Cells(i, "D").MergeCells Then
@@ -100,15 +105,15 @@ Sub Comparar_Mapeo_LRVTOT_Final()
                     wsRes.Cells(filaR, "E").Value = "No encontrado"
                     wsRes.Rows(filaR).Interior.Color = RGB(255, 235, 156)
                 End If
-                
                 filaR = filaR + 1
             End If
         End If
     Next i
-    
+
     wsRes.Columns("A:E").AutoFit
-    MsgBox "Comparación terminada. Resultados creados a partir de 'Conceptos Fijos'.", vbInformation
-    
+    MsgBox "Comparación completada desde 'Conceptos Fijos'.", vbInformation
+
+Salir:
     Application.DisplayAlerts = True
     Application.ScreenUpdating = True
 End Sub
