@@ -1,132 +1,103 @@
 Option Explicit
 
-Private Function NormalizeKey(v As Variant) As String
-    Dim s As String, i As Long, ch As String, onlyDigits As Boolean
+Private Function NormalizarCodigo(v) As String
+    Dim s As String
     s = Trim(CStr(v))
-    If Len(s) > 0 And Left$(s, 1) = "'" Then s = Mid$(s, 2) ' quita apóstrofe
-    s = Replace(s, " ", "")                                  ' quita espacios
-    ' ¿son solo dígitos?
-    onlyDigits = (Len(s) > 0)
-    For i = 1 To Len(s)
-        ch = Mid$(s, i, 1)
-        If ch < "0" Or ch > "9" Then
-            onlyDigits = False
-            Exit For
-        End If
-    Next i
-    If onlyDigits Then
-        ' quita ceros a la izquierda (mantiene al menos un dígito)
+    If Len(s) > 0 And Left$(s, 1) = "'" Then s = Mid$(s, 2)
+    s = Replace(s, " ", "")
+    ' Si es numérico, quitar ceros iniciales
+    If IsNumeric(s) Then
         Do While Len(s) > 1 And Left$(s, 1) = "0"
             s = Mid$(s, 2)
         Loop
     End If
-    NormalizeKey = UCase$(s)
+    NormalizarCodigo = s
 End Function
 
-Sub Comparar_Contabilidad_LRVTOT()
-    Dim wsMapeo As Worksheet, wsRes As Worksheet
-    Dim dict As Object ' key -> Array(hoja, fila, valorN)
-    Dim hojaLRV As Worksheet, rngA As Range, cel As Range
-    Dim ultFila As Long, i As Long, filaRes As Long
-    Dim keyMap As String, keyLRV As String
-    Dim valD As Variant, valF As Variant, valG As Variant
-    Dim encontrada As Boolean, valN As Variant, pack, hojaHit As String, filaHit As Long
-    Dim dif As Variant
+Sub Comparar_Mapeo_LRVTOT()
+    Dim wsMap As Worksheet, wsRes As Worksheet, wsL As Worksheet
+    Dim ultFila As Long, filaR As Long, i As Long
+    Dim codMap As String, valF, codL As String, valN
+    Dim hojaHit As String, enc As Range, encontrado As Boolean
+    Dim dict As Object, cel As Range, rngA As Range
     
     Application.ScreenUpdating = False
     Application.DisplayAlerts = False
     
-    Set wsMapeo = ThisWorkbook.Worksheets("Contabilidad Mapeo")
+    ' Hoja Contabilidad_mapeo
+    Set wsMap = ThisWorkbook.Sheets("Contabilidad_mapeo")
     
-    ' (Re)crear Resultados
+    ' Crear/limpiar hoja Resultados
     On Error Resume Next
-    ThisWorkbook.Worksheets("Resultados").Delete
+    ThisWorkbook.Sheets("Resultados").Delete
     On Error GoTo 0
-    Set wsRes = ThisWorkbook.Worksheets.Add(After:=Sheets(Sheets.Count))
+    Set wsRes = ThisWorkbook.Sheets.Add
     wsRes.Name = "Resultados"
-    wsRes.Range("A1:G1").Value = Array("Código (D)", "Hoja LRVTOT", "Fila LRVTOT", "Valor F (Cont.)", "Valor N (LRVTOT)", "Diferencia F-N", "Estado")
+    
+    wsRes.Range("A1:E1").Value = Array("Código Contabilidad", "Código LRVTOT", "Valor F", "Valor N", "Resultado")
     wsRes.Rows(1).Font.Bold = True
-    filaRes = 2
+    filaR = 2
     
-    ' ==========
-    ' 1) Índice de búsqueda de todas las LRVTOT*: key normalizada -> (hoja, fila, valor N)
-    ' ==========
+    ' Crear diccionario con todos los códigos de LRVTOT*
     Set dict = CreateObject("Scripting.Dictionary")
-    dict.CompareMode = 0 ' Binary (usamos nuestra normalización)
-    
-    For Each hojaLRV In ThisWorkbook.Worksheets
-        If hojaLRV.Name Like "LRVTOT*" Then
-            Set rngA = hojaLRV.Range("A1", hojaLRV.Cells(hojaLRV.Rows.Count, "A").End(xlUp))
-            For Each cel In rngA.Cells
-                If Len(Trim(cel.Value)) > 0 Then
-                    keyLRV = NormalizeKey(cel.Value)
-                    ' Si hay duplicados, nos quedamos el primero (se puede cambiar a lista si lo necesitas)
-                    If Not dict.Exists(keyLRV) Then
-                        dict.Add keyLRV, Array(hojaLRV.Name, cel.Row, hojaLRV.Cells(cel.Row, "N").Value)
+    For Each wsL In ThisWorkbook.Worksheets
+        If wsL.Name Like "LRVTOT*" Or wsL.Name Like "LRUBTOT*" Then
+            Set rngA = wsL.Range("A1", wsL.Cells(wsL.Rows.Count, "A").End(xlUp))
+            For Each cel In rngA
+                If Not IsEmpty(cel.Value) Then
+                    codL = NormalizarCodigo(cel.Value)
+                    If Not dict.Exists(codL) Then
+                        dict(codL) = Array(wsL.Name, cel.Row, wsL.Cells(cel.Row, "N").Value)
                     End If
                 End If
             Next cel
         End If
-    Next hojaLRV
+    Next wsL
     
-    ' ==========
-    ' 2) Recorrer D desde fila 3 ignorando celdas combinadas y vacías
-    ' ==========
-    ultFila = wsMapeo.Cells(wsMapeo.Rows.Count, "D").End(xlUp).Row
+    ' Recorrer Contabilidad_mapeo
+    ultFila = wsMap.Cells(wsMap.Rows.Count, "D").End(xlUp).Row
     For i = 3 To ultFila
-        If Not wsMapeo.Cells(i, "D").MergeCells Then
-            valD = wsMapeo.Cells(i, "D").Value
-            If Len(Trim(CStr(valD))) > 0 Then
-                keyMap = NormalizeKey(valD)
-                valF = wsMapeo.Cells(i, "F").Value
-                valG = wsMapeo.Cells(i, "G").Value ' (por si luego quieres usarlo)
+        If Not wsMap.Cells(i, "D").MergeCells Then
+            codMap = NormalizarCodigo(wsMap.Cells(i, "D").Value)
+            If codMap <> "" Then
+                valF = wsMap.Cells(i, "F").Value
+                encontrado = dict.Exists(codMap)
                 
-                encontrada = False: valN = "": hojaHit = "": filaHit = 0
-                If dict.Exists(keyMap) Then
-                    pack = dict(keyMap)
-                    hojaHit = pack(0)
-                    filaHit = pack(1)
-                    valN = pack(2)
-                    encontrada = True
-                End If
+                wsRes.Cells(filaR, "A").Value = wsMap.Cells(i, "D").Value
                 
-                ' Salida
-                wsRes.Cells(filaRes, "A").Value = CStr(valD)       ' lo que había en D (sin normalizar para que veas el original)
-                wsRes.Cells(filaRes, "B").Value = IIf(encontrada, hojaHit, "")
-                wsRes.Cells(filaRes, "C").Value = IIf(encontrada, filaHit, "")
-                wsRes.Cells(filaRes, "D").Value = valF
-                wsRes.Cells(filaRes, "E").Value = valN
-                
-                If encontrada Then
+                If encontrado Then
+                    wsRes.Cells(filaR, "B").Value = codMap
+                    wsRes.Cells(filaR, "C").Value = valF
+                    wsRes.Cells(filaR, "D").Value = dict(codMap)(2)
+                    
+                    valN = dict(codMap)(2)
                     If IsNumeric(valF) And IsNumeric(valN) Then
-                        dif = CDbl(valF) - CDbl(valN)
-                        wsRes.Cells(filaRes, "F").Value = dif
-                        If Abs(dif) < 0.0000001 Then
-                            wsRes.Cells(filaRes, "G").Value = "Igual"
-                            wsRes.Rows(filaRes).Interior.Color = RGB(198, 239, 206) ' verde
+                        If CDbl(valF) = CDbl(valN) Then
+                            wsRes.Cells(filaR, "E").Value = "Igual"
+                            wsRes.Rows(filaR).Interior.Color = RGB(198, 239, 206)
                         Else
-                            wsRes.Cells(filaRes, "G").Value = "Diferente"
-                            wsRes.Rows(filaRes).Interior.Color = RGB(255, 199, 206) ' rojo
+                            wsRes.Cells(filaR, "E").Value = "Diferente"
+                            wsRes.Rows(filaR).Interior.Color = RGB(255, 199, 206)
                         End If
                     Else
-                        wsRes.Cells(filaRes, "G").Value = "Datos no numéricos"
-                        wsRes.Rows(filaRes).Interior.Color = RGB(255, 235, 156) ' amarillo
+                        wsRes.Cells(filaR, "E").Value = "Texto/No numérico"
+                        wsRes.Rows(filaR).Interior.Color = RGB(255, 235, 156)
                     End If
                 Else
-                    wsRes.Cells(filaRes, "G").Value = "No encontrado"
-                    wsRes.Rows(filaRes).Interior.Color = RGB(255, 235, 156) ' amarillo
+                    wsRes.Cells(filaR, "B").Value = ""
+                    wsRes.Cells(filaR, "C").Value = valF
+                    wsRes.Cells(filaR, "E").Value = "No encontrado"
+                    wsRes.Rows(filaR).Interior.Color = RGB(255, 235, 156)
                 End If
                 
-                filaRes = filaRes + 1
+                filaR = filaR + 1
             End If
         End If
     Next i
     
-    ' Formato
-    wsRes.Columns("A:G").AutoFit
-    wsRes.Range("D2:F" & filaRes - 1).NumberFormat = "#,##0.00;[Red]-#,##0.00;0.00"
+    wsRes.Columns("A:E").AutoFit
+    MsgBox "Comparación terminada. Revisa la hoja 'Resultados'.", vbInformation
     
     Application.DisplayAlerts = True
     Application.ScreenUpdating = True
-    MsgBox "Listo. Normalización aplicada y comparación terminada en 'Resultados'.", vbInformation
 End Sub
