@@ -4,11 +4,11 @@ Option Explicit
 '  FUNCIONES AUXILIARES
 ' ======================================================================
 
-' Limpia y normaliza los códigos de la columna D.
+' Limpia y normaliza códigos de columna D.
 Private Function NormalizarCodigo(v As Variant) As String
     Dim s As String
     s = Trim(CStr(v))
-    If Len(s) > 0 And Left$(s, 1) = "'" Then s = Mid$(s, 2) ' quita apóstrofe
+    If Len(s) > 0 And Left$(s, 1) = "'" Then s = Mid$(s, 2)
     s = Replace(s, " ", "")
     If IsNumeric(s) Then
         Do While Len(s) > 1 And Left$(s, 1) = "0"
@@ -18,26 +18,26 @@ Private Function NormalizarCodigo(v As Variant) As String
     NormalizarCodigo = s
 End Function
 
-' Comprueba si la celda F contiene un número válido (descarta vacío, "-", ".", texto).
+' Determina si F está informada con número válido (sin "-", ".", vacío, texto).
 Private Function EsFValida(v As Variant) As Boolean
     Dim s As String
     s = Trim(CStr(v))
-    If s = "" Then Exit Function
-    If s = "-" Then Exit Function
-    If s = "." Then Exit Function
+    If s = "" Or s = "-" Or s = "." Then Exit Function
     If Left$(s, 1) = "'" Then s = Mid$(s, 2)
     EsFValida = IsNumeric(s)
 End Function
 
-' Devuelve el título de bloque (celda combinada superior en D) correspondiente a una fila.
+' Devuelve el título del bloque al que pertenece la fila.
+' SEGURA: nunca entra en bucle infinito.
 Private Function ObtenerTituloBloque(ws As Worksheet, fila As Long) As String
     Dim cel As Range
     Set cel = ws.Cells(fila, "D")
-    ' Si la celda está dentro de un bloque combinado, devolvemos el valor del bloque
+
+    ' Si la celda pertenece a una zona combinada, devolvemos ese título
     If cel.MergeCells Then
         ObtenerTituloBloque = cel.MergeArea.Cells(1, 1).Value
     Else
-        ' Buscar hacia arriba la última celda combinada
+        ' Buscamos hacia arriba la última celda combinada
         Do While fila > 1
             fila = fila - 1
             If ws.Cells(fila, "D").MergeCells Then
@@ -45,22 +45,16 @@ Private Function ObtenerTituloBloque(ws As Worksheet, fila As Long) As String
                 Exit Do
             End If
         Loop
+        ' Si no encuentra ninguna celda combinada, devuelve vacío
+        If fila = 1 Then ObtenerTituloBloque = ""
     End If
 End Function
 
 ' ======================================================================
-'  MACRO PRINCIPAL
+'  MACRO PRINCIPAL (versión segura)
 ' ======================================================================
 
-Sub Comparar_Mapeo_LRVTOT_Final_v5()
-    ' --------------------------------------------------------------
-    ' OBJETIVO:
-    '   - Recorrer TODA la columna D de "Contabilidad_mapeo".
-    '   - Solo procesar filas con F numérica (descarta vacío, "-" o ".").
-    '   - Comparar F (Contabilidad) con Q (LRVTOT/LRUBTOT).
-    '   - Incluir el título de bloque (celda combinada de D) al que pertenece el código.
-    ' --------------------------------------------------------------
-
+Sub Comparar_Mapeo_LRVTOT_Final_v6()
     Dim wsMap As Worksheet, wsRes As Worksheet, wsL As Worksheet
     Dim dict As Object
     Dim rngA As Range, cel As Range
@@ -68,21 +62,19 @@ Sub Comparar_Mapeo_LRVTOT_Final_v5()
     Dim codMap As String, valE, valF, valQ, codL As String
     Dim tituloBloque As String
 
-    ' Optimización visual
     Application.ScreenUpdating = False
     Application.DisplayAlerts = False
 
-    ' === Hoja origen ===
     Set wsMap = ThisWorkbook.Sheets("Contabilidad_mapeo")
 
-    ' === Crear hoja Resultados (borrar si ya existe) ===
+    ' Crear hoja de resultados
     On Error Resume Next
     ThisWorkbook.Sheets("Resultados").Delete
     On Error GoTo 0
     Set wsRes = ThisWorkbook.Sheets.Add
     wsRes.Name = "Resultados"
 
-    ' Cabecera con la nueva estructura
+    ' Cabecera
     wsRes.Range("A1:G1").Value = Array( _
         "Título del bloque (celda combinada D)", _
         "Código (D) Contabilidad", _
@@ -95,7 +87,7 @@ Sub Comparar_Mapeo_LRVTOT_Final_v5()
     wsRes.Rows(1).Font.Bold = True
     filaR = 2
 
-    ' === Construir índice de LRVTOT/LRUBTOT ===
+    ' Construir índice de LRVTOT/LRUBTOT
     Set dict = CreateObject("Scripting.Dictionary")
     For Each wsL In ThisWorkbook.Worksheets
         If wsL.Name Like "LRVTOT*" Or wsL.Name Like "LRUBTOT*" Then
@@ -111,29 +103,22 @@ Sub Comparar_Mapeo_LRVTOT_Final_v5()
         End If
     Next wsL
 
-    ' === Recorrer todas las filas de D (desde la 3 hasta el final) ===
+    ' Recorrer todas las filas de D
     ultFila = wsMap.Cells(wsMap.Rows.Count, "D").End(xlUp).Row
-
     For i = 3 To ultFila
-        ' Saltar títulos combinados
         If Not wsMap.Cells(i, "D").MergeCells Then
-
-            ' Solo procesar si F es válida según nuestra función
+            ' Filtramos solo filas válidas (F numérica)
             If EsFValida(wsMap.Cells(i, "F").Value) Then
-
                 codMap = NormalizarCodigo(wsMap.Cells(i, "D").Value)
-
                 If codMap <> "" Then
-                    ' Obtener valores del registro
                     valE = wsMap.Cells(i, "E").Value
                     valF = wsMap.Cells(i, "F").Value
                     tituloBloque = ObtenerTituloBloque(wsMap, i)
 
                     ' Escribir en Resultados
-                    wsRes.Cells(filaR, "A").Value = tituloBloque   ' Bloque / cabecera
+                    wsRes.Cells(filaR, "A").Value = tituloBloque
                     wsRes.Cells(filaR, "B").Value = wsMap.Cells(i, "D").Value
 
-                    ' Buscar el código en las hojas LRVTOT/LRUBTOT
                     If dict.Exists(codMap) Then
                         valQ = dict(codMap)
                         wsRes.Cells(filaR, "C").Value = codMap
@@ -141,22 +126,19 @@ Sub Comparar_Mapeo_LRVTOT_Final_v5()
                         wsRes.Cells(filaR, "E").Value = valF
                         wsRes.Cells(filaR, "F").Value = valQ
 
-                        ' Comparación numérica F vs Q
                         If IsNumeric(valF) And IsNumeric(valQ) Then
                             If CDbl(valF) = CDbl(valQ) Then
                                 wsRes.Cells(filaR, "G").Value = "Igual"
-                                wsRes.Rows(filaR).Interior.Color = RGB(198, 239, 206) ' verde
+                                wsRes.Rows(filaR).Interior.Color = RGB(198, 239, 206)
                             Else
                                 wsRes.Cells(filaR, "G").Value = "Diferente"
-                                wsRes.Rows(filaR).Interior.Color = RGB(255, 199, 206) ' rojo
+                                wsRes.Rows(filaR).Interior.Color = RGB(255, 199, 206)
                             End If
                         Else
                             wsRes.Cells(filaR, "G").Value = "Texto / No numérico"
-                            wsRes.Rows(filaR).Interior.Color = RGB(255, 235, 156)     ' amarillo
+                            wsRes.Rows(filaR).Interior.Color = RGB(255, 235, 156)
                         End If
-
                     Else
-                        ' No encontrado
                         wsRes.Cells(filaR, "C").Value = ""
                         wsRes.Cells(filaR, "D").Value = valE
                         wsRes.Cells(filaR, "E").Value = valF
@@ -164,16 +146,14 @@ Sub Comparar_Mapeo_LRVTOT_Final_v5()
                         wsRes.Cells(filaR, "G").Value = "No encontrado"
                         wsRes.Rows(filaR).Interior.Color = RGB(255, 235, 156)
                     End If
-
                     filaR = filaR + 1
                 End If
             End If
         End If
     Next i
 
-    ' === Ajustes finales ===
     wsRes.Columns("A:G").AutoFit
-    MsgBox "Hecho ✅  Comparación completada (con títulos de bloque).", vbInformation
+    MsgBox "✅ Comparación completada sin bucles. Bloques detectados correctamente.", vbInformation
 
     Application.DisplayAlerts = True
     Application.ScreenUpdating = True
