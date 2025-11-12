@@ -5,7 +5,6 @@ Private Function NormalizarCodigo(v) As String
     s = Trim(CStr(v))
     If Len(s) > 0 And Left$(s, 1) = "'" Then s = Mid$(s, 2)
     s = Replace(s, " ", "")
-    ' Si es numérico, quitar ceros iniciales
     If IsNumeric(s) Then
         Do While Len(s) > 1 And Left$(s, 1) = "0"
             s = Mid$(s, 2)
@@ -14,31 +13,46 @@ Private Function NormalizarCodigo(v) As String
     NormalizarCodigo = s
 End Function
 
-Sub Comparar_Mapeo_LRVTOT()
+Sub Comparar_Mapeo_LRVTOT_Final()
     Dim wsMap As Worksheet, wsRes As Worksheet, wsL As Worksheet
     Dim ultFila As Long, filaR As Long, i As Long
     Dim codMap As String, valF, codL As String, valN
-    Dim hojaHit As String, enc As Range, encontrado As Boolean
-    Dim dict As Object, cel As Range, rngA As Range
-    
+    Dim hojaHit As String, dict As Object, cel As Range, rngA As Range
+    Dim startRow As Long
+    Dim c As Range
+
     Application.ScreenUpdating = False
     Application.DisplayAlerts = False
     
-    ' Hoja Contabilidad_mapeo
     Set wsMap = ThisWorkbook.Sheets("Contabilidad_mapeo")
     
-    ' Crear/limpiar hoja Resultados
+    '=== Buscar la fila donde comienza "Conceptos Fijos" ===
+    startRow = 0
+    For Each c In wsMap.Range("D1:D" & wsMap.Rows.Count)
+        If c.MergeCells Then
+            If Trim(UCase(c.MergeArea.Cells(1, 1).Value)) = UCase("Conceptos Fijos") Then
+                startRow = c.MergeArea.Row + c.MergeArea.Rows.Count
+                Exit For
+            End If
+        End If
+    Next c
+    
+    If startRow = 0 Then
+        MsgBox "No se encontró el bloque 'Conceptos Fijos' en la columna D.", vbExclamation
+        Exit Sub
+    End If
+
+    '=== Crear hoja Resultados ===
     On Error Resume Next
     ThisWorkbook.Sheets("Resultados").Delete
     On Error GoTo 0
     Set wsRes = ThisWorkbook.Sheets.Add
     wsRes.Name = "Resultados"
-    
     wsRes.Range("A1:E1").Value = Array("Código Contabilidad", "Código LRVTOT", "Valor F", "Valor N", "Resultado")
     wsRes.Rows(1).Font.Bold = True
     filaR = 2
-    
-    ' Crear diccionario con todos los códigos de LRVTOT*
+
+    '=== Crear índice de todas las hojas LRVTOT/LRUBTOT ===
     Set dict = CreateObject("Scripting.Dictionary")
     For Each wsL In ThisWorkbook.Worksheets
         If wsL.Name Like "LRVTOT*" Or wsL.Name Like "LRUBTOT*" Then
@@ -47,30 +61,27 @@ Sub Comparar_Mapeo_LRVTOT()
                 If Not IsEmpty(cel.Value) Then
                     codL = NormalizarCodigo(cel.Value)
                     If Not dict.Exists(codL) Then
-                        dict(codL) = Array(wsL.Name, cel.Row, wsL.Cells(cel.Row, "N").Value)
+                        dict(codL) = wsL.Cells(cel.Row, "N").Value
                     End If
                 End If
             Next cel
         End If
     Next wsL
-    
-    ' Recorrer Contabilidad_mapeo
+
+    '=== Recorrer Contabilidad_mapeo desde Conceptos Fijos ===
     ultFila = wsMap.Cells(wsMap.Rows.Count, "D").End(xlUp).Row
-    For i = 3 To ultFila
+    For i = startRow To ultFila
         If Not wsMap.Cells(i, "D").MergeCells Then
             codMap = NormalizarCodigo(wsMap.Cells(i, "D").Value)
             If codMap <> "" Then
                 valF = wsMap.Cells(i, "F").Value
-                encontrado = dict.Exists(codMap)
-                
                 wsRes.Cells(filaR, "A").Value = wsMap.Cells(i, "D").Value
                 
-                If encontrado Then
+                If dict.Exists(codMap) Then
+                    valN = dict(codMap)
                     wsRes.Cells(filaR, "B").Value = codMap
                     wsRes.Cells(filaR, "C").Value = valF
-                    wsRes.Cells(filaR, "D").Value = dict(codMap)(2)
-                    
-                    valN = dict(codMap)(2)
+                    wsRes.Cells(filaR, "D").Value = valN
                     If IsNumeric(valF) And IsNumeric(valN) Then
                         If CDbl(valF) = CDbl(valN) Then
                             wsRes.Cells(filaR, "E").Value = "Igual"
@@ -96,7 +107,7 @@ Sub Comparar_Mapeo_LRVTOT()
     Next i
     
     wsRes.Columns("A:E").AutoFit
-    MsgBox "Comparación terminada. Revisa la hoja 'Resultados'.", vbInformation
+    MsgBox "Comparación terminada. Resultados creados a partir de 'Conceptos Fijos'.", vbInformation
     
     Application.DisplayAlerts = True
     Application.ScreenUpdating = True
