@@ -13,37 +13,38 @@ Private Function NormalizarCodigo(v) As String
     NormalizarCodigo = s
 End Function
 
-Sub Comparar_Mapeo_LRVTOT_Seguro()
+Sub Comparar_Mapeo_LRVTOT_Final_v2()
     Dim wsMap As Worksheet, wsRes As Worksheet, wsL As Worksheet
     Dim ultFila As Long, filaR As Long, i As Long
     Dim codMap As String, valF, codL As String, valN
     Dim dict As Object, cel As Range, rngA As Range
     Dim startRow As Long, buscarHasta As Long
-    Dim bloque As Range
+    Dim bloque As Range, txtBloque As String
     
     Application.ScreenUpdating = False
     Application.DisplayAlerts = False
     
     Set wsMap = ThisWorkbook.Sheets("Contabilidad_mapeo")
     
-    ' Buscar la fila del bloque "Conceptos Fijos"
+    ' Buscar bloque que contenga la palabra "CONCEPTOS FIJOS"
     buscarHasta = wsMap.Cells(wsMap.Rows.Count, "D").End(xlUp).Row
     startRow = 0
     
     For Each cel In wsMap.Range("D1:D" & buscarHasta)
         If cel.MergeCells Then
             Set bloque = cel.MergeArea
-            If Trim(UCase(bloque.Cells(1, 1).Value)) = UCase("Conceptos Fijos") Then
+            txtBloque = UCase(Trim(bloque.Cells(1, 1).Value))
+            If InStr(txtBloque, "CONCEPTOS FIJOS") > 0 Then
                 startRow = bloque.Row + bloque.Rows.Count
                 Exit For
             End If
-            ' Saltar directamente al final del bloque para no re-evaluar todas sus celdas
+            ' saltamos al final del bloque
             Set cel = bloque.Cells(bloque.Rows.Count, 1)
         End If
     Next cel
     
     If startRow = 0 Then
-        MsgBox "No se encontró la celda combinada 'Conceptos Fijos' en la columna D.", vbExclamation
+        MsgBox "No se encontró ninguna celda combinada que contenga 'Conceptos Fijos' en la columna D.", vbExclamation
         GoTo Salir
     End If
 
@@ -57,7 +58,7 @@ Sub Comparar_Mapeo_LRVTOT_Seguro()
     wsRes.Rows(1).Font.Bold = True
     filaR = 2
 
-    ' Crear índice LRVTOT/LRUBTOT
+    ' Crear índice de todas las hojas LRVTOT/LRUBTOT
     Set dict = CreateObject("Scripting.Dictionary")
     For Each wsL In ThisWorkbook.Worksheets
         If wsL.Name Like "LRVTOT*" Or wsL.Name Like "LRUBTOT*" Then
@@ -73,7 +74,7 @@ Sub Comparar_Mapeo_LRVTOT_Seguro()
         End If
     Next wsL
 
-    ' Recorrer desde Conceptos Fijos
+    ' Recorrer desde Conceptos Fijos (tolerante al texto)
     ultFila = wsMap.Cells(wsMap.Rows.Count, "D").End(xlUp).Row
     For i = startRow To ultFila
         If Not wsMap.Cells(i, "D").MergeCells Then
@@ -105,13 +106,14 @@ Sub Comparar_Mapeo_LRVTOT_Seguro()
                     wsRes.Cells(filaR, "E").Value = "No encontrado"
                     wsRes.Rows(filaR).Interior.Color = RGB(255, 235, 156)
                 End If
+                
                 filaR = filaR + 1
             End If
         End If
     Next i
-
+    
     wsRes.Columns("A:E").AutoFit
-    MsgBox "Comparación completada desde 'Conceptos Fijos'.", vbInformation
+    MsgBox "Comparación terminada desde el bloque que contiene 'Conceptos Fijos'.", vbInformation
 
 Salir:
     Application.DisplayAlerts = True
