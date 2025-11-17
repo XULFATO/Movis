@@ -4,85 +4,106 @@ Sub Generar_LINEASVCA()
     Dim tipo As String, cliente As String, release As String
     Dim filaNueva As Long, contador As Long
     Dim ultFila As Long, i As Long
-    Dim valEnlace As String, valD As String, valF As String, valI As String
     
-    '==== DATOS INICIALES ====
+    Dim valD As String, valI As String, enl As String
+    
+    '===============================
+    '   PEDIR DATOS AL COMIENZO
+    '===============================
     tipo = InputBox("Introduce TIPO:", "TIPO", "10")
     cliente = InputBox("Introduce CLIENTE:", "CLIENTE")
     release = InputBox("Introduce RELEASE:", "RELEASE")
     If tipo = "" Or cliente = "" Or release = "" Then Exit Sub
     
-    '==== HOJA ORIGEN ====
+    '===============================
+    '    LOCALIZAR HOJA FUENTE
+    '===============================
     Set wsC = Worksheets("Contabilidad_Cuentas")
     
-    '==== CREAR HOJA NUEVA ====
+    '===============================
+    '   BORRAR HOJA SI EXISTE
+    '===============================
     On Error Resume Next
     Application.DisplayAlerts = False
     Worksheets("LINEASVCA").Delete
     Application.DisplayAlerts = True
     On Error GoTo 0
     
+    '===============================
+    '   CREAR HOJA NUEVA
+    '===============================
     Set wsT = Worksheets.Add
     wsT.Name = "LINEASVCA"
     
-    ' CABECERAS EXACTAS
-    wsT.Range("A1:AX1").Value = Array( _
-        "Tipo.", "Cliente", "Pac", "Release.", "Id.", "Cod.Tabla", "Linea", "Tip Lin", "COD.ENL.", "EM.DE.", _
-        "HD.", "CTA.ENT.", "DE", "CTR.HA", "E.ID.", "COD.ART.", "C.ID.", "HC", "H.ID.", "ID.", _
-        "D.M.H.", "R.D.", "R.H.", "CENT.COST.DE", "CENT.COST.HASTA", "COMP.DE", "ART.ID", "ART.HA", _
-        "NUM.CUENTA", "VALOR.ESPE.", "VCON.NAT", "VCON.COP", "CON.NAT", "CON.C.OP", "RESERVADO")
+    '===============================================
+    '   CABECERAS EXACTAS SEGÚN TU FOTO (36 columnas)
+    '===============================================
+    wsT.Range("A1:AJ1").Value = Array( _
+        "Tipo", "Cliente", "Pac", "Release", "Id", "Cod.Tabla", "Lineas", "Tip Lin", "COD.ENL", "EM.DE", _
+        "EM.HA", "CTR.DE", "CTR.HA", "T.E.D", "T.E.H", "CAT.DE", "CAT.HA", "T.C.H", "D.I.D", "D.I.H", _
+        "T.R.D", "T.R.H", "CENT.COST.DESDE", "CENT.COST.HASTA", "AR.LI.D", "AR.LI.HA", "NUM.CUENTA", _
+        "VALOR.ESPEC.", "NAT.", "CO.OP", "RESERVADO", "CONTR.NUM.CTA", "CONTR.VAL.ESP.", "CON.NAT", _
+        "CON.CO.OP", "RESERVADO")
     
     filaNueva = 2
     contador = 5
     
-    '==== RECORRER CONTABILIDAD_CUENTAS ====
+    '===============================================
+    '   RECORRER Contabilidad_Cuentas
+    '===============================================
     ultFila = wsC.Cells(wsC.Rows.Count, "B").End(xlUp).Row
-    
+
     For i = 1 To ultFila
         
-        ' B contiene ENLACE CONTABLE (texto combinado)
+        ' B es la celda combinada "Enlace Contable"
         If Trim(wsC.Cells(i, "B").Value) <> "" Then
             
-            ' mirar F y I (derecha 2 y derecha 4)
-            valF = Trim(wsC.Cells(i, "F").Value)
+            ' columnas prioritarias I > D
             valI = Trim(wsC.Cells(i, "I").Value)
+            valD = Trim(wsC.Cells(i, "D").Value)
             
-            ' SI alguna está informada → crear línea
-            If valF <> "" Or valI <> "" Then
-            
-                wsT.Cells(filaNueva, "A") = tipo
-                wsT.Cells(filaNueva, "B") = cliente
-                wsT.Cells(filaNueva, "C") = "991" & cliente
-                wsT.Cells(filaNueva, "D") = ""
-                wsT.Cells(filaNueva, "E") = release
+            ' solo si F o I están informadas
+            If valI <> "" Or valD <> "" Then
                 
-                ' F valores fijos
-                wsT.Cells(filaNueva, "F") = ""
-                wsT.Cells(filaNueva, "G") = ""
-                
-                ' CONTADOR: 5, 10, 15...
-                wsT.Cells(filaNueva, "H") = contador
-                contador = contador + 5
-                
-                ' I = 0 siempre
-                wsT.Cells(filaNueva, "I") = 0
-                
-                ' Valores fijos indicados en texto
-                wsT.Cells(filaNueva, "J") = 999
-                wsT.Cells(filaNueva, "N") = 9
-                wsT.Cells(filaNueva, "AA") = 9
-                
-                ' AB ← si D e I están informadas, PRIORIDAD I
-                valD = Trim(wsC.Cells(i, "D").Value)
-                
+                '======================================
+                '  DETERMINAR ENLACE (COD.ENL)
+                '  PRIORIDAD I > D
+                '======================================
                 If valI <> "" Then
-                    wsT.Cells(filaNueva, "AB") = valI
-                ElseIf valD <> "" Then
-                    wsT.Cells(filaNueva, "AB") = valD
+                    enl = valI
+                Else
+                    enl = valD
                 End If
                 
-                ' AG ← columna E de Contabilidad_Cuentas
-                wsT.Cells(filaNueva, "AG") = wsC.Cells(i, "E").Value
+                '======================================
+                '   RELLENO DE COLUMNAS SEGÚN REGLAS
+                '======================================
+                
+                wsT.Cells(filaNueva, "A") = tipo                      ' Tipo
+                wsT.Cells(filaNueva, "B") = cliente                   ' Cliente
+                wsT.Cells(filaNueva, "C") = "991" & cliente           ' Pac (literal 991 + cliente)
+                wsT.Cells(filaNueva, "D") = release                   ' Release (según tu corrección)
+                wsT.Cells(filaNueva, "E") = "V"                       ' Id siempre V
+                wsT.Cells(filaNueva, "F") = "V"                       ' Cod.Tabla (V/C/A si luego quieres dinamizar)
+                wsT.Cells(filaNueva, "G") = contador                  ' Líneas 5,10,15...
+                contador = contador + 5
+                
+                wsT.Cells(filaNueva, "H") = enl                       ' COD.ENL
+                
+                ' VALORES FIJOS NUEVOS
+                wsT.Cells(filaNueva, "J") = "01"
+                wsT.Cells(filaNueva, "K") = "99"
+                wsT.Cells(filaNueva, "M") = "999"
+                wsT.Cells(filaNueva, "Q") = "999"
+                wsT.Cells(filaNueva, "S") = "999"
+                wsT.Cells(filaNueva, "U") = "9S"                      ' Confirmado literal 9S
+                
+                ' AA → columna 27+?  EXACTO según tu orden AJ=36
+                wsT.Cells(filaNueva, "AA") = 9                       ' valor fijo
+                
+                ' VALORES COMPRADOS (los enlazados)
+                wsT.Cells(filaNueva, "AB") = enl                      ' datos comprados
+                wsT.Cells(filaNueva, "A") = tipo                      ' también en A (tal como indicaste)
                 
                 filaNueva = filaNueva + 1
             
