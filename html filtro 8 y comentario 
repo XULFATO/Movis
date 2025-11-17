@@ -1,197 +1,95 @@
-Option Explicit
+Sub Generar_LINEASVCA()
 
-'======================== UTILIDADES ========================
-
-Private Function SheetExists(shName As String, Optional wb As Workbook) As Boolean
-    Dim s As Worksheet
-    If wb Is Nothing Then Set wb = ThisWorkbook
+    Dim wsC As Worksheet, wsT As Worksheet
+    Dim tipo As String, cliente As String, release As String
+    Dim filaNueva As Long, contador As Long
+    Dim ultFila As Long, i As Long
+    Dim valEnlace As String, valD As String, valF As String, valI As String
+    
+    '==== DATOS INICIALES ====
+    tipo = InputBox("Introduce TIPO:", "TIPO", "10")
+    cliente = InputBox("Introduce CLIENTE:", "CLIENTE")
+    release = InputBox("Introduce RELEASE:", "RELEASE")
+    If tipo = "" Or cliente = "" Or release = "" Then Exit Sub
+    
+    '==== HOJA ORIGEN ====
+    Set wsC = Worksheets("Contabilidad_Cuentas")
+    
+    '==== CREAR HOJA NUEVA ====
     On Error Resume Next
-    Set s = wb.Worksheets(shName)
-    SheetExists = Not s Is Nothing
-    On Error GoTo 0
-End Function
-
-' Devuelve una hoja con ese nombre: si existe la limpia, si no existe la crea.
-Private Function GetOrCreateSheet(shName As String, Optional wb As Workbook) As Worksheet
-    If wb Is Nothing Then Set wb = ThisWorkbook
     Application.DisplayAlerts = False
-    If SheetExists(shName, wb) Then
-        Set GetOrCreateSheet = wb.Worksheets(shName)
-        ' limpiamos sin borrar (evita problemas de memoria/renombrado)
-        GetOrCreateSheet.Cells.Clear
-        GetOrCreateSheet.Visible = xlSheetVisible
-        GetOrCreateSheet.Activate
-    Else
-        ' creamos y nombramos de forma segura (si falla, reintentamos)
-        Set GetOrCreateSheet = wb.Worksheets.Add(After:=wb.Worksheets(wb.Worksheets.Count))
-        On Error Resume Next
-        GetOrCreateSheet.Name = shName
-        If Err.Number <> 0 Then
-            ' plan B: buscar un nombre libre
-            Dim n As Long: n = 2
-            Err.Clear
-            Do
-                GetOrCreateSheet.Name = shName & " (" & n & ")"
-                n = n + 1
-            Loop While Err.Number <> 0
-        End If
-        On Error GoTo 0
-    End If
+    Worksheets("LINEASVCA").Delete
     Application.DisplayAlerts = True
-End Function
-
-' Normaliza el código de D: quita apóstrofe, espacios y ceros a la izquierda si es numérico
-Private Function NormalizarCodigo(v As Variant) As String
-    Dim s As String
-    s = Trim(CStr(v))
-    If Len(s) > 0 And Left$(s, 1) = "'" Then s = Mid$(s, 2)
-    s = Replace(s, " ", "")
-    If IsNumeric(s) Then
-        Do While Len(s) > 1 And Left$(s, 1) = "0"
-            s = Mid$(s, 2)
-        Loop
-    End If
-    NormalizarCodigo = s
-End Function
-
-' F válida = numérica; descartamos vacío/espacios, "-" y "."
-Private Function EsFValida(v As Variant) As Boolean
-    Dim s As String
-    s = Trim(CStr(v))
-    If s = "" Or s = "-" Or s = "." Then Exit Function
-    If Left$(s, 1) = "'" Then s = Mid$(s, 2)
-    EsFValida = IsNumeric(s)
-End Function
-
-' Devuelve el título de bloque (celda combinada superior en D) sin bucle infinito
-Private Function ObtenerTituloBloque(ws As Worksheet, fila As Long) As String
-    Dim f As Long
-    f = fila
-    If ws.Cells(f, "D").MergeCells Then
-        ObtenerTituloBloque = ws.Cells(f, "D").MergeArea.Cells(1, 1).Value
-        Exit Function
-    End If
-    Do While f > 1
-        f = f - 1
-        If ws.Cells(f, "D").MergeCells Then
-            ObtenerTituloBloque = ws.Cells(f, "D").MergeArea.Cells(1, 1).Value
-            Exit Function
-        End If
-    Loop
-    ObtenerTituloBloque = "" ' sin título arriba
-End Function
-
-'======================== MACRO PRINCIPAL ========================
-
-Sub Comparar_Mapeo_LRVTOT_SeguroMemoria()
-    Dim wb As Workbook: Set wb = ThisWorkbook
-    Dim wsMap As Worksheet, wsRes As Worksheet, wsL As Worksheet
-    Dim dict As Object ' key=Codigo(A) normalizado, value=Q
-    Dim ultFila As Long, i As Long, filaR As Long
-    Dim codMap As String, valE, valF, valQ
-    Dim titulo As String
+    On Error GoTo 0
     
-    ' --- proteger memoria / rendimiento ---
-    Dim oldCalc As XlCalculation, oldScr As Boolean, oldEvt As Boolean
-    oldCalc = Application.Calculation: Application.Calculation = xlCalculationManual
-    oldScr = Application.ScreenUpdating: Application.ScreenUpdating = False
-    oldEvt = Application.EnableEvents:   Application.EnableEvents = False
-    Application.DisplayAlerts = False
+    Set wsT = Worksheets.Add
+    wsT.Name = "LINEASVCA"
     
-    Set wsMap = wb.Worksheets("Contabilidad_mapeo")
-    Set wsRes = GetOrCreateSheet("Resultados", wb) ' << evita el fallo de Name/Delete
+    ' CABECERAS EXACTAS
+    wsT.Range("A1:AX1").Value = Array( _
+        "Tipo.", "Cliente", "Pac", "Release.", "Id.", "Cod.Tabla", "Linea", "Tip Lin", "COD.ENL.", "EM.DE.", _
+        "HD.", "CTA.ENT.", "DE", "CTR.HA", "E.ID.", "COD.ART.", "C.ID.", "HC", "H.ID.", "ID.", _
+        "D.M.H.", "R.D.", "R.H.", "CENT.COST.DE", "CENT.COST.HASTA", "COMP.DE", "ART.ID", "ART.HA", _
+        "NUM.CUENTA", "VALOR.ESPE.", "VCON.NAT", "VCON.COP", "CON.NAT", "CON.C.OP", "RESERVADO")
     
-    ' Cabecera
-    With wsRes
-        .Range("A1:G1").Value = Array( _
-            "Título del bloque (celda combinada D)", _
-            "Código (D) Contabilidad", _
-            "Código LRVTOT/LRUBTOT", _
-            "Valor E (Contabilidad)", _
-            "Valor F (Contabilidad)", _
-            "Valor Q (LRVTOT/LRUBTOT)", _
-            "Resultado (F vs Q)" _
-        )
-        .Rows(1).Font.Bold = True
-    End With
-    filaR = 2
+    filaNueva = 2
+    contador = 5
     
-    ' --- Construir índice LRVTOT/LRUBTOT leyendo en arrays (rápido y con poca memoria) ---
-    Set dict = CreateObject("Scripting.Dictionary")
-    Dim lastA As Long, arrA As Variant, arrQ As Variant, r As Long
-    For Each wsL In wb.Worksheets
-        If wsL.Name Like "LRVTOT*" Or wsL.Name Like "LRUBTOT*" Then
-            lastA = wsL.Cells(wsL.Rows.Count, "A").End(xlUp).Row
-            If lastA >= 1 Then
-                arrA = wsL.Range("A1:A" & lastA).Value
-                arrQ = wsL.Range("Q1:Q" & lastA).Value
-                For r = 1 To UBound(arrA, 1)
-                    If Len(Trim(arrA(r, 1))) > 0 Then
-                        Dim k As String: k = NormalizarCodigo(arrA(r, 1))
-                        If Not dict.Exists(k) Then dict.Add k, arrQ(r, 1)
-                    End If
-                Next r
-            End If
-        End If
-    Next wsL
+    '==== RECORRER CONTABILIDAD_CUENTAS ====
+    ultFila = wsC.Cells(wsC.Rows.Count, "B").End(xlUp).Row
     
-    ' --- Recorrer Contabilidad_mapeo: TODA la columna D desde fila 3, sin borrar nada ---
-    ultFila = wsMap.Cells(wsMap.Rows.Count, "D").End(xlUp).Row
-    For i = 3 To ultFila
-        ' saltar bloques combinados en D
-        If Not wsMap.Cells(i, "D").MergeCells Then
-            ' F debe ser numérica (descarta "", "-", ".")
-            If EsFValida(wsMap.Cells(i, "F").Value) Then
-                codMap = NormalizarCodigo(wsMap.Cells(i, "D").Value)
-                If codMap <> "" Then
-                    valE = wsMap.Cells(i, "E").Value
-                    valF = wsMap.Cells(i, "F").Value
-                    titulo = ObtenerTituloBloque(wsMap, i)
-                    
-                    ' escribir resultado
-                    wsRes.Cells(filaR, "A").Value = titulo
-                    wsRes.Cells(filaR, "B").Value = wsMap.Cells(i, "D").Value
-                    
-                    If dict.Exists(codMap) Then
-                        valQ = dict(codMap)
-                        wsRes.Cells(filaR, "C").Value = codMap
-                        wsRes.Cells(filaR, "D").Value = valE
-                        wsRes.Cells(filaR, "E").Value = valF
-                        wsRes.Cells(filaR, "F").Value = valQ
-                        
-                        If IsNumeric(valF) And IsNumeric(valQ) Then
-                            If CDbl(valF) = CDbl(valQ) Then
-                                wsRes.Cells(filaR, "G").Value = "Igual"
-                                wsRes.Rows(filaR).Interior.Color = RGB(198, 239, 206)
-                            Else
-                                wsRes.Cells(filaR, "G").Value = "Diferente"
-                                wsRes.Rows(filaR).Interior.Color = RGB(255, 199, 206)
-                            End If
-                        Else
-                            wsRes.Cells(filaR, "G").Value = "Texto / No numérico"
-                            wsRes.Rows(filaR).Interior.Color = RGB(255, 235, 156)
-                        End If
-                    Else
-                        wsRes.Cells(filaR, "C").Value = ""
-                        wsRes.Cells(filaR, "D").Value = valE
-                        wsRes.Cells(filaR, "E").Value = valF
-                        wsRes.Cells(filaR, "F").Value = ""
-                        wsRes.Cells(filaR, "G").Value = "No encontrado"
-                        wsRes.Rows(filaR).Interior.Color = RGB(255, 235, 156)
-                    End If
-                    filaR = filaR + 1
+    For i = 1 To ultFila
+        
+        ' B contiene ENLACE CONTABLE (texto combinado)
+        If Trim(wsC.Cells(i, "B").Value) <> "" Then
+            
+            ' mirar F y I (derecha 2 y derecha 4)
+            valF = Trim(wsC.Cells(i, "F").Value)
+            valI = Trim(wsC.Cells(i, "I").Value)
+            
+            ' SI alguna está informada → crear línea
+            If valF <> "" Or valI <> "" Then
+            
+                wsT.Cells(filaNueva, "A") = tipo
+                wsT.Cells(filaNueva, "B") = cliente
+                wsT.Cells(filaNueva, "C") = "991" & cliente
+                wsT.Cells(filaNueva, "D") = ""
+                wsT.Cells(filaNueva, "E") = release
+                
+                ' F valores fijos
+                wsT.Cells(filaNueva, "F") = ""
+                wsT.Cells(filaNueva, "G") = ""
+                
+                ' CONTADOR: 5, 10, 15...
+                wsT.Cells(filaNueva, "H") = contador
+                contador = contador + 5
+                
+                ' I = 0 siempre
+                wsT.Cells(filaNueva, "I") = 0
+                
+                ' Valores fijos indicados en texto
+                wsT.Cells(filaNueva, "J") = 999
+                wsT.Cells(filaNueva, "N") = 9
+                wsT.Cells(filaNueva, "AA") = 9
+                
+                ' AB ← si D e I están informadas, PRIORIDAD I
+                valD = Trim(wsC.Cells(i, "D").Value)
+                
+                If valI <> "" Then
+                    wsT.Cells(filaNueva, "AB") = valI
+                ElseIf valD <> "" Then
+                    wsT.Cells(filaNueva, "AB") = valD
                 End If
+                
+                ' AG ← columna E de Contabilidad_Cuentas
+                wsT.Cells(filaNueva, "AG") = wsC.Cells(i, "E").Value
+                
+                filaNueva = filaNueva + 1
+            
             End If
         End If
     Next i
     
-    wsRes.Columns("A:G").AutoFit
-    
-    ' --- restaurar estado de Excel ---
-    Application.DisplayAlerts = True
-    Application.Calculation = oldCalc
-    Application.EnableEvents = oldEvt
-    Application.ScreenUpdating = oldScr
-    
-    MsgBox "✅ Hecho. Hoja 'Resultados' creada/reciclada sin errores de memoria.", vbInformation
+    MsgBox "Proceso completado. Líneas generadas: " & filaNueva - 2, vbInformation
+
 End Sub
