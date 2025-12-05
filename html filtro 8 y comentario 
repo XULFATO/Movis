@@ -1,92 +1,74 @@
 Option Explicit
 
-Sub CompararColumnas_Col1_Col2()
-    Dim shOrigen As Worksheet
-    Dim shDestino As Worksheet
-    Dim ultFila1 As Long, ultFila2 As Long
+Sub Comparar_Col1_Col2_SinCabeceras()
+    Dim sh As Worksheet
+    Dim ultFila1 As Long, ultFila2 As Long, ultFila As Long
     Dim i As Long
     Dim dictCol1 As Object, dictCol2 As Object
     Dim clave As Variant
     Dim filaSolo1 As Long, filaSolo2 As Long, filaAmbas As Long
     
-    '--- hoja de origen: la que tiene las columnas 1 y 2
-    Set shOrigen = ActiveSheet
+    Set sh = ActiveSheet
     
-    '--- última fila con datos en col 1 y col 2 (ignorando huecos intermedios)
-    ultFila1 = shOrigen.Cells(shOrigen.Rows.Count, "A").End(xlUp).Row
-    ultFila2 = shOrigen.Cells(shOrigen.Rows.Count, "B").End(xlUp).Row
+    ' Última fila usada en cada columna
+    ultFila1 = sh.Cells(sh.Rows.Count, "A").End(xlUp).Row
+    ultFila2 = sh.Cells(sh.Rows.Count, "B").End(xlUp).Row
+    ultFila = Application.WorksheetFunction.Max(ultFila1, ultFila2)
     
-    '--- crear hoja destino
-    On Error Resume Next
-    Application.DisplayAlerts = False
-    Worksheets("Comparación").Delete ' si ya existe, la borra
-    Application.DisplayAlerts = True
-    On Error GoTo 0
-    
-    Set shDestino = Worksheets.Add
-    shDestino.Name = "Comparación"
-    
-    '--- cabeceras
-    shDestino.Range("A1").Value = shOrigen.Range("A1").Value ' título columna 1
-    shDestino.Range("B1").Value = shOrigen.Range("B1").Value ' título columna 2
-    shDestino.Range("C1").Value = "Solo en " & shOrigen.Range("A1").Value
-    shDestino.Range("D1").Value = "Solo en " & shOrigen.Range("B1").Value
-    shDestino.Range("E1").Value = "En " & shOrigen.Range("A1").Value & " y " & shOrigen.Range("B1").Value
-    
-    '--- copiar listas completas de col 1 y col 2 (por si quieres verlas tal cual)
-    shOrigen.Range("A2:A" & ultFila1).Copy shDestino.Range("A2")
-    shOrigen.Range("B2:B" & ultFila2).Copy shDestino.Range("B2")
-    
-    '--- diccionarios para comparar
+    ' Diccionarios
     Set dictCol1 = CreateObject("Scripting.Dictionary")
     Set dictCol2 = CreateObject("Scripting.Dictionary")
     
-    ' Rellenar diccionario Columna 1
-    For i = 2 To ultFila1
-        If Trim(shOrigen.Cells(i, "A").Value) <> "" Then
-            If Not dictCol1.Exists(Trim(shOrigen.Cells(i, "A").Value)) Then
-                dictCol1.Add Trim(shOrigen.Cells(i, "A").Value), True
+    ' Rellenar diccionario Columna 1 (A)
+    For i = 1 To ultFila1
+        If Trim(sh.Cells(i, "A").Value) <> "" Then
+            If Not dictCol1.Exists(Trim(sh.Cells(i, "A").Value)) Then
+                dictCol1.Add Trim(sh.Cells(i, "A").Value), True
             End If
         End If
     Next i
     
-    ' Rellenar diccionario Columna 2
-    For i = 2 To ultFila2
-        If Trim(shOrigen.Cells(i, "B").Value) <> "" Then
-            If Not dictCol2.Exists(Trim(shOrigen.Cells(i, "B").Value)) Then
-                dictCol2.Add Trim(shOrigen.Cells(i, "B").Value), True
+    ' Rellenar diccionario Columna 2 (B)
+    For i = 1 To ultFila2
+        If Trim(sh.Cells(i, "B").Value) <> "" Then
+            If Not dictCol2.Exists(Trim(sh.Cells(i, "B").Value)) Then
+                dictCol2.Add Trim(sh.Cells(i, "B").Value), True
             End If
         End If
     Next i
     
-    '--- recorrer y volcar resultados
-    filaSolo1 = 2
-    filaSolo2 = 2
-    filaAmbas = 2
+    ' Limpiar columnas de resultados C, D, E
+    sh.Range("C:E").ClearContents
     
-    ' Valores que están en Col1
+    ' Filas de salida
+    filaSolo1 = 1
+    filaSolo2 = 1
+    filaAmbas = 1
+    
+    ' Recorremos valores de la Columna 1
     For Each clave In dictCol1.Keys
         If dictCol2.Exists(clave) Then
-            ' en ambas
-            shDestino.Cells(filaAmbas, "E").Value = clave
+            ' Está en las dos: columna 5 (E)
+            sh.Cells(filaAmbas, "E").Value = clave
             filaAmbas = filaAmbas + 1
         Else
-            ' solo en col1
-            shDestino.Cells(filaSolo1, "C").Value = clave
+            ' Solo en columna 1: columna 3 (C)
+            sh.Cells(filaSolo1, "C").Value = clave
             filaSolo1 = filaSolo1 + 1
         End If
     Next clave
     
-    ' Valores que están solo en Col2
+    ' Recorremos valores de la Columna 2
     For Each clave In dictCol2.Keys
         If Not dictCol1.Exists(clave) Then
-            shDestino.Cells(filaSolo2, "D").Value = clave
+            ' Solo en columna 2: columna 4 (D)
+            sh.Cells(filaSolo2, "D").Value = clave
             filaSolo2 = filaSolo2 + 1
         End If
     Next clave
     
-    ' Ajustar ancho columnas
-    shDestino.Columns("A:E").AutoFit
+    ' Ajustar anchos
+    sh.Columns("A:E").AutoFit
     
-    MsgBox "Comparación terminada. Revisa la hoja 'Comparación'.", vbInformation
+    MsgBox "Comparación completada. Revisa columnas C (solo 1), D (solo 2) y E (ambas).", vbInformation
 End Sub
