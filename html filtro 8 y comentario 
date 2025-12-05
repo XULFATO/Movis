@@ -1,16 +1,17 @@
 Option Explicit
 
-Sub Comparar_Col1_Col2_SinCabeceras()
+Sub Comparar_Col1_Col2_DesdeFila2_Ordenado()
     Dim sh As Worksheet
     Dim ultFila1 As Long, ultFila2 As Long, ultFila As Long
     Dim i As Long
     Dim dictCol1 As Object, dictCol2 As Object
     Dim clave As Variant
     Dim filaSolo1 As Long, filaSolo2 As Long, filaAmbas As Long
+    Dim lastSolo1 As Long, lastSolo2 As Long, lastAmbas As Long
     
     Set sh = ActiveSheet
     
-    ' Última fila usada en cada columna
+    ' Última fila usada en cada columna (busca desde abajo)
     ultFila1 = sh.Cells(sh.Rows.Count, "A").End(xlUp).Row
     ultFila2 = sh.Cells(sh.Rows.Count, "B").End(xlUp).Row
     ultFila = Application.WorksheetFunction.Max(ultFila1, ultFila2)
@@ -19,8 +20,8 @@ Sub Comparar_Col1_Col2_SinCabeceras()
     Set dictCol1 = CreateObject("Scripting.Dictionary")
     Set dictCol2 = CreateObject("Scripting.Dictionary")
     
-    ' Rellenar diccionario Columna 1 (A)
-    For i = 1 To ultFila1
+    ' Rellenar diccionario Columna 1 (A), desde fila 2
+    For i = 2 To ultFila1
         If Trim(sh.Cells(i, "A").Value) <> "" Then
             If Not dictCol1.Exists(Trim(sh.Cells(i, "A").Value)) Then
                 dictCol1.Add Trim(sh.Cells(i, "A").Value), True
@@ -28,8 +29,8 @@ Sub Comparar_Col1_Col2_SinCabeceras()
         End If
     Next i
     
-    ' Rellenar diccionario Columna 2 (B)
-    For i = 1 To ultFila2
+    ' Rellenar diccionario Columna 2 (B), desde fila 2
+    For i = 2 To ultFila2
         If Trim(sh.Cells(i, "B").Value) <> "" Then
             If Not dictCol2.Exists(Trim(sh.Cells(i, "B").Value)) Then
                 dictCol2.Add Trim(sh.Cells(i, "B").Value), True
@@ -37,13 +38,13 @@ Sub Comparar_Col1_Col2_SinCabeceras()
         End If
     Next i
     
-    ' Limpiar columnas de resultados C, D, E
-    sh.Range("C:E").ClearContents
+    ' Limpiar solo resultados, sin tocar fila 1
+    sh.Range("C2:E" & sh.Rows.Count).ClearContents
     
-    ' Filas de salida
-    filaSolo1 = 1
-    filaSolo2 = 1
-    filaAmbas = 1
+    ' Filas de salida (empiezan en 2)
+    filaSolo1 = 2
+    filaSolo2 = 2
+    filaAmbas = 2
     
     ' Recorremos valores de la Columna 1
     For Each clave In dictCol1.Keys
@@ -67,8 +68,25 @@ Sub Comparar_Col1_Col2_SinCabeceras()
         End If
     Next clave
     
-    ' Ajustar anchos
-    sh.Columns("A:E").AutoFit
+    ' Últimas filas realmente usadas en cada bloque
+    lastSolo1 = filaSolo1 - 1
+    lastSolo2 = filaSolo2 - 1
+    lastAmbas = filaAmbas - 1
     
-    MsgBox "Comparación completada. Revisa columnas C (solo 1), D (solo 2) y E (ambas).", vbInformation
+    ' Ordenar cada bloque si tiene datos
+    With sh
+        If lastSolo1 >= 2 Then
+            .Range("C2:C" & lastSolo1).Sort Key1:=.Range("C2"), Order1:=xlAscending, Header:=xlNo
+        End If
+        If lastSolo2 >= 2 Then
+            .Range("D2:D" & lastSolo2).Sort Key1:=.Range("D2"), Order1:=xlAscending, Header:=xlNo
+        End If
+        If lastAmbas >= 2 Then
+            .Range("E2:E" & lastAmbas).Sort Key1:=.Range("E2"), Order1:=xlAscending, Header:=xlNo
+        End If
+        
+        .Columns("A:E").AutoFit
+    End With
+    
+    MsgBox "Comparación completada. Revisa columnas C (solo 1), D (solo 2) y E (ambas), desde fila 2.", vbInformation
 End Sub
