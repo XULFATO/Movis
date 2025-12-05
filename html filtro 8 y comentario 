@@ -1,113 +1,92 @@
-Sub Generar_LINEASVCA()
+Option Explicit
 
-    Dim wsC As Worksheet, wsT As Worksheet
-    Dim tipo As String, cliente As String, release As String
-    Dim filaNueva As Long, contador As Long
-    Dim ultFila As Long, i As Long
+Sub CompararColumnas_Col1_Col2()
+    Dim shOrigen As Worksheet
+    Dim shDestino As Worksheet
+    Dim ultFila1 As Long, ultFila2 As Long
+    Dim i As Long
+    Dim dictCol1 As Object, dictCol2 As Object
+    Dim clave As Variant
+    Dim filaSolo1 As Long, filaSolo2 As Long, filaAmbas As Long
     
-    Dim valB As String, valD As String, valF As String
+    '--- hoja de origen: la que tiene las columnas 1 y 2
+    Set shOrigen = ActiveSheet
     
-    '==========================
-    ' 1. Pedir datos
-    '==========================
-    tipo = InputBox("Introduce TIPO:", "TIPO", "10")
-    cliente = InputBox("Introduce CLIENTE:", "CLIENTE")
-    release = InputBox("Introduce RELEASE:", "RELEASE")
-    If tipo = "" Or cliente = "" Or release = "" Then Exit Sub
+    '--- última fila con datos en col 1 y col 2 (ignorando huecos intermedios)
+    ultFila1 = shOrigen.Cells(shOrigen.Rows.Count, "A").End(xlUp).Row
+    ultFila2 = shOrigen.Cells(shOrigen.Rows.Count, "B").End(xlUp).Row
     
-    '==========================
-    ' 2. Localizar hoja
-    '==========================
-    Set wsC = Worksheets("Contabilidad_Cuentas")
-    
-    '==========================
-    ' 3. Borrar hoja anterior
-    '==========================
+    '--- crear hoja destino
     On Error Resume Next
     Application.DisplayAlerts = False
-    Worksheets("LINEASVCA").Delete
+    Worksheets("Comparación").Delete ' si ya existe, la borra
     Application.DisplayAlerts = True
     On Error GoTo 0
     
-    '==========================
-    ' 4. Crear hoja nueva
-    '==========================
-    Set wsT = Worksheets.Add
-    wsT.Name = "LINEASVCA"
+    Set shDestino = Worksheets.Add
+    shDestino.Name = "Comparación"
     
-    '==========================
-    ' 5. Cabeceras EXACTAS (36)
-    '==========================
-    wsT.Range("A1:AJ1").Value = Array( _
-        "Tipo", "Cliente", "Pac", "Release", "Id", "Cod.Tabla", "Lineas", "Tip Lin", "COD.ENL", _
-        "EM.DE", "EM.HA", "CTR.DE", "CTR.HA", "T.E.D", "T.E.H", "CAT.DE", "CAT.HA", _
-        "T.C.H", "D.I.D", "D.I.H", "T.R.D", "T.R.H", "CENT.COST.DESDE", "CENT.COST.HASTA", _
-        "AR.LI.D", "AR.LI.HA", "NUM.CUENTA", "VALOR.ESPEC.", "NAT.", "CO.OP", "RESERVADO", _
-        "CONTR.NUM.CTA", "CONTR.VAL.ESP.", "CON.NAT", "CON.CO.OP", "RESERVADO")
+    '--- cabeceras
+    shDestino.Range("A1").Value = shOrigen.Range("A1").Value ' título columna 1
+    shDestino.Range("B1").Value = shOrigen.Range("B1").Value ' título columna 2
+    shDestino.Range("C1").Value = "Solo en " & shOrigen.Range("A1").Value
+    shDestino.Range("D1").Value = "Solo en " & shOrigen.Range("B1").Value
+    shDestino.Range("E1").Value = "En " & shOrigen.Range("A1").Value & " y " & shOrigen.Range("B1").Value
     
-    filaNueva = 2
-    contador = 5
+    '--- copiar listas completas de col 1 y col 2 (por si quieres verlas tal cual)
+    shOrigen.Range("A2:A" & ultFila1).Copy shDestino.Range("A2")
+    shOrigen.Range("B2:B" & ultFila2).Copy shDestino.Range("B2")
     
-    '==========================
-    ' 6. Procesar Contabilidad_Cuentas
-    '==========================
-    ultFila = wsC.Cells(wsC.Rows.Count, "B").End(xlUp).Row
-
-    For i = 1 To ultFila
-        
-        ' B = ENLACE CONTABLE
-        If Trim(wsC.Cells(i, "B").Value) <> "" Then
-            
-            ' valores fuente
-            valB = Trim(wsC.Cells(i, "B").Value) ' Enlace contable
-            valD = Trim(wsC.Cells(i, "D").Value)
-            valF = Trim(wsC.Cells(i, "F").Value)
-            
-            ' si hay datos relevantes → generar línea
-            If valD <> "" Or valF <> "" Then
-            
-                '============================================
-                '   7. Relleno de columnas según tus reglas
-                '============================================
-                
-                wsT.Cells(filaNueva, "A") = tipo
-                wsT.Cells(filaNueva, "B") = cliente
-                wsT.Cells(filaNueva, "C") = "991" & cliente
-                wsT.Cells(filaNueva, "D") = release
-                wsT.Cells(filaNueva, "E") = "V"
-                wsT.Cells(filaNueva, "F") = "V,C,A"            ' literal
-                
-                wsT.Cells(filaNueva, "G") = contador          ' líneas 5-10-15...
-                contador = contador + 5
-                
-                wsT.Cells(filaNueva, "I") = valB              ' COD.ENL = ENLACE CONTABLE (col B)
-                
-                '=== VALORES FIJOS CORREGIDOS ===
-                wsT.Cells(filaNueva, "J") = "0,1"             ' literal exacto
-                wsT.Cells(filaNueva, "K") = "99"
-                
-                ' T.C.H → columna S (que en tu orden es la 18 → letra R o S según offset)
-                ' Confirmado: lo ponemos en columna correspondiente a T.C.H (posición 17)
-                wsT.Cells(filaNueva, "R") = "9,9,9"           ' T.C.H
-                
-                wsT.Cells(filaNueva, "U") = "9"               ' ya no 9S
-                
-                wsT.Cells(filaNueva, "AA") = 9                ' fijo 9
-                
-                ' AB → columna D de Contabilidad Cuentas
-                wsT.Cells(filaNueva, "AB") = valD
-                
-                ' AG → columna F SOLO si D y F están informadas
-                If valD <> "" And valF <> "" Then
-                    wsT.Cells(filaNueva, "AG") = valF
-                End If
-                
-                filaNueva = filaNueva + 1
-            
+    '--- diccionarios para comparar
+    Set dictCol1 = CreateObject("Scripting.Dictionary")
+    Set dictCol2 = CreateObject("Scripting.Dictionary")
+    
+    ' Rellenar diccionario Columna 1
+    For i = 2 To ultFila1
+        If Trim(shOrigen.Cells(i, "A").Value) <> "" Then
+            If Not dictCol1.Exists(Trim(shOrigen.Cells(i, "A").Value)) Then
+                dictCol1.Add Trim(shOrigen.Cells(i, "A").Value), True
             End If
         End If
     Next i
     
-    MsgBox "Proceso completado. Líneas generadas: " & filaNueva - 2, vbInformation
-
+    ' Rellenar diccionario Columna 2
+    For i = 2 To ultFila2
+        If Trim(shOrigen.Cells(i, "B").Value) <> "" Then
+            If Not dictCol2.Exists(Trim(shOrigen.Cells(i, "B").Value)) Then
+                dictCol2.Add Trim(shOrigen.Cells(i, "B").Value), True
+            End If
+        End If
+    Next i
+    
+    '--- recorrer y volcar resultados
+    filaSolo1 = 2
+    filaSolo2 = 2
+    filaAmbas = 2
+    
+    ' Valores que están en Col1
+    For Each clave In dictCol1.Keys
+        If dictCol2.Exists(clave) Then
+            ' en ambas
+            shDestino.Cells(filaAmbas, "E").Value = clave
+            filaAmbas = filaAmbas + 1
+        Else
+            ' solo en col1
+            shDestino.Cells(filaSolo1, "C").Value = clave
+            filaSolo1 = filaSolo1 + 1
+        End If
+    Next clave
+    
+    ' Valores que están solo en Col2
+    For Each clave In dictCol2.Keys
+        If Not dictCol1.Exists(clave) Then
+            shDestino.Cells(filaSolo2, "D").Value = clave
+            filaSolo2 = filaSolo2 + 1
+        End If
+    Next clave
+    
+    ' Ajustar ancho columnas
+    shDestino.Columns("A:E").AutoFit
+    
+    MsgBox "Comparación terminada. Revisa la hoja 'Comparación'.", vbInformation
 End Sub
