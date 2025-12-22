@@ -1,38 +1,10 @@
 Option Explicit
 
-' ==========
-' Macro principal
-' ==========
-Sub Quick3270_Captura_Todos_Los_Metodos()
-    Dim root As Object
-    Set root = TryAttachAnyProgID()
+Public Function Quick3270_Captura_TODO() As Boolean
+    On Error Resume Next
 
-    If root Is Nothing Then
-        MsgBox "No pude enganchar ningún ProgID conocido." & vbCrLf & _
-               "Solución rápida: dime el nombre exacto del emulador y versión, o pásame la lista de referencias COM instaladas.", vbExclamation
-        Exit Sub
-    End If
-
-    Dim scr As Object
-    Set scr = TryGetScreenObject(root)
-
-    ' Si no encontramos "Screen", igual probamos a capturar desde el root directamente.
-    If scr Is Nothing Then
-        MsgBox "Enganchado a un objeto, pero no encontré .Screen por rutas típicas." & vbCrLf & _
-               "Voy a intentar capturar texto llamando métodos sobre el objeto raíz.", vbInformation
-        TryAllCaptureMethods root, "ROOT"
-    Else
-        TryAllCaptureMethods scr, "SCREEN"
-    End If
-End Sub
-
-
-' ==========
-' 1) Intentar enganchar a una instancia viva (GetObject) o crear (CreateObject)
-' ==========
-Private Function TryAttachAnyProgID() As Object
-    Dim candidates As Variant
-    candidates = Array( _
+    Dim progIDs As Variant
+    progIDs = Array( _
         "Quick3270.Application", _
         "Quick3270.Session", _
         "Quick3270", _
@@ -44,305 +16,115 @@ Private Function TryAttachAnyProgID() As Object
         "EHLLAPI.Application" _
     )
 
-    Dim i As Long, obj As Object
-
-    For i = LBound(candidates) To UBound(candidates)
-        Set obj = Nothing
-
-        On Error Resume Next
-        Set obj = GetObject(, CStr(candidates(i)))
-        On Error GoTo 0
-
-        If Not obj Is Nothing Then
-            MsgBox "OK: Enganchado con GetObject -> " & candidates(i), vbInformation
-            Set TryAttachAnyProgID = obj
-            Exit Function
-        End If
-    Next i
-
-    ' Si no hay instancia viva, intentamos crearla
-    For i = LBound(candidates) To UBound(candidates)
-        Set obj = Nothing
-
-        On Error Resume Next
-        Set obj = CreateObject(CStr(candidates(i)))
-        On Error GoTo 0
-
-        If Not obj Is Nothing Then
-            MsgBox "OK: Creado con CreateObject -> " & candidates(i), vbInformation
-            Set TryAttachAnyProgID = obj
-            Exit Function
-        End If
-    Next i
-
-    Set TryAttachAnyProgID = Nothing
-End Function
-
-
-' ==========
-' 2) Intentar sacar un objeto Screen por rutas típicas
-' ==========
-Private Function TryGetScreenObject(ByVal root As Object) As Object
-    Dim scr As Object
-
-    ' Lista de rutas típicas a "Screen"
-    ' root.ActiveSession.Screen
-    Set scr = TryGetByPath(root, "ActiveSession.Screen")
-    If Not scr Is Nothing Then Set TryGetScreenObject = scr: Exit Function
-
-    ' root.Session.Screen
-    Set scr = TryGetByPath(root, "Session.Screen")
-    If Not scr Is Nothing Then Set TryGetScreenObject = scr: Exit Function
-
-    ' root.Session(0).Screen
-    Set scr = TryGetByIndexedPath(root, "Session", 0, "Screen")
-    If Not scr Is Nothing Then Set TryGetScreenObject = scr: Exit Function
-
-    ' root.Sessions(0).Screen
-    Set scr = TryGetByIndexedPath(root, "Sessions", 0, "Screen")
-    If Not scr Is Nothing Then Set TryGetScreenObject = scr: Exit Function
-
-    ' root.Screen directamente
-    Set scr = TryGetByPath(root, "Screen")
-    If Not scr Is Nothing Then Set TryGetScreenObject = scr: Exit Function
-
-    Set TryGetScreenObject = Nothing
-End Function
-
-Private Function TryGetByPath(ByVal root As Object, ByVal path As String) As Object
-    ' path ejemplo: "ActiveSession.Screen"
-    Dim parts() As String
-    parts = Split(path, ".")
-
-    Dim cur As Object
-    Set cur = root
-
+    Dim root As Object, scr As Object
     Dim i As Long
-    For i = LBound(parts) To UBound(parts)
-        If cur Is Nothing Then Exit For
 
-        Dim nextObj As Object
-        Set nextObj = Nothing
-
-        On Error Resume Next
-        Set nextObj = CallByName(cur, parts(i), VbGet)
-        On Error GoTo 0
-
-        Set cur = nextObj
-    Next i
-
-    Set TryGetByPath = cur
-End Function
-
-Private Function TryGetByIndexedPath(ByVal root As Object, ByVal collectionName As String, ByVal idx As Long, ByVal finalProp As String) As Object
-    Dim col As Object, item As Object, fin As Object
-    Set col = Nothing: Set item = Nothing: Set fin = Nothing
-
-    On Error Resume Next
-    Set col = CallByName(root, collectionName, VbGet)
-    If Not col Is Nothing Then
-        Set item = CallByName(col, "Item", VbMethod, idx)
-        If item Is Nothing Then
-            ' Algunos exponen col(idx)
-            Set item = col(idx)
-        End If
-        If Not item Is Nothing Then
-            Set fin = CallByName(item, finalProp, VbGet)
-        End If
-    End If
-    On Error GoTo 0
-
-    Set TryGetByIndexedPath = fin
-End Function
-
-
-' ==========
-' 3) Probar muchos métodos de captura y enseñar resultado
-' ==========
-Private Sub TryAllCaptureMethods(ByVal target As Object, ByVal label As String)
-    Dim txt As String
-
-    ' 3.1) Propiedades directas típicas
-    txt = TryGetTextProperty(target, "Text")
-    ShowAttempt label & ".Prop(Text)", txt
-
-    txt = TryGetTextProperty(target, "TextString")
-    ShowAttempt label & ".Prop(TextString)", txt
-
-    txt = TryGetTextProperty(target, "ScreenText")
-    ShowAttempt label & ".Prop(ScreenText)", txt
-
-    ' 3.2) Métodos típicos sin coordenadas
-    txt = TryCallMethod0(target, "GetText")
-    ShowAttempt label & ".GetText()", txt
-
-    txt = TryCallMethod0(target, "GetScreenText")
-    ShowAttempt label & ".GetScreenText()", txt
-
-    txt = TryCallMethod0(target, "ReadScreen")
-    ShowAttempt label & ".ReadScreen()", txt
-
-    txt = TryCallMethod0(target, "Copy")
-    ShowAttempt label & ".Copy()", txt
-    ShowAttempt label & ".Clipboard(after Copy)", TryReadClipboardText()
-
-    txt = TryCallMethod0(target, "CopyScreen")
-    ShowAttempt label & ".CopyScreen()", txt
-    ShowAttempt label & ".Clipboard(after CopyScreen)", TryReadClipboardText()
-
-    ' 3.3) GetString por filas (el más habitual en 3270)
-    txt = TryGetStringByRows(target)
-    ShowAttempt label & ".GetStringByRows()", txt
-
-    ' 3.4) GetString “de golpe” si soporta (row,col,len)
-    ' Probamos una lectura generosa 24x80 desde 1,1
-    txt = TryCallGetString(target, 1, 1, 1920)
-    ShowAttempt label & ".GetString(1,1,1920)", txt
-
-    ' 3.5) Otros nombres frecuentes
-    txt = TryCallMethod3(target, "GetString", 1, 1, 1920) ' por si no acepta Longs bien
-    ShowAttempt label & ".GetString(1,1,1920) [alt]", txt
-
-    txt = TryCallMethod0(target, "DumpScreen")
-    ShowAttempt label & ".DumpScreen()", txt
-
-    MsgBox "Fin de intentos sobre " & label & ".", vbInformation
-End Sub
-
-
-' ==========
-' Helpers de captura
-' ==========
-Private Function TryGetTextProperty(ByVal obj As Object, ByVal propName As String) As String
-    Dim v
-    On Error Resume Next
-    v = CallByName(obj, propName, VbGet)
-    On Error GoTo 0
-
-    If IsEmpty(v) Or IsNull(v) Then
-        TryGetTextProperty = ""
-    Else
-        TryGetTextProperty = CStr(v)
-    End If
-End Function
-
-Private Function TryCallMethod0(ByVal obj As Object, ByVal methodName As String) As String
-    Dim v
-    On Error Resume Next
-    v = CallByName(obj, methodName, VbMethod)
-    On Error GoTo 0
-
-    If IsEmpty(v) Or IsNull(v) Then
-        TryCallMethod0 = ""
-    Else
-        TryCallMethod0 = CStr(v)
-    End If
-End Function
-
-Private Function TryCallMethod3(ByVal obj As Object, ByVal methodName As String, ByVal a As Variant, ByVal b As Variant, ByVal c As Variant) As String
-    Dim v
-    On Error Resume Next
-    v = CallByName(obj, methodName, VbMethod, a, b, c)
-    On Error GoTo 0
-
-    If IsEmpty(v) Or IsNull(v) Then
-        TryCallMethod3 = ""
-    Else
-        TryCallMethod3 = CStr(v)
-    End If
-End Function
-
-Private Function TryCallGetString(ByVal obj As Object, ByVal row As Long, ByVal col As Long, ByVal length As Long) As String
-    Dim v
-    On Error Resume Next
-    v = CallByName(obj, "GetString", VbMethod, row, col, length)
-    On Error GoTo 0
-
-    If IsEmpty(v) Or IsNull(v) Then
-        TryCallGetString = ""
-    Else
-        TryCallGetString = CStr(v)
-    End If
-End Function
-
-Private Function TryGetStringByRows(ByVal scr As Object) As String
-    Dim rows As Long, cols As Long
-
-    rows = TryGetLongProp(scr, "Rows")
-    cols = TryGetLongProp(scr, "Cols")
-
-    ' Fallbacks típicos
-    If rows <= 0 Then rows = 24
-    If cols <= 0 Then cols = 80
-
-    Dim r As Long, line As String, allText As String
-    For r = 1 To rows
-        line = TryCallGetString(scr, r, 1, cols)
-        If line = "" Then
-            ' Si no existe GetString, no seguimos
+    ' ==========
+    ' 1) ENGANCHE PROGID
+    ' ==========
+    For i = LBound(progIDs) To UBound(progIDs)
+        Set root = Nothing
+        Set root = GetObject(, progIDs(i))
+        If Not root Is Nothing Then
+            MsgBox "Enganchado con GetObject: " & progIDs(i)
             Exit For
         End If
-        allText = allText & RTrim$(line) & vbCrLf
+    Next i
+
+    If root Is Nothing Then
+        For i = LBound(progIDs) To UBound(progIDs)
+            Set root = Nothing
+            Set root = CreateObject(progIDs(i))
+            If Not root Is Nothing Then
+                MsgBox "Creado con CreateObject: " & progIDs(i)
+                Exit For
+            End If
+        Next i
+    End If
+
+    If root Is Nothing Then
+        MsgBox "❌ No se pudo enganchar ningún ProgID"
+        Quick3270_Captura_TODO = False
+        Exit Function
+    End If
+
+    ' ==========
+    ' 2) INTENTAR OBTENER SCREEN
+    ' ==========
+    Set scr = Nothing
+    Set scr = CallByName(root, "Screen", VbGet)
+    If scr Is Nothing Then Set scr = CallByName(root, "ActiveSession", VbGet)
+    If Not scr Is Nothing Then
+        Set scr = CallByName(scr, "Screen", VbGet)
+    End If
+    If scr Is Nothing Then Set scr = root
+
+    MsgBox "Objeto usado para captura: " & TypeName(scr)
+
+    Dim txt As String, r As Long
+    Dim rows As Long, cols As Long
+
+    ' ==========
+    ' 3) PROPIEDADES DIRECTAS
+    ' ==========
+    txt = ""
+    txt = CallByName(scr, "Text", VbGet)
+    MsgBox "Intento .Text" & vbCrLf & Left(txt, 1000)
+
+    txt = ""
+    txt = CallByName(scr, "TextString", VbGet)
+    MsgBox "Intento .TextString" & vbCrLf & Left(txt, 1000)
+
+    ' ==========
+    ' 4) MÉTODOS SIN COORDENADAS
+    ' ==========
+    txt = ""
+    txt = CallByName(scr, "GetText", VbMethod)
+    MsgBox "Intento GetText()" & vbCrLf & Left(txt, 1000)
+
+    txt = ""
+    txt = CallByName(scr, "GetScreenText", VbMethod)
+    MsgBox "Intento GetScreenText()" & vbCrLf & Left(txt, 1000)
+
+    txt = ""
+    CallByName scr, "CopyScreen", VbMethod
+    Dim clip As Object
+    Set clip = CreateObject("MSForms.DataObject")
+    clip.GetFromClipboard
+    txt = clip.GetText
+    MsgBox "Intento CopyScreen + Clipboard" & vbCrLf & Left(txt, 1000)
+
+    ' ==========
+    ' 5) GETSTRING MASIVO
+    ' ==========
+    rows = 24: cols = 80
+    rows = CallByName(scr, "Rows", VbGet)
+    cols = CallByName(scr, "Cols", VbGet)
+
+    txt = ""
+    txt = CallByName(scr, "GetString", VbMethod, 1, 1, rows * cols)
+    MsgBox "Intento GetString(1,1," & rows * cols & ")" & vbCrLf & Left(txt, 1000)
+
+    ' ==========
+    ' 6) GETSTRING POR FILAS (CLÁSICO 3270)
+    ' ==========
+    txt = ""
+    For r = 1 To rows
+        txt = txt & CallByName(scr, "GetString", VbMethod, r, 1, cols) & vbCrLf
     Next r
+    MsgBox "Intento GetString por filas" & vbCrLf & Left(txt, 1000)
 
-    TryGetStringByRows = allText
-End Function
+    ' ==========
+    ' 7) OTROS NOMBRES FRECUENTES
+    ' ==========
+    txt = ""
+    txt = CallByName(scr, "ReadScreen", VbMethod)
+    MsgBox "Intento ReadScreen()" & vbCrLf & Left(txt, 1000)
 
-Private Function TryGetLongProp(ByVal obj As Object, ByVal propName As String) As Long
-    Dim v
-    On Error Resume Next
-    v = CallByName(obj, propName, VbGet)
-    On Error GoTo 0
+    txt = ""
+    txt = CallByName(scr, "DumpScreen", VbMethod)
+    MsgBox "Intento DumpScreen()" & vbCrLf & Left(txt, 1000)
 
-    If IsNumeric(v) Then
-        TryGetLongProp = CLng(v)
-    Else
-        TryGetLongProp = 0
-    End If
-End Function
-
-
-' ==========
-' Clipboard (por si el emulador copia pantalla al portapapeles)
-' Requiere referencia "Microsoft Forms 2.0 Object Library" para MSForms.DataObject
-' Si no está, devuelve "" sin romper.
-' ==========
-Private Function TryReadClipboardText() As String
-    On Error GoTo EH
-
-    Dim dobj As Object
-    Set dobj = CreateObject("MSForms.DataObject")
-
-    dobj.GetFromClipboard
-    TryReadClipboardText = CStr(dobj.GetText(1))
-    Exit Function
-
-EH:
-    TryReadClipboardText = ""
-End Function
-
-
-' ==========
-' Presentación de cada intento
-' ==========
-Private Sub ShowAttempt(ByVal attemptName As String, ByVal captured As String)
-    Dim displayText As String
-
-    If Len(captured) = 0 Then
-        displayText = "(vacío / no soportado)"
-    Else
-        ' Recortamos para que MsgBox no sea un ladrillo inmanejable
-        displayText = NormalizeNewlines(captured)
-        If Len(displayText) > 1200 Then
-            displayText = Left$(displayText, 1200) & vbCrLf & "…(recortado)…"
-        End If
-    End If
-
-    MsgBox "Intento: " & attemptName & vbCrLf & vbCrLf & displayText, vbOKOnly Or vbInformation
-End Sub
-
-Private Function NormalizeNewlines(ByVal s As String) As String
-    ' Limpieza mínima
-    s = Replace(s, vbCrLf & vbCrLf & vbCrLf, vbCrLf & vbCrLf)
-    NormalizeNewlines = s
+    MsgBox "✔ FIN DE TODAS LAS PRUEBAS"
+    Quick3270_Captura_TODO = True
 End Function
