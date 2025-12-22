@@ -1,144 +1,65 @@
-' Quick3270 QVBS (VBScript) - Captura texto por todos los métodos posibles
-' Nota: En VBScript no hay CallByName. Usamos On Error Resume Next y llamadas directas.
+' Quick3270 QVBS - Diagnóstico de captura de pantalla (sin COM, usando funciones globales)
 
 Sub Main()
   On Error Resume Next
 
-  Dim app, sess, scr
-  Set app = Nothing
-  Set sess = Nothing
-  Set scr = Nothing
+  Dim t, s, r
 
-  ' 1) Intento típico por COM: Quick3270.Application -> ActiveSession -> Screen
-  Set app = CreateObject("Quick3270.Application")
-  If Err.Number <> 0 Then
-    MsgBox "CreateObject(Quick3270.Application) falló: " & Err.Description, vbExclamation
-    Err.Clear
-  Else
-    Set sess = app.ActiveSession
-    If Err.Number <> 0 Then
-      MsgBox "app.ActiveSession falló: " & Err.Description, vbExclamation
-      Err.Clear
-    Else
-      Set scr = sess.Screen
-      If Err.Number <> 0 Then
-        MsgBox "sess.Screen falló: " & Err.Description, vbExclamation
-        Err.Clear
-      Else
-        MsgBox "OK: Screen obtenido via Quick3270.Application/ActiveSession/Screen", vbInformation
-      End If
-    End If
-  End If
+  ' 0) Espera mínima a que el host “esté listo”
+  ' (si estas funciones existen en tu Quick3270; si no, simplemente no hacen nada)
+  r = WaitForKbdUnlock()
+  r = WaitForCursor(1, 1)
 
-  ' 2) Fallbacks: a veces la macro ya corre con Session/Screen “inyectados”
-  If scr Is Nothing Then
-    Err.Clear
-    Set scr = Screen
-    If Err.Number = 0 Then
-      MsgBox "OK: Screen obtenido via variable global Screen", vbInformation
-    Else
-      Err.Clear
-    End If
-  End If
-
-  If scr Is Nothing Then
-    MsgBox "❌ No pude obtener el objeto Screen (ni por COM ni global).", vbCritical
-    Exit Sub
-  End If
-
-  ' Helpers inline
-  Dim rows, cols
-  rows = 24: cols = 80
-
+  ' 1) Intento típico: 24x80 = 1920
+  s = ""
   Err.Clear
-  rows = scr.Rows
-  If Err.Number <> 0 Then Err.Clear: rows = 24
+  s = GetString(1, 1, 1920)
+  Show "GetString(1,1,1920) [24x80]", s
+
+  ' 2) Intento: 27x132 = 3564
+  s = ""
   Err.Clear
-  cols = scr.Cols
-  If Err.Number <> 0 Then Err.Clear: cols = 80
+  s = GetString(1, 1, 3564)
+  Show "GetString(1,1,3564) [27x132]", s
 
-  MsgBox "Screen: Rows=" & rows & " Cols=" & cols, vbInformation
-
-  ' Función local para recortar (VBScript no tiene funciones anidadas, lo hacemos a mano)
-  Dim txt, attempt
-
-  ' =========  A) GetText()  =========
-  attempt = "A) scr.GetText()"
+  ' 3) Intento por filas (24 filas, 80 cols)
+  s = ""
   Err.Clear
-  txt = scr.GetText()
-  ShowAttempt attempt, txt
-
-  ' =========  B) GetText(Row,Col,Len)  =========
-  attempt = "B) scr.GetText(1,1," & (rows*cols) & ")"
-  Err.Clear
-  txt = scr.GetText(1, 1, rows * cols)
-  ShowAttempt attempt, txt
-
-  ' =========  C) GetString(1,1,rows*cols)  =========
-  attempt = "C) scr.GetString(1,1," & (rows*cols) & ")"
-  Err.Clear
-  txt = scr.GetString(1, 1, rows * cols)
-  ShowAttempt attempt, txt
-
-  ' =========  D) GetString por filas (clásico)  =========
-  attempt = "D) scr.GetString por filas"
-  Err.Clear
-  txt = ""
-  Dim r
-  For r = 1 To rows
-    txt = txt & RTrim(scr.GetString(r, 1, cols)) & vbCrLf
+  For t = 1 To 24
+    s = s & RTrim(GetString(t, 1, 80)) & vbCrLf
   Next
-  ShowAttempt attempt, txt
+  Show "GetString por filas [24x80]", s
 
-  ' =========  E) GetTextRect(StartRow,StartCol,EndRow,EndCol)  =========
-  attempt = "E) scr.GetTextRect(1,1," & rows & "," & cols & ")"
+  ' 4) Intento por filas (27 filas, 132 cols)
+  s = ""
   Err.Clear
-  txt = scr.GetTextRect(1, 1, rows, cols)
-  ShowAttempt attempt, txt
+  For t = 1 To 27
+    s = s & RTrim(GetString(t, 1, 132)) & vbCrLf
+  Next
+  Show "GetString por filas [27x132]", s
 
-  ' =========  F) CopyScreen + Clipboard (si existe)  =========
-  attempt = "F) CopyScreen + Clipboard (si soporta)"
+  ' 5) Si tu versión tiene GetTextRect (no todas)
+  s = ""
   Err.Clear
-  txt = ""
-  scr.CopyScreen
-  If Err.Number <> 0 Then
-    Err.Clear
-    ShowAttempt attempt, ""
-  Else
-    ' Leer clipboard
-    Dim dobj
-    Set dobj = Nothing
-    Err.Clear
-    Set dobj = CreateObject("MSForms.DataObject")
-    If Err.Number <> 0 Then
-      Err.Clear
-      ShowAttempt attempt, "(CopyScreen OK, pero no pude leer clipboard con MSForms.DataObject)"
-    Else
-      dobj.GetFromClipboard
-      txt = dobj.GetText(1)
-      ShowAttempt attempt, txt
-    End If
-  End If
+  s = GetTextRect(1, 1, 24, 80)
+  Show "GetTextRect(1,1,24,80)", s
 
-  MsgBox "✅ Fin de intentos. Dime cuál te devuelve el texto bien y lo dejamos en una macro limpia.", vbInformation
+  MsgBox "FIN. Dime cuál de los MsgBox mostró texto (aunque sea basura) y lo ajustamos al tamaño real.", vbInformation
 End Sub
 
-
-' --- util para mostrar intento (recorta para que MsgBox no explote) ---
-Sub ShowAttempt(ByVal name, ByVal content)
+Sub Show(ByVal titulo, ByVal contenido)
   Dim s
-  If IsEmpty(content) Then content = ""
-  s = CStr(content)
+  If IsEmpty(contenido) Then contenido = ""
+  s = CStr(contenido)
 
   If Len(s) = 0 Then
-    MsgBox name & vbCrLf & vbCrLf & "(vacío / no soportado / error)", vbOKOnly
+    MsgBox titulo & vbCrLf & vbCrLf & "(vacío / función no disponible / error)", vbOKOnly
     Exit Sub
   End If
 
-  ' Recorte “seguro”
   If Len(s) > 1500 Then
     s = Left(s, 1500) & vbCrLf & "…(recortado)…"
   End If
 
-  MsgBox name & vbCrLf & vbCrLf & s, vbOKOnly
+  MsgBox titulo & vbCrLf & vbCrLf & s, vbOKOnly
 End Sub
