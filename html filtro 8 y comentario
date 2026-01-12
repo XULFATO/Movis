@@ -1,228 +1,81 @@
-' =========================
-' Quick3270 QVBS - Backup versionado A/B/C...
-' - Pide ID cliente
-' - Copia 2 miembros desde PP3.ORIGEN a LIB_DESTINO
-' - Añade sufijo A/B/C... en destino buscando hueco
-' =========================
+Sub ImportarHojaContenidoDesdeOtroExcelAbierto()
+    Dim wbActual As Workbook
+    Dim wb As Workbook
+    Dim librosDisponibles As Collection
+    Dim nombresLibros As Collection
+    Dim i As Integer
+    Dim seleccion As Variant
+    Dim hojaContenido As Worksheet
+    Dim hojaExistente As Worksheet
+    Dim nombreNuevo As String
+    Dim contador As Integer
+    
+    Set wbActual = ThisWorkbook
+    Set librosDisponibles = New Collection
+    Set nombresLibros = New Collection
 
-Sub Main()
-  On Error Resume Next
+    ' Paso 1: Recorrer todos los libros abiertos (excepto el actual)
+    For Each wb In Application.Workbooks
+        If wb.Name <> wbActual.Name Then
+            librosDisponibles.Add wb
+            nombresLibros.Add wb.Name
+        End If
+    Next wb
 
-  Const SRC_LIB  = "PP3.ORIGEN"
-  Const DEST_LIB = "PP3.DESTINO_PENDIENTE"  ' <-- ME LO DIRÁS TÚ
-
-  Const MAX_SUFFIX = 26  ' A..Z
-
-  ' Coordenadas típicas de ISPF 3.4 (AJUSTABLES si tu panel difiere)
-  Const ROW_CMD  = 1
-  Const COL_CMD  = 2
-
-  Const ROW_DSN  = 5     ' donde se escribe el dataset en 3.4
-  Const COL_DSN  = 16
-
-  ' Para leer mensajes ISPF (última línea suele tener mensajes)
-  Const ROW_MSG1 = 24
-  Const COL_MSG1 = 1
-  Const ROW_MSG2 = 23
-  Const COL_MSG2 = 1
-
-  Dim clientId
-  clientId = InputBox("Introduce el ID del cliente (sin espacios):", "Backup versionado")
-
-  If Len(Trim(clientId)) = 0 Then
-    MsgBox "Cancelado: no hay ID.", vbExclamation
-    Exit Sub
-  End If
-
-  clientId = Trim(clientId)
-  MsgBox "ID recibido: " & clientId, vbInformation
-
-  Dim mem1, mem2
-  mem1 = "PP1" & clientId
-  mem2 = "V991" & clientId
-
-  ' 1) Buscar sufijo libre (A..Z) en destino para AMBOS miembros
-  Dim suf, found
-  found = False
-
-  Dim k, letter
-  For k = 0 To MAX_SUFFIX - 1
-    letter = Chr(65 + k) ' 65 = "A"
-
-    If (Not MemberExists_34(DEST_LIB, mem1 & letter, ROW_CMD, COL_CMD, ROW_DSN, COL_DSN, ROW_MSG1, COL_MSG1, ROW_MSG2, COL_MSG2)) _
-       And (Not MemberExists_34(DEST_LIB, mem2 & letter, ROW_CMD, COL_CMD, ROW_DSN, COL_DSN, ROW_MSG1, COL_MSG1, ROW_MSG2, COL_MSG2)) Then
-      suf = letter
-      found = True
-      Exit For
+    ' Validación
+    If librosDisponibles.Count = 0 Then
+        MsgBox "No hay otros libros de Excel abiertos.", vbExclamation
+        Exit Sub
     End If
-  Next
 
-  If Not found Then
-    MsgBox "No hay hueco libre A..Z en destino para " & mem1 & " / " & mem2, vbCritical
-    Exit Sub
-  End If
+    ' Paso 2: Mostrar lista al usuario
+    Dim prompt As String
+    prompt = "Selecciona el libro del que deseas importar la hoja 'contenido':" & vbCrLf & vbCrLf
+    For i = 1 To nombresLibros.Count
+        prompt = prompt & i & ". " & nombresLibros(i) & vbCrLf
+    Next i
 
-  MsgBox "Sufijo libre encontrado: " & suf, vbInformation
+    seleccion = InputBox(prompt, "Seleccionar libro")
 
-  ' 2) Copiar ambos miembros desde SRC_LIB a DEST_LIB con sufijo
-  '    Esto asume ISPF 3.4: entras a SRC_LIB, localizas miembro, y usas 'C' (copy) indicando destino y nuevo nombre.
-  If Not CopyMember_34(SRC_LIB, mem1, DEST_LIB, mem1 & suf, ROW_CMD, COL_CMD, ROW_DSN, COL_DSN, ROW_MSG1, COL_MSG1, ROW_MSG2, COL_MSG2) Then
-    MsgBox "Fallo copiando " & mem1, vbCritical
-    Exit Sub
-  End If
+    If Not IsNumeric(seleccion) Or seleccion < 1 Or seleccion > nombresLibros.Count Then
+        MsgBox "Selección no válida.", vbCritical
+        Exit Sub
+    End If
 
-  If Not CopyMember_34(SRC_LIB, mem2, DEST_LIB, mem2 & suf, ROW_CMD, COL_CMD, ROW_DSN, COL_DSN, ROW_MSG1, COL_MSG1, ROW_MSG2, COL_MSG2) Then
-    MsgBox "Fallo copiando " & mem2, vbCritical
-    Exit Sub
-  End If
+    Set wb = librosDisponibles(CInt(seleccion))
 
-  MsgBox "OK. Backup creado:" & vbCrLf & _
-         "Destino: " & DEST_LIB & vbCrLf & _
-         mem1 & suf & vbCrLf & mem2 & suf, vbInformation
+    ' Paso 3: Verificar si el libro seleccionado tiene hoja "contenido"
+    On Error Resume Next
+    Set hojaContenido = wb.Sheets("contenido")
+    On Error GoTo 0
+
+    If hojaContenido Is Nothing Then
+        MsgBox "El libro seleccionado no tiene una hoja llamada 'contenido'.", vbExclamation
+        Exit Sub
+    End If
+
+    ' Paso 4: Verificar si el libro actual ya tiene hoja "contenido"
+    On Error Resume Next
+    Set hojaExistente = wbActual.Sheets("contenido")
+    On Error GoTo 0
+
+    If Not hojaExistente Is Nothing Then
+        ' Renombrar hoja existente
+        contador = 1
+        Do
+            nombreNuevo = "contenido_old" & contador
+            On Error Resume Next
+            Set hojaExistente = wbActual.Sheets(nombreNuevo)
+            On Error GoTo 0
+            contador = contador + 1
+        Loop While Not hojaExistente Is Nothing
+
+        ' Renombrar la hoja "contenido" existente
+        wbActual.Sheets("contenido").Name = nombreNuevo
+    End If
+
+    ' Paso 5: Copiar la hoja "contenido" al libro actual
+    hojaContenido.Copy After:=wbActual.Sheets(wbActual.Sheets.Count)
+    
+    MsgBox "La hoja 'contenido' ha sido copiada correctamente desde '" & wb.Name & "'.", vbInformation
 End Sub
-
-
-' =========================
-' Comprueba si existe un miembro en un PDS usando ISPF 3.4
-' =========================
-Function MemberExists_34(ByVal lib, ByVal member, _
-                         ByVal ROW_CMD, ByVal COL_CMD, ByVal ROW_DSN, ByVal COL_DSN, _
-                         ByVal ROW_MSG1, ByVal COL_MSG1, ByVal ROW_MSG2, ByVal COL_MSG2)
-
-  On Error Resume Next
-  MemberExists_34 = False
-
-  ' Ir a ISPF 3.4
-  PutString ROW_CMD, COL_CMD, "3.4"
-  SendKeys "[enter]"
-  Wait 0.2
-
-  ' Escribir dataset
-  PutString ROW_DSN, COL_DSN, lib
-  SendKeys "[enter]"
-  Wait 0.3
-
-  ' En la lista de miembros, buscar con comando "F <member>"
-  ' (ISPF member list soporta FIND normalmente)
-  PutString ROW_CMD, COL_CMD, "F " & member
-  SendKeys "[enter]"
-  Wait 0.2
-
-  Dim msg1, msg2, screenChunk
-  msg1 = GetTextRect(ROW_MSG1, COL_MSG1, ROW_MSG1, 80)
-  msg2 = GetTextRect(ROW_MSG2, COL_MSG2, ROW_MSG2, 80)
-
-  ' Heurística: si encuentra, suele posicionarse en el miembro.
-  ' Si NO, suele mostrar "not found", "no entries", "member not found" etc.
-  screenChunk = UCase(GetTextRect(1, 1, 24, 80))
-
-  If InStr(UCase(msg1), "NOT FOUND") > 0 Or InStr(UCase(msg2), "NOT FOUND") > 0 Then
-    MemberExists_34 = False
-  ElseIf InStr(screenChunk, UCase(member)) > 0 Then
-    MemberExists_34 = True
-  Else
-    ' Si no estamos seguros, tratamos como "no existe"
-    MemberExists_34 = False
-  End If
-
-  ' Volver una pantalla (PF3) para no dejarte “dentro”
-  SendKeys "[pf3]"
-  Wait 0.2
-End Function
-
-
-' =========================
-' Copia un miembro usando ISPF 3.4 (line command C)
-' NOTA: Aquí hay variaciones entre sites. Esto es el “esqueleto” más común.
-' =========================
-Function CopyMember_34(ByVal srcLib, ByVal srcMember, ByVal dstLib, ByVal dstMember, _
-                       ByVal ROW_CMD, ByVal COL_CMD, ByVal ROW_DSN, ByVal COL_DSN, _
-                       ByVal ROW_MSG1, ByVal COL_MSG1, ByVal ROW_MSG2, ByVal COL_MSG2)
-
-  On Error Resume Next
-  CopyMember_34 = False
-
-  ' Entrar a 3.4
-  PutString ROW_CMD, COL_CMD, "3.4"
-  SendKeys "[enter]"
-  Wait 0.2
-
-  ' Dataset origen
-  PutString ROW_DSN, COL_DSN, srcLib
-  SendKeys "[enter]"
-  Wait 0.3
-
-  ' Buscar miembro origen
-  PutString ROW_CMD, COL_CMD, "F " & srcMember
-  SendKeys "[enter]"
-  Wait 0.2
-
-  ' Ahora necesitamos poner comando de línea "C" sobre la fila del miembro.
-  ' Esto depende de dónde aparezca el miembro en pantalla.
-  ' Truco: buscamos la fila donde aparece el nombre en el texto.
-  Dim rowFound
-  rowFound = FindRowContainingText(srcMember, 1, 24)
-
-  If rowFound = 0 Then
-    MsgBox "No encuentro en pantalla el miembro origen: " & srcMember, vbExclamation
-    SendKeys "[pf3]"
-    Wait 0.2
-    Exit Function
-  End If
-
-  ' En listas ISPF, el área de comando de línea suele estar en la columna 1 o 2.
-  PutString rowFound, 1, "C"
-  SendKeys "[enter]"
-  Wait 0.3
-
-  ' Panel de copy: normalmente pide dataset destino + member nuevo
-  ' Estas coordenadas varían MUCHO. Aquí va una aproximación común:
-  ' - DSN destino suele estar por la fila 6 col 17 (ejemplo)
-  ' - Member destino por fila 7 col 17 (ejemplo)
-  ' Ajustaremos cuando me digas cómo te sale el panel.
-  PutString 6, 17, dstLib
-  PutString 7, 17, dstMember
-  SendKeys "[enter]"
-  Wait 0.4
-
-  Dim msg1, msg2
-  msg1 = UCase(GetTextRect(ROW_MSG1, COL_MSG1, ROW_MSG1, 80))
-  msg2 = UCase(GetTextRect(ROW_MSG2, COL_MSG2, ROW_MSG2, 80))
-
-  If InStr(msg1, "ERROR") > 0 Or InStr(msg2, "ERROR") > 0 Then
-    MsgBox "Error ISPF al copiar: " & vbCrLf & msg2 & vbCrLf & msg1, vbCritical
-    ' salir hacia atrás
-    SendKeys "[pf3]"
-    Wait 0.2
-    SendKeys "[pf3]"
-    Wait 0.2
-    Exit Function
-  End If
-
-  ' Salir hacia atrás (de copy panel a member list, y a 3.4)
-  SendKeys "[pf3]"
-  Wait 0.2
-  SendKeys "[pf3]"
-  Wait 0.2
-
-  CopyMember_34 = True
-End Function
-
-
-' =========================
-' Busca en qué fila (1..24) aparece un texto en la pantalla 24x80
-' Usa GetTextRect que ya te funciona.
-' =========================
-Function FindRowContainingText(ByVal needle, ByVal rowStart, ByVal rowEnd)
-  On Error Resume Next
-  FindRowContainingText = 0
-
-  Dim r, line
-  For r = rowStart To rowEnd
-    line = GetTextRect(r, 1, r, 80)
-    If InStr(UCase(line), UCase(needle)) > 0 Then
-      FindRowContainingText = r
-      Exit Function
-    End If
-  Next
-End Function
