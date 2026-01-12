@@ -9,6 +9,8 @@ Sub ImportarHojaContenidoDesdeOtroExcelAbierto()
     Dim hojaExistente As Worksheet
     Dim nombreNuevo As String
     Dim contador As Integer
+    Dim nombreBase As String
+    Dim encontrado As Boolean
     
     Set wbActual = ThisWorkbook
     Set librosDisponibles = New Collection
@@ -60,22 +62,37 @@ Sub ImportarHojaContenidoDesdeOtroExcelAbierto()
     On Error GoTo 0
 
     If Not hojaExistente Is Nothing Then
-        ' Renombrar hoja existente
-        contador = 1
-        Do
-            nombreNuevo = "contenido_old" & contador
-            On Error Resume Next
-            Set hojaExistente = wbActual.Sheets(nombreNuevo)
-            On Error GoTo 0
-            contador = contador + 1
-        Loop While Not hojaExistente Is Nothing
-
-        ' Renombrar la hoja "contenido" existente
-        wbActual.Sheets("contenido").Name = nombreNuevo
+        ' Buscar nombre nuevo con formato XX_OLD_contenido
+        nombreBase = "contenido"
+        encontrado = False
+        For contador = 1 To 99
+            nombreNuevo = Format(contador, "00") & "_OLD_" & nombreBase
+            If Not HojaExiste(nombreNuevo, wbActual) Then
+                hojaExistente.Name = nombreNuevo
+                encontrado = True
+                Exit For
+            End If
+        Next contador
+        
+        If Not encontrado Then
+            MsgBox "No se pudo renombrar la hoja 'contenido'. Hay demasiadas versiones anteriores (hasta 99).", vbCritical
+            Exit Sub
+        End If
     End If
 
-    ' Paso 5: Copiar la hoja "contenido" al libro actual
+    ' Paso 5: Copiar la hoja "contenido" del libro seleccionado al actual
     hojaContenido.Copy After:=wbActual.Sheets(wbActual.Sheets.Count)
     
     MsgBox "La hoja 'contenido' ha sido copiada correctamente desde '" & wb.Name & "'.", vbInformation
 End Sub
+
+Function HojaExiste(nombreHoja As String, libro As Workbook) As Boolean
+    Dim hoja As Worksheet
+    HojaExiste = False
+    For Each hoja In libro.Sheets
+        If LCase(hoja.Name) = LCase(nombreHoja) Then
+            HojaExiste = True
+            Exit Function
+        End If
+    Next hoja
+End Function
