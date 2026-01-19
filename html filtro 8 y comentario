@@ -1,4 +1,54 @@
-Dim wsp As Worksheet
+Option Explicit
+
+' =====================================================
+' CONFIGURACIÓN
+' =====================================================
+Private Const PREFIJO_VALIDACION As String = "[VALIDACION]"
+
+' =====================================================
+' AÑADE O CONCATENA COMENTARIOS DE VALIDACIÓN
+' =====================================================
+Private Sub AddOrAppendComment(ByVal celda As Range, ByVal texto As String)
+
+    Dim mensaje As String
+    mensaje = PREFIJO_VALIDACION & " " & texto
+
+    If celda.Comment Is Nothing Then
+        celda.AddComment mensaje
+    Else
+        If InStr(1, celda.Comment.Text, mensaje, vbTextCompare) = 0 Then
+            celda.Comment.Text celda.Comment.Text & vbCrLf & mensaje
+        End If
+    End If
+
+End Sub
+
+' =====================================================
+' BORRA SOLO COMENTARIOS DE VALIDACIÓN (NO LOS MANUALES)
+' =====================================================
+Private Sub LimpiarComentariosValidacion(ByVal ws As Worksheet)
+
+    Dim c As Range
+
+    For Each c In ws.UsedRange
+        If Not c.Comment Is Nothing Then
+            If Left(c.Comment.Text, Len(PREFIJO_VALIDACION)) = PREFIJO_VALIDACION Then
+                c.Comment.Delete
+            End If
+        End If
+    Next c
+
+End Sub
+
+' =====================================================
+' FUNCIÓN PRINCIPAL DE VALIDACIÓN
+' DEVUELVE:
+'   TRUE  -> TODO OK (EL SUB PADRE CONTINÚA)
+'   FALSE -> HAY ERRORES (EL SUB PADRE SALE)
+' =====================================================
+Public Function Validar_Contabilidad() As Boolean
+
+    Dim wsp As Worksheet
     Dim i As Long
     Dim uFilaMax As Long
 
@@ -30,13 +80,9 @@ Dim wsp As Worksheet
     Set wsp = ThisWorkbook.Worksheets("CONTABILIDAD_CUENTAS")
 
     ' =====================================================
-    ' LIMPIEZA: comentarios y colores (cada ejecución limpia)
+    ' LIMPIEZA INICIAL (SOLO VALIDACIONES)
     ' =====================================================
-    On Error Resume Next
-    wsp.Cells.ClearComments
-    On Error GoTo 0
-
-    ' Si quieres también limpiar colores en D y F:
+    Call LimpiarComentariosValidacion(wsp)
     wsp.Columns("D").Interior.Color = xlNone
     wsp.Columns("F").Interior.Color = xlNone
 
@@ -54,7 +100,8 @@ Dim wsp As Worksheet
     If filaCabecera = 0 Then
         MsgBox "No se ha encontrado la cabecera 'DB (cliente)' en la columna D.", _
                vbCritical, "Error de estructura"
-        Exit Sub
+        Validar_Contabilidad = False
+        Exit Function
     End If
 
     filaInicio = filaCabecera + 1
@@ -74,7 +121,7 @@ Dim wsp As Worksheet
     listaErrores = ""
 
     ' =====================================================
-    ' BUCLE PRINCIPAL
+    ' BUCLE PRINCIPAL (RECORRE TODO)
     ' =====================================================
     For i = filaInicio To uFilaMax
 
@@ -85,29 +132,32 @@ Dim wsp As Worksheet
         valG = Trim(wsp.Cells(i, 7).Text) ' G
 
         ' =================================================
-        ' 1) SI E Y G INFORMADAS → D Y F OBLIGATORIAS (NARANJA)
+        ' REGLA 1: SI E Y G → D Y F OBLIGATORIAS
         ' =================================================
         If valE <> "" And valG <> "" Then
 
             If valD = "" Then
                 wsp.Cells(i, 4).Interior.Color = RGB(255, 165, 0)
-                Call AddOrAppendComment(wsp.Cells(i, 4), "Debe informarse: E y G están informadas")
+                Call AddOrAppendComment(wsp.Cells(i, 4), _
+                    "Debe informarse: E y G están informadas")
             End If
 
             If valF = "" Then
                 wsp.Cells(i, 6).Interior.Color = RGB(255, 165, 0)
-                Call AddOrAppendComment(wsp.Cells(i, 6), "Debe informarse: E y G están informadas")
+                Call AddOrAppendComment(wsp.Cells(i, 6), _
+                    "Debe informarse: E y G están informadas")
             End If
 
             If valD = "" Or valF = "" Then
                 hayErrores = True
                 contadorErrores = contadorErrores + 1
-                listaErrores = listaErrores & "Fila " & i & " → E y G informadas, falta D o F" & vbCrLf
+                listaErrores = listaErrores & _
+                    "Fila " & i & " → E y G informadas, falta D o F" & vbCrLf
             End If
         End If
 
         ' =================================================
-        ' 2) SI B = 121 / 122 / 125 → D Y F OBLIGATORIAS
+        ' REGLA 2: SI B = 121 / 122 / 125 → D Y F
         ' =================================================
         ok = False
         For Each v In valoresEspeciales
@@ -116,51 +166,40 @@ Dim wsp As Worksheet
 
         If ok Then
             If valD = "" Then
-                wsp.Cells(i, 4).Interior.Color = RGB(173, 216, 230) ' azul claro
-                Call AddOrAppendComment(wsp.Cells(i, 4), "Debe informarse: B=" & valB)
+                wsp.Cells(i, 4).Interior.Color = RGB(173, 216, 230)
+                Call AddOrAppendComment(wsp.Cells(i, 4), _
+                    "Debe informarse: B=" & valB)
             End If
 
             If valF = "" Then
                 wsp.Cells(i, 6).Interior.Color = RGB(173, 216, 230)
-                Call AddOrAppendComment(wsp.Cells(i, 6), "Debe informarse: B=" & valB)
+                Call AddOrAppendComment(wsp.Cells(i, 6), _
+                    "Debe informarse: B=" & valB)
             End If
 
             If valD = "" Or valF = "" Then
                 hayErrores = True
                 contadorErrores = contadorErrores + 1
-                listaErrores = listaErrores & "Fila " & i & " → B=" & valB & " requiere D y F" & vbCrLf
+                listaErrores = listaErrores & _
+                    "Fila " & i & " → B=" & valB & " requiere D y F" & vbCrLf
             End If
         End If
 
-        ' (Si tienes más validaciones, aquí mismo: siempre AddOrAppendComment + hayErrores=True)
+        ' (AQUÍ PUEDES AÑADIR MÁS VALIDACIONES SIN ROMPER NADA)
 
     Next i
 
     ' =====================================================
-    ' SALIDA SI HAY ERRORES (pero ya dejó TODO marcado/comentado)
+    ' RESULTADO FINAL
     ' =====================================================
     If hayErrores Then
-        MsgBox "SE HAN ENCONTRADO " & contadorErrores & " ERRORES:" & vbCrLf & vbCrLf & _
+        MsgBox "SE HAN DETECTADO " & contadorErrores & " ERRORES:" & vbCrLf & vbCrLf & _
                listaErrores & vbCrLf & _
-               "Se ha detenido la ejecución tras marcar comentarios/colores.", _
-               vbCritical, "Validación detenida"
-        Exit Sub
-    End If
-
-    MsgBox "Validación correcta. No se han encontrado errores.", vbInformation
-
-
-
-
-Private Sub AddOrAppendComment(ByVal celda As Range, ByVal texto As String)
-    Dim t As String
-
-    If celda.Comment Is Nothing Then
-        celda.AddComment texto
+               "Revise los comentarios marcados.", _
+               vbCritical, "Validación"
+        Validar_Contabilidad = False
     Else
-        t = celda.Comment.Text
-        If InStr(1, t, texto, vbTextCompare) = 0 Then
-            celda.Comment.Text t & vbCrLf & texto
-        End If
+        Validar_Contabilidad = True
     End If
-End Sub
+
+End Function
