@@ -148,3 +148,19 @@ Dim wsp As Worksheet
     End If
 
     MsgBox "Validación correcta. No se han encontrado errores.", vbInformation
+
+
+
+
+Private Sub AddOrAppendComment(ByVal celda As Range, ByVal texto As String)
+    Dim t As String
+
+    If celda.Comment Is Nothing Then
+        celda.AddComment texto
+    Else
+        t = celda.Comment.Text
+        If InStr(1, t, texto, vbTextCompare) = 0 Then
+            celda.Comment.Text t & vbCrLf & texto
+        End If
+    End If
+End Sub
