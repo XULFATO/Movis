@@ -1,6 +1,4 @@
-
-
-    Dim wsp As Worksheet
+Dim wsp As Worksheet
     Dim i As Long
     Dim uFilaMax As Long
 
@@ -21,23 +19,32 @@
     Dim v As Variant
     Dim ok As Boolean
 
+    ' === ERRORES ===
+    Dim hayErrores As Boolean
+    Dim contadorErrores As Long
+    Dim listaErrores As String
+
     ' =====================================================
     ' HOJA
     ' =====================================================
     Set wsp = ThisWorkbook.Worksheets("CONTABILIDAD_CUENTAS")
 
     ' =====================================================
-    ' BORRAR TODOS LOS COMENTARIOS (CADA EJECUCIÓN EMPIEZA LIMPIA)
+    ' LIMPIEZA: comentarios y colores (cada ejecución limpia)
     ' =====================================================
     On Error Resume Next
     wsp.Cells.ClearComments
     On Error GoTo 0
 
+    ' Si quieres también limpiar colores en D y F:
+    wsp.Columns("D").Interior.Color = xlNone
+    wsp.Columns("F").Interior.Color = xlNone
+
     ' =====================================================
     ' BUSCAR CABECERA "DB (cliente)" EN COLUMNA D
     ' =====================================================
     filaCabecera = 0
-    For Each celda In wsp.Range("D1:D100")
+    For Each celda In wsp.Range("D1:D200")
         If InStr(1, celda.Text, "DB (cliente)", vbTextCompare) > 0 Then
             filaCabecera = celda.Row
             Exit For
@@ -62,43 +69,41 @@
     ' =====================================================
     uFilaMax = wsp.Cells(wsp.Rows.Count, "B").End(xlUp).Row
 
+    hayErrores = False
+    contadorErrores = 0
+    listaErrores = ""
+
     ' =====================================================
     ' BUCLE PRINCIPAL
     ' =====================================================
     For i = filaInicio To uFilaMax
 
-        valB = Trim(wsp.Cells(i, 2).Text)
-        valD = Trim(wsp.Cells(i, 4).Text)
-        valE = Trim(wsp.Cells(i, 5).Text)
-        valF = Trim(wsp.Cells(i, 6).Text)
-        valG = Trim(wsp.Cells(i, 7).Text)
+        valB = Trim(wsp.Cells(i, 2).Text) ' B
+        valD = Trim(wsp.Cells(i, 4).Text) ' D
+        valE = Trim(wsp.Cells(i, 5).Text) ' E
+        valF = Trim(wsp.Cells(i, 6).Text) ' F
+        valG = Trim(wsp.Cells(i, 7).Text) ' G
 
         ' =================================================
-        ' 1) SI E Y G INFORMADAS → D Y F OBLIGATORIAS
+        ' 1) SI E Y G INFORMADAS → D Y F OBLIGATORIAS (NARANJA)
         ' =================================================
         If valE <> "" And valG <> "" Then
 
             If valD = "" Then
                 wsp.Cells(i, 4).Interior.Color = RGB(255, 165, 0)
-                wsp.Cells(i, 4).AddComment "Debe informarse: E y G están informadas"
+                Call AddOrAppendComment(wsp.Cells(i, 4), "Debe informarse: E y G están informadas")
             End If
 
             If valF = "" Then
                 wsp.Cells(i, 6).Interior.Color = RGB(255, 165, 0)
-                wsp.Cells(i, 6).AddComment "Debe informarse: E y G están informadas"
+                Call AddOrAppendComment(wsp.Cells(i, 6), "Debe informarse: E y G están informadas")
             End If
 
             If valD = "" Or valF = "" Then
-                MsgBox "ERROR EN FILA " & i & vbCrLf & _
-                       "E y G están informadas y falta D o F." & vbCrLf & _
-                       "Corrige y vuelve a ejecutar.", _
-                       vbCritical, "Validación detenida"
-                Exit Sub
+                hayErrores = True
+                contadorErrores = contadorErrores + 1
+                listaErrores = listaErrores & "Fila " & i & " → E y G informadas, falta D o F" & vbCrLf
             End If
-
-        Else
-            wsp.Cells(i, 4).Interior.Color = xlNone
-            wsp.Cells(i, 6).Interior.Color = xlNone
         End If
 
         ' =================================================
@@ -111,28 +116,35 @@
 
         If ok Then
             If valD = "" Then
-                wsp.Cells(i, 4).Interior.Color = RGB(255, 165, 0)
-                wsp.Cells(i, 4).AddComment "Debe informarse: B=" & valB
+                wsp.Cells(i, 4).Interior.Color = RGB(173, 216, 230) ' azul claro
+                Call AddOrAppendComment(wsp.Cells(i, 4), "Debe informarse: B=" & valB)
             End If
 
             If valF = "" Then
-                wsp.Cells(i, 6).Interior.Color = RGB(255, 165, 0)
-                wsp.Cells(i, 6).AddComment "Debe informarse: B=" & valB
+                wsp.Cells(i, 6).Interior.Color = RGB(173, 216, 230)
+                Call AddOrAppendComment(wsp.Cells(i, 6), "Debe informarse: B=" & valB)
             End If
 
             If valD = "" Or valF = "" Then
-                MsgBox "ERROR EN FILA " & i & vbCrLf & _
-                       "B = " & valB & " requiere D y F informadas." & vbCrLf & _
-                       "Corrige y vuelve a ejecutar.", _
-                       vbCritical, "Validación detenida"
-                Exit Sub
+                hayErrores = True
+                contadorErrores = contadorErrores + 1
+                listaErrores = listaErrores & "Fila " & i & " → B=" & valB & " requiere D y F" & vbCrLf
             End If
         End If
+
+        ' (Si tienes más validaciones, aquí mismo: siempre AddOrAppendComment + hayErrores=True)
 
     Next i
 
     ' =====================================================
-    ' FIN OK
+    ' SALIDA SI HAY ERRORES (pero ya dejó TODO marcado/comentado)
     ' =====================================================
-    MsgBox "Validación correcta. No se han encontrado errores.", vbInformation
+    If hayErrores Then
+        MsgBox "SE HAN ENCONTRADO " & contadorErrores & " ERRORES:" & vbCrLf & vbCrLf & _
+               listaErrores & vbCrLf & _
+               "Se ha detenido la ejecución tras marcar comentarios/colores.", _
+               vbCritical, "Validación detenida"
+        Exit Sub
+    End If
 
+    MsgBox "Validación correcta. No se han encontrado errores.", vbInformation
