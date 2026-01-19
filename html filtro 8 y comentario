@@ -3,8 +3,6 @@
     Dim wsp As Worksheet
     Dim i As Long
     Dim uFilaMax As Long
-    Dim contadorErrores As Long
-    Dim listaErrores As String
 
     ' === FILAS DINÁMICAS ===
     Dim filaCabecera As Long
@@ -29,15 +27,14 @@
     Set wsp = ThisWorkbook.Worksheets("CONTABILIDAD_CUENTAS")
 
     ' =====================================================
-    ' BORRAR COMENTARIOS PREVIOS (D y F)
+    ' BORRAR TODOS LOS COMENTARIOS (CADA EJECUCIÓN EMPIEZA LIMPIA)
     ' =====================================================
     On Error Resume Next
-    wsp.Columns("D").ClearComments
-    wsp.Columns("F").ClearComments
+    wsp.Cells.ClearComments
     On Error GoTo 0
 
     ' =====================================================
-    ' BUSCAR CABECERA "DB (cliente)"
+    ' BUSCAR CABECERA "DB (cliente)" EN COLUMNA D
     ' =====================================================
     filaCabecera = 0
     For Each celda In wsp.Range("D1:D100")
@@ -65,9 +62,6 @@
     ' =====================================================
     uFilaMax = wsp.Cells(wsp.Rows.Count, "B").End(xlUp).Row
 
-    contadorErrores = 0
-    listaErrores = ""
-
     ' =====================================================
     ' BUCLE PRINCIPAL
     ' =====================================================
@@ -80,32 +74,26 @@
         valG = Trim(wsp.Cells(i, 7).Text)
 
         ' =================================================
-        ' 1) SI E Y G → D Y F OBLIGATORIAS
+        ' 1) SI E Y G INFORMADAS → D Y F OBLIGATORIAS
         ' =================================================
         If valE <> "" And valG <> "" Then
 
             If valD = "" Then
-                With wsp.Cells(i, 4)
-                    .Interior.Color = RGB(255, 165, 0)
-                    .AddComment "Debe informarse (E y G están informadas)"
-                End With
-            Else
-                wsp.Cells(i, 4).Interior.Color = xlNone
+                wsp.Cells(i, 4).Interior.Color = RGB(255, 165, 0)
+                wsp.Cells(i, 4).AddComment "Debe informarse: E y G están informadas"
             End If
 
             If valF = "" Then
-                With wsp.Cells(i, 6)
-                    .Interior.Color = RGB(255, 165, 0)
-                    .AddComment "Debe informarse (E y G están informadas)"
-                End With
-            Else
-                wsp.Cells(i, 6).Interior.Color = xlNone
+                wsp.Cells(i, 6).Interior.Color = RGB(255, 165, 0)
+                wsp.Cells(i, 6).AddComment "Debe informarse: E y G están informadas"
             End If
 
             If valD = "" Or valF = "" Then
-                listaErrores = listaErrores & _
-                    "Fila " & i & " → E y G informadas, falta D o F" & vbCrLf
-                contadorErrores = contadorErrores + 1
+                MsgBox "ERROR EN FILA " & i & vbCrLf & _
+                       "E y G están informadas y falta D o F." & vbCrLf & _
+                       "Corrige y vuelve a ejecutar.", _
+                       vbCritical, "Validación detenida"
+                Exit Sub
             End If
 
         Else
@@ -123,29 +111,28 @@
 
         If ok Then
             If valD = "" Then
-                wsp.Cells(i, 4).AddComment "Debe informarse (B=" & valB & ")"
+                wsp.Cells(i, 4).Interior.Color = RGB(255, 165, 0)
+                wsp.Cells(i, 4).AddComment "Debe informarse: B=" & valB
             End If
+
             If valF = "" Then
-                wsp.Cells(i, 6).AddComment "Debe informarse (B=" & valB & ")"
+                wsp.Cells(i, 6).Interior.Color = RGB(255, 165, 0)
+                wsp.Cells(i, 6).AddComment "Debe informarse: B=" & valB
             End If
 
             If valD = "" Or valF = "" Then
-                listaErrores = listaErrores & _
-                    "Fila " & i & " → B=" & valB & " requiere D y F" & vbCrLf
-                contadorErrores = contadorErrores + 1
+                MsgBox "ERROR EN FILA " & i & vbCrLf & _
+                       "B = " & valB & " requiere D y F informadas." & vbCrLf & _
+                       "Corrige y vuelve a ejecutar.", _
+                       vbCritical, "Validación detenida"
+                Exit Sub
             End If
         End If
 
     Next i
 
     ' =====================================================
-    ' MENSAJE FINAL
+    ' FIN OK
     ' =====================================================
-    If contadorErrores > 0 Then
-        MsgBox "SE HAN ENCONTRADO " & contadorErrores & " ERRORES:" & vbCrLf & vbCrLf & _
-               listaErrores, vbCritical, "Errores de validación"
-    Else
-        MsgBox "Validación correcta. No se han encontrado errores.", vbInformation
-    End If
-
+    MsgBox "Validación correcta. No se han encontrado errores.", vbInformation
 
