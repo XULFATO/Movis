@@ -1,95 +1,130 @@
-' === LECTURA DE VALORES ===
-Dim valB As String, valD As String, valE As String, valF As String, valG As String
-Dim v As Variant, ok As Boolean
+Option Explicit
 
-valB = Trim(ws.Cells(i, 2).Text) ' B
-valD = Trim(ws.Cells(i, 4).Text) ' D
-valE = Trim(ws.Cells(i, 5).Text) ' E
-valF = Trim(ws.Cells(i, 6).Text) ' F
-valG = Trim(ws.Cells(i, 7).Text) ' G
+Sub Validar_Contabilidad()
 
-' === ARRAYS DE CONTROL ===
-Dim valoresPermitidos, valoresEspeciales
-valoresPermitidos = Array("110", "120", "121", "122", "125", "130")
-valoresEspeciales = Array("121", "122", "125")
+    Dim wsp As Worksheet
+    Dim i As Long, col As Variant
+    Dim uFilaMax As Long
+    Dim contadorErrores As Long
+    Dim listaErrores As String
 
-' =====================================================
-' 1️⃣ COLUMNA B: valor debe estar dentro del array
-' =====================================================
-If valB <> "" Then
-    ok = False
-    For Each v In valoresPermitidos
-        If valB = v Then ok = True: Exit For
-    Next v
+    ' === VARIABLES DE CELDAS ===
+    Dim valB As String
+    Dim valD As String
+    Dim valE As String
+    Dim valF As String
+    Dim valG As String
 
-    If Not ok Then
-        ws.Cells(i, 2).Interior.Color = vbYellow
-        listaErrores = listaErrores & _
-            "B" & i & " → Valor no permitido (" & valB & ")" & vbCrLf
-        contadorErrores = contadorErrores + 1
-    End If
-End If
+    ' === CONTROL ===
+    Dim valoresPermitidos As Variant
+    Dim valoresEspeciales As Variant
+    Dim v As Variant
+    Dim ok As Boolean
 
-' =====================================================
-' 2️⃣ SI E (5) Y G (7) ESTÁN INFORMADAS → D (4) Y F (6)
-' =====================================================
-If valE <> "" And valG <> "" Then
-    If valD = "" Or valF = "" Then
-        If valD = "" Then ws.Cells(i, 4).Interior.Color = RGB(255, 165, 0)
-        If valF = "" Then ws.Cells(i, 6).Interior.Color = RGB(255, 165, 0)
+    ' === HOJA ===
+    Set wsp = ThisWorkbook.Worksheets("CONTABILIDAD_CUENTAS")
 
-        listaErrores = listaErrores & _
-            "Fila " & i & " → E y G informadas, falta D o F" & vbCrLf
-        contadorErrores = contadorErrores + 1
-    End If
-End If
+    ' === ARRAYS ===
+    valoresPermitidos = Array("110", "120", "121", "122", "125", "130")
+    valoresEspeciales = Array("121", "122", "125")
 
-' =====================================================
-' 3️⃣ SI B = 121 / 122 / 125 → D (4) Y F (6) OBLIGATORIAS
-' =====================================================
-If valB <> "" Then
-    ok = False
-    For Each v In valoresEspeciales
-        If valB = v Then ok = True: Exit For
-    Next v
+    ' === ÚLTIMA FILA ===
+    uFilaMax = wsp.Cells(wsp.Rows.Count, "B").End(xlUp).Row
 
-    If ok Then
-        If valD = "" Or valF = "" Then
-            If valD = "" Then ws.Cells(i, 4).Interior.Color = RGB(173, 216, 230)
-            If valF = "" Then ws.Cells(i, 6).Interior.Color = RGB(173, 216, 230)
+    contadorErrores = 0
+    listaErrores = ""
 
-            listaErrores = listaErrores & _
-                "Fila " & i & " → B=" & valB & " requiere D y F informadas" & vbCrLf
-            contadorErrores = contadorErrores + 1
-        End If
-    End If
-End If
+    ' =====================================================
+    ' === BUCLE PRINCIPAL ===
+    ' =====================================================
+    For i = 7 To uFilaMax
 
-' =====================================================
-' 4️⃣ VALIDACIÓN ORIGINAL: D (4) Y F (6) NUMÉRICO ≤ 8
-' =====================================================
-For Each col In Array(4, 6)
-    If Trim(ws.Cells(i, col).Text) <> "" Then
-        If IsNumeric(ws.Cells(i, col).Text) Then
-            If Len(ws.Cells(i, col).Text) > 8 Then
-                ws.Cells(i, col).Interior.Color = vbRed
+        valB = Trim(wsp.Cells(i, 2).Text) ' B
+        valD = Trim(wsp.Cells(i, 4).Text) ' D
+        valE = Trim(wsp.Cells(i, 5).Text) ' E
+        valF = Trim(wsp.Cells(i, 6).Text) ' F
+        valG = Trim(wsp.Cells(i, 7).Text) ' G
+
+        ' -------------------------------------------------
+        ' 1) COLUMNA B DEBE ESTAR EN ARRAY
+        ' -------------------------------------------------
+        If valB <> "" Then
+            ok = False
+            For Each v In valoresPermitidos
+                If valB = v Then ok = True: Exit For
+            Next v
+
+            If Not ok Then
+                wsp.Cells(i, 2).Interior.Color = vbYellow
                 listaErrores = listaErrores & _
-                    ws.Cells(i, col).Address(False, False) & _
-                    " → Más de 8 posiciones (" & ws.Cells(i, col).Text & ")" & vbCrLf
+                    "B" & i & " → Valor no permitido (" & valB & ")" & vbCrLf
                 contadorErrores = contadorErrores + 1
-            Else
-                ws.Cells(i, col).Interior.Color = xlNone
             End If
         End If
+
+        ' -------------------------------------------------
+        ' 2) SI E Y G INFORMADAS → D Y F OBLIGATORIAS
+        ' -------------------------------------------------
+        If valE <> "" And valG <> "" Then
+            If valD = "" Or valF = "" Then
+                If valD = "" Then wsp.Cells(i, 4).Interior.Color = RGB(255, 165, 0)
+                If valF = "" Then wsp.Cells(i, 6).Interior.Color = RGB(255, 165, 0)
+
+                listaErrores = listaErrores & _
+                    "Fila " & i & " → E y G informadas, falta D o F" & vbCrLf
+                contadorErrores = contadorErrores + 1
+            End If
+        End If
+
+        ' -------------------------------------------------
+        ' 3) SI B = 121 / 122 / 125 → D Y F OBLIGATORIAS
+        ' -------------------------------------------------
+        If valB <> "" Then
+            ok = False
+            For Each v In valoresEspeciales
+                If valB = v Then ok = True: Exit For
+            Next v
+
+            If ok Then
+                If valD = "" Or valF = "" Then
+                    If valD = "" Then wsp.Cells(i, 4).Interior.Color = RGB(173, 216, 230)
+                    If valF = "" Then wsp.Cells(i, 6).Interior.Color = RGB(173, 216, 230)
+
+                    listaErrores = listaErrores & _
+                        "Fila " & i & " → B=" & valB & " requiere D y F informadas" & vbCrLf
+                    contadorErrores = contadorErrores + 1
+                End If
+            End If
+        End If
+
+        ' -------------------------------------------------
+        ' 4) VALIDACIÓN ORIGINAL: D Y F NUMÉRICOS ≤ 8
+        ' -------------------------------------------------
+        For Each col In Array(4, 6)
+            If Trim(wsp.Cells(i, col).Text) <> "" Then
+                If IsNumeric(wsp.Cells(i, col).Text) Then
+                    If Len(wsp.Cells(i, col).Text) > 8 Then
+                        wsp.Cells(i, col).Interior.Color = vbRed
+                        listaErrores = listaErrores & _
+                            wsp.Cells(i, col).Address(False, False) & _
+                            " → Más de 8 posiciones (" & wsp.Cells(i, col).Text & ")" & vbCrLf
+                        contadorErrores = contadorErrores + 1
+                    End If
+                End If
+            End If
+        Next col
+
+    Next i
+
+    ' =====================================================
+    ' === MENSAJE FINAL ===
+    ' =====================================================
+    If contadorErrores > 0 Then
+        MsgBox "SE HAN ENCONTRADO " & contadorErrores & " ERRORES:" & vbCrLf & vbCrLf & _
+               listaErrores, vbCritical, "Errores de validación"
+        End
     End If
-Next col
 
+    MsgBox "Validación correcta. No se han encontrado errores.", vbInformation
 
-
-
-
-If contadorErrores > 0 Then
-    MsgBox "SE HAN ENCONTRADO " & contadorErrores & " ERRORES:" & vbCrLf & vbCrLf & _
-           listaErrores, vbCritical, "Errores de validación"
-    End
-End If
+End Sub
