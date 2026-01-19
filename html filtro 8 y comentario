@@ -1,98 +1,95 @@
-Sub ImportarHojaContenidoDesdeOtroExcelAbierto()
-    Dim wbActual As Workbook
-    Dim wb As Workbook
-    Dim librosDisponibles As Collection
-    Dim nombresLibros As Collection
-    Dim i As Integer
-    Dim seleccion As Variant
-    Dim hojaContenido As Worksheet
-    Dim hojaExistente As Worksheet
-    Dim nombreNuevo As String
-    Dim contador As Integer
-    Dim nombreBase As String
-    Dim encontrado As Boolean
-    
-    Set wbActual = ThisWorkbook
-    Set librosDisponibles = New Collection
-    Set nombresLibros = New Collection
+' === LECTURA DE VALORES ===
+Dim valB As String, valD As String, valE As String, valF As String, valG As String
+Dim v As Variant, ok As Boolean
 
-    ' Paso 1: Recorrer todos los libros abiertos (excepto el actual)
-    For Each wb In Application.Workbooks
-        If wb.Name <> wbActual.Name Then
-            librosDisponibles.Add wb
-            nombresLibros.Add wb.Name
+valB = Trim(ws.Cells(i, 2).Text) ' B
+valD = Trim(ws.Cells(i, 4).Text) ' D
+valE = Trim(ws.Cells(i, 5).Text) ' E
+valF = Trim(ws.Cells(i, 6).Text) ' F
+valG = Trim(ws.Cells(i, 7).Text) ' G
+
+' === ARRAYS DE CONTROL ===
+Dim valoresPermitidos, valoresEspeciales
+valoresPermitidos = Array("110", "120", "121", "122", "125", "130")
+valoresEspeciales = Array("121", "122", "125")
+
+' =====================================================
+' 1️⃣ COLUMNA B: valor debe estar dentro del array
+' =====================================================
+If valB <> "" Then
+    ok = False
+    For Each v In valoresPermitidos
+        If valB = v Then ok = True: Exit For
+    Next v
+
+    If Not ok Then
+        ws.Cells(i, 2).Interior.Color = vbYellow
+        listaErrores = listaErrores & _
+            "B" & i & " → Valor no permitido (" & valB & ")" & vbCrLf
+        contadorErrores = contadorErrores + 1
+    End If
+End If
+
+' =====================================================
+' 2️⃣ SI E (5) Y G (7) ESTÁN INFORMADAS → D (4) Y F (6)
+' =====================================================
+If valE <> "" And valG <> "" Then
+    If valD = "" Or valF = "" Then
+        If valD = "" Then ws.Cells(i, 4).Interior.Color = RGB(255, 165, 0)
+        If valF = "" Then ws.Cells(i, 6).Interior.Color = RGB(255, 165, 0)
+
+        listaErrores = listaErrores & _
+            "Fila " & i & " → E y G informadas, falta D o F" & vbCrLf
+        contadorErrores = contadorErrores + 1
+    End If
+End If
+
+' =====================================================
+' 3️⃣ SI B = 121 / 122 / 125 → D (4) Y F (6) OBLIGATORIAS
+' =====================================================
+If valB <> "" Then
+    ok = False
+    For Each v In valoresEspeciales
+        If valB = v Then ok = True: Exit For
+    Next v
+
+    If ok Then
+        If valD = "" Or valF = "" Then
+            If valD = "" Then ws.Cells(i, 4).Interior.Color = RGB(173, 216, 230)
+            If valF = "" Then ws.Cells(i, 6).Interior.Color = RGB(173, 216, 230)
+
+            listaErrores = listaErrores & _
+                "Fila " & i & " → B=" & valB & " requiere D y F informadas" & vbCrLf
+            contadorErrores = contadorErrores + 1
         End If
-    Next wb
-
-    ' Validación
-    If librosDisponibles.Count = 0 Then
-        MsgBox "No hay otros libros de Excel abiertos.", vbExclamation
-        Exit Sub
     End If
+End If
 
-    ' Paso 2: Mostrar lista al usuario
-    Dim prompt As String
-    prompt = "Selecciona el libro del que deseas importar la hoja 'contenido':" & vbCrLf & vbCrLf
-    For i = 1 To nombresLibros.Count
-        prompt = prompt & i & ". " & nombresLibros(i) & vbCrLf
-    Next i
-
-    seleccion = InputBox(prompt, "Seleccionar libro")
-
-    If Not IsNumeric(seleccion) Or seleccion < 1 Or seleccion > nombresLibros.Count Then
-        MsgBox "Selección no válida.", vbCritical
-        Exit Sub
-    End If
-
-    Set wb = librosDisponibles(CInt(seleccion))
-
-    ' Paso 3: Verificar si el libro seleccionado tiene hoja "contenido"
-    On Error Resume Next
-    Set hojaContenido = wb.Sheets("contenido")
-    On Error GoTo 0
-
-    If hojaContenido Is Nothing Then
-        MsgBox "El libro seleccionado no tiene una hoja llamada 'contenido'.", vbExclamation
-        Exit Sub
-    End If
-
-    ' Paso 4: Verificar si el libro actual ya tiene hoja "contenido"
-    On Error Resume Next
-    Set hojaExistente = wbActual.Sheets("contenido")
-    On Error GoTo 0
-
-    If Not hojaExistente Is Nothing Then
-        ' Buscar nombre nuevo con formato XX_OLD_contenido
-        nombreBase = "contenido"
-        encontrado = False
-        For contador = 1 To 99
-            nombreNuevo = Format(contador, "00") & "_OLD_" & nombreBase
-            If Not HojaExiste(nombreNuevo, wbActual) Then
-                hojaExistente.Name = nombreNuevo
-                encontrado = True
-                Exit For
+' =====================================================
+' 4️⃣ VALIDACIÓN ORIGINAL: D (4) Y F (6) NUMÉRICO ≤ 8
+' =====================================================
+For Each col In Array(4, 6)
+    If Trim(ws.Cells(i, col).Text) <> "" Then
+        If IsNumeric(ws.Cells(i, col).Text) Then
+            If Len(ws.Cells(i, col).Text) > 8 Then
+                ws.Cells(i, col).Interior.Color = vbRed
+                listaErrores = listaErrores & _
+                    ws.Cells(i, col).Address(False, False) & _
+                    " → Más de 8 posiciones (" & ws.Cells(i, col).Text & ")" & vbCrLf
+                contadorErrores = contadorErrores + 1
+            Else
+                ws.Cells(i, col).Interior.Color = xlNone
             End If
-        Next contador
-        
-        If Not encontrado Then
-            MsgBox "No se pudo renombrar la hoja 'contenido'. Hay demasiadas versiones anteriores (hasta 99).", vbCritical
-            Exit Sub
         End If
     End If
+Next col
 
-    ' Paso 5: Copiar la hoja "contenido" del libro seleccionado al actual
-    hojaContenido.Copy After:=wbActual.Sheets(wbActual.Sheets.Count)
-    
-    MsgBox "La hoja 'contenido' ha sido copiada correctamente desde '" & wb.Name & "'.", vbInformation
-End Sub
 
-Function HojaExiste(nombreHoja As String, libro As Workbook) As Boolean
-    Dim hoja As Worksheet
-    HojaExiste = False
-    For Each hoja In libro.Sheets
-        If LCase(hoja.Name) = LCase(nombreHoja) Then
-            HojaExiste = True
-            Exit Function
-        End If
-    Next hoja
-End Function
+
+
+
+If contadorErrores > 0 Then
+    MsgBox "SE HAN ENCONTRADO " & contadorErrores & " ERRORES:" & vbCrLf & vbCrLf & _
+           listaErrores, vbCritical, "Errores de validación"
+    End
+End If
