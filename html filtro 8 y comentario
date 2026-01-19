@@ -49,7 +49,7 @@ End Sub
 Public Function Validar_Contabilidad() As Boolean
 
     Dim wsp As Worksheet
-    Dim i As Long
+    Dim i As Long, col As Variant
     Dim uFilaMax As Long
 
     ' === FILAS DINÁMICAS ===
@@ -132,18 +132,44 @@ Public Function Validar_Contabilidad() As Boolean
         valG = Trim(wsp.Cells(i, 7).Text) ' G
 
         ' =================================================
-        ' REGLA 1: SI E Y G → D Y F OBLIGATORIAS
+        ' REGLA 0: D y F si son numéricos → máximo 8 posiciones
+        ' (ROJO manda y no se pisa)
+        ' =================================================
+        For Each col In Array(4, 6)
+            If Trim(wsp.Cells(i, col).Text) <> "" Then
+                If IsNumeric(wsp.Cells(i, col).Text) Then
+                    If Len(Trim(wsp.Cells(i, col).Text)) > 8 Then
+                        wsp.Cells(i, col).Interior.Color = vbRed
+                        Call AddOrAppendComment(wsp.Cells(i, col), _
+                            "Numérico > 8 posiciones (" & Trim(wsp.Cells(i, col).Text) & ")")
+                        hayErrores = True
+                        contadorErrores = contadorErrores + 1
+                        listaErrores = listaErrores & _
+                            wsp.Cells(i, col).Address(False, False) & _
+                            " → Numérico > 8 posiciones (" & Trim(wsp.Cells(i, col).Text) & ")" & vbCrLf
+                    End If
+                End If
+            End If
+        Next col
+
+        ' =================================================
+        ' REGLA 1: SI E Y G → D Y F OBLIGATORIAS (NARANJA)
+        ' (pero si ya está ROJO, no lo pisa)
         ' =================================================
         If valE <> "" And valG <> "" Then
 
             If valD = "" Then
-                wsp.Cells(i, 4).Interior.Color = RGB(255, 165, 0)
+                If wsp.Cells(i, 4).Interior.Color <> vbRed Then
+                    wsp.Cells(i, 4).Interior.Color = RGB(255, 165, 0)
+                End If
                 Call AddOrAppendComment(wsp.Cells(i, 4), _
                     "Debe informarse: E y G están informadas")
             End If
 
             If valF = "" Then
-                wsp.Cells(i, 6).Interior.Color = RGB(255, 165, 0)
+                If wsp.Cells(i, 6).Interior.Color <> vbRed Then
+                    wsp.Cells(i, 6).Interior.Color = RGB(255, 165, 0)
+                End If
                 Call AddOrAppendComment(wsp.Cells(i, 6), _
                     "Debe informarse: E y G están informadas")
             End If
@@ -157,7 +183,8 @@ Public Function Validar_Contabilidad() As Boolean
         End If
 
         ' =================================================
-        ' REGLA 2: SI B = 121 / 122 / 125 → D Y F
+        ' REGLA 2: SI B = 121 / 122 / 125 → D Y F (AZUL)
+        ' (pero si ya está ROJO, no lo pisa)
         ' =================================================
         ok = False
         For Each v In valoresEspeciales
@@ -166,13 +193,17 @@ Public Function Validar_Contabilidad() As Boolean
 
         If ok Then
             If valD = "" Then
-                wsp.Cells(i, 4).Interior.Color = RGB(173, 216, 230)
+                If wsp.Cells(i, 4).Interior.Color <> vbRed Then
+                    wsp.Cells(i, 4).Interior.Color = RGB(173, 216, 230)
+                End If
                 Call AddOrAppendComment(wsp.Cells(i, 4), _
                     "Debe informarse: B=" & valB)
             End If
 
             If valF = "" Then
-                wsp.Cells(i, 6).Interior.Color = RGB(173, 216, 230)
+                If wsp.Cells(i, 6).Interior.Color <> vbRed Then
+                    wsp.Cells(i, 6).Interior.Color = RGB(173, 216, 230)
+                End If
                 Call AddOrAppendComment(wsp.Cells(i, 6), _
                     "Debe informarse: B=" & valB)
             End If
@@ -185,8 +216,6 @@ Public Function Validar_Contabilidad() As Boolean
             End If
         End If
 
-        ' (AQUÍ PUEDES AÑADIR MÁS VALIDACIONES SIN ROMPER NADA)
-
     Next i
 
     ' =====================================================
@@ -194,8 +223,7 @@ Public Function Validar_Contabilidad() As Boolean
     ' =====================================================
     If hayErrores Then
         MsgBox "SE HAN DETECTADO " & contadorErrores & " ERRORES:" & vbCrLf & vbCrLf & _
-               listaErrores & vbCrLf & _
-               "Revise los comentarios marcados.", _
+               listaErrores & vbCrLf & "Revise los comentarios marcados.", _
                vbCritical, "Validación"
         Validar_Contabilidad = False
     Else
