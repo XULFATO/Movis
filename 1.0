@@ -1,52 +1,504 @@
-# ================================================
-# EXTRAER XML DE "sheet1" DE CADA EXCEL EN UNA CARPETA
-# ================================================
+Option Explicit
 
-# === CONFIGURACIÓN ===
-$carpetaOrigen = "C:\Ruta\A\TusExcels"        # <-- CAMBIA ESTA RUTA
-$carpetaSalida = "C:\Ruta\Salida_XML"         # <-- donde se guardarán los XML
+'===============================================================================
+' OFUSCADOR / DESOFUSCADOR PRO para proyectos VBA
+'-------------------------------------------------------------------------------
+' Enfoque robusto:
+'  - Clona el .xlsm con SaveCopyAs (copia exacta: hojas, forms, referencias...)
+'  - Abre la copia
+'  - Recorre VBProject.VBComponents y sustituye el código por versión OFU o DESOFU
+'  - El original NO se toca
+'
+' OFUSCACIÓN "CABRÓN PRO":
+'  - Strings: se convierten a _d("HEX4...", key)
+'      * HEX4 = 4 dígitos hex por carácter Unicode (AscW/ChrW)
+'      * key por módulo (random)
+'  - Comentarios: se convierten a "'__OFU__CMT <hex2 hex2 ...>"
+'  - Ruido: inserta bloques muertos "If 1=0 Then ... End If" con marca __OFU__NOISE
+'  - Runtime: añade un módulo estándar "z__OFU_RUNTIME" con la función pública _d()
+'
+' DESOFUSCACIÓN:
+'  - Reconvierte _d("HEX4",key) a "texto"
+'  - Reconvierte comentarios hex a comentarios normales
+'  - Elimina ruido marcado
+'
+' REQUISITOS:
+'  - Excel: Centro de confianza -> Macros -> "Confiar en el acceso al modelo de objetos de VBA"
+'  - Proyecto VBA del archivo objetivo NO protegido con contraseña.
+'
+'===============================================================================
 
-# Crear carpeta destino si no existe
-if (-not (Test-Path $carpetaSalida)) {
-    New-Item -ItemType Directory -Path $carpetaSalida | Out-Null
-}
+'=========================
+'  PÚBLICO: MACROS PRINCIPALES
+'=========================
 
-# Obtener todos los Excel .xlsx y .xlsm
-$archivos = Get-ChildItem -Path $carpetaOrigen -Recurse -Include *.xlsx, *.xlsm | Where-Object { $_.Name -notmatch '^~\$' }
+Public Sub Ofu_ClonarYOfuscar_Archivo()
+    Dim srcPath As String
+    srcPath = PickXlsmFile("Selecciona el .xlsm a OFUSCAR (se creará una copia)")
+    If Len(srcPath) = 0 Then Exit Sub
 
-Write-Host "`nProcesando $($archivos.Count) archivos Excel..." -ForegroundColor Cyan
+    Dim dstPath As String
+    dstPath = BuildSiblingPath(srcPath, "_OFU_" & TimeStamp())
 
-foreach ($archivo in $archivos) {
-    try {
-        Write-Host "📄 $($archivo.Name)" -ForegroundColor Yellow
+    ' 1) Clonar exacto (no toca el original)
+    SaveCopyExact srcPath, dstPath
 
-        $tempDir = Join-Path $env:TEMP ("xlsextract_" + [guid]::NewGuid().ToString())
-        New-Item -ItemType Directory -Path $tempDir | Out-Null
+    ' 2) Abrir copia y ofuscar
+    Dim wb As Workbook
+    Set wb = Application.Workbooks.Open(dstPath)
 
-        # Copiar y renombrar como zip temporal
-        $tempZip = Join-Path $tempDir ($archivo.BaseName + ".zip")
-        Copy-Item $archivo.FullName -Destination $tempZip -Force
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
 
-        # Descomprimir contenido
-        Expand-Archive -Path $tempZip -DestinationPath $tempDir -Force
+    EnsureRuntimeModule wb  ' módulo con función _d()
 
-        # Buscar el XML de la hoja principal
-        $xmlPath = Join-Path $tempDir "xl\worksheets\sheet1.xml"
+    OfuscarVBProject wb
 
-        if (Test-Path $xmlPath) {
-            $destXml = Join-Path $carpetaSalida ($archivo.BaseName + ".xml")
-            Copy-Item $xmlPath -Destination $destXml -Force
-            Write-Host "   ✓ Extraído como $($archivo.BaseName).xml" -ForegroundColor Green
-        } else {
-            Write-Host "   ⚠ No se encontró sheet1.xml en $($archivo.Name)" -ForegroundColor DarkYellow
-        }
+    wb.Save
+    wb.Close False
 
-        # Limpiar temporales
-        Remove-Item $tempDir -Recurse -Force
+    Application.EnableEvents = True
+    Application.ScreenUpdating = True
 
-    } catch {
-        Write-Host "   ❌ Error procesando $($archivo.Name): $($_.Exception.Message)" -ForegroundColor Red
-    }
-}
+    MsgBox "OFUSCADO OK:" & vbCrLf & dstPath, vbInformation
+End Sub
 
-Write-Host "`n🏁 Proceso completado. Archivos XML en: $carpetaSalida" -ForegroundColor Cyan
+Public Sub Desofu_ClonarYDesofuscar_Archivo()
+    Dim srcPath As String
+    srcPath = PickXlsmFile("Selecciona el .xlsm OFUSCADO a DESOFUSCAR (se creará otra copia)")
+    If Len(srcPath) = 0 Then Exit Sub
+
+    Dim dstPath As String
+    dstPath = BuildSiblingPath(srcPath, "_DESOFU_" & TimeStamp())
+
+    SaveCopyExact srcPath, dstPath
+
+    Dim wb As Workbook
+    Set wb = Application.Workbooks.Open(dstPath)
+
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+
+    DesofuscarVBProject wb
+
+    wb.Save
+    wb.Close False
+
+    Application.EnableEvents = True
+    Application.ScreenUpdating = True
+
+    MsgBox "DESOFUSCADO OK:" & vbCrLf & dstPath, vbInformation
+End Sub
+
+'=========================
+'  CLONADO / PATHS / UI
+'=========================
+
+Private Sub SaveCopyExact(ByVal srcPath As String, ByVal dstPath As String)
+    ' Clona el archivo en disco sin abrirlo necesariamente
+    Dim wb As Workbook
+    Set wb = Application.Workbooks.Open(srcPath, ReadOnly:=True)
+
+    wb.SaveCopyAs dstPath
+    wb.Close False
+End Sub
+
+Private Function PickXlsmFile(ByVal title As String) As String
+    On Error GoTo EH
+    Dim fd As FileDialog
+    Set fd = Application.FileDialog(msoFileDialogFilePicker)
+    With fd
+        .Title = title
+        .AllowMultiSelect = False
+        .Filters.Clear
+        .Filters.Add "Excel Macro-Enabled (*.xlsm)", "*.xlsm"
+        If .Show <> -1 Then
+            PickXlsmFile = ""
+        Else
+            PickXlsmFile = .SelectedItems(1)
+        End If
+    End With
+    Exit Function
+EH:
+    PickXlsmFile = ""
+End Function
+
+Private Function BuildSiblingPath(ByVal srcPath As String, ByVal suffix As String) As String
+    ' Genera un nombre en el mismo directorio: NombreBase + suffix + ".xlsm"
+    Dim folder As String, base As String
+    folder = Left$(srcPath, InStrRev(srcPath, "\"))
+    base = Mid$(srcPath, InStrRev(srcPath, "\") + 1)
+    base = Left$(base, InStrRev(base, ".") - 1)
+    BuildSiblingPath = folder & base & suffix & ".xlsm"
+End Function
+
+Private Function TimeStamp() As String
+    TimeStamp = Format$(Now, "dd_mm_yy_hh_nn_ss")
+End Function
+
+'=========================
+'  RUNTIME _d() (DECODER)
+'=========================
+
+Private Sub EnsureRuntimeModule(ByVal wb As Workbook)
+    ' Crea/actualiza un módulo estándar con la función pública _d()
+    ' para que cualquier módulo pueda llamar: _d("HEX4...", key)
+    Dim vbProj As Object, vbComp As Object
+    Set vbProj = wb.VBProject
+
+    If HasComponent(vbProj, "z__OFU_RUNTIME") Then
+        Set vbComp = vbProj.VBComponents("z__OFU_RUNTIME")
+    Else
+        Set vbComp = vbProj.VBComponents.Add(1) ' 1 = vbext_ct_StdModule (late-binding)
+        vbComp.Name = "z__OFU_RUNTIME"
+    End If
+
+    Dim cm As Object
+    Set cm = vbComp.CodeModule
+
+    cm.DeleteLines 1, cm.CountOfLines
+    cm.AddFromString RuntimeCode()
+End Sub
+
+Private Function RuntimeCode() As String
+    ' HERE NO USAMOS Mid$ EN EL CÓDIGO DEL OFUSCADOR, pero sí en el runtime VBA.
+    ' Como esto es VBA puro, no hay conflicto (el problema era PowerShell).
+    RuntimeCode = _
+        "Option Explicit" & vbCrLf & _
+        "'__OFU__RUNTIME" & vbCrLf & _
+        "Public Function _d(ByVal hex4 As String, ByVal k As Long) As String" & vbCrLf & _
+        "    Dim i As Long, v As Long" & vbCrLf & _
+        "    For i = 1 To Len(hex4) Step 4" & vbCrLf & _
+        "        v = CLng(""&H"" & Mid$(hex4, i, 4))" & vbCrLf & _
+        "        _d = _d & ChrW$(v Xor k)" & vbCrLf & _
+        "    Next i" & vbCrLf & _
+        "End Function" & vbCrLf
+End Function
+
+Private Function HasComponent(ByVal vbProj As Object, ByVal name As String) As Boolean
+    On Error GoTo No
+    Dim tmp As Object
+    Set tmp = vbProj.VBComponents(name)
+    HasComponent = True
+    Exit Function
+No:
+    HasComponent = False
+End Function
+
+'=========================
+'  OFUSCAR / DESOFUSCAR PROYECTO
+'=========================
+
+Private Sub OfuscarVBProject(ByVal wb As Workbook)
+    Dim vbProj As Object, vbComp As Object
+    Set vbProj = wb.VBProject
+
+    Dim key As Long
+    Dim noiseEvery As Long: noiseEvery = 6 ' frecuencia aprox. de ruido (menor = más ruido)
+    Dim lineCounter As Long
+
+    For Each vbComp In vbProj.VBComponents
+
+        ' No ofuscar el runtime (si lo ofuscas, te pegas un tiro en el pie)
+        If vbComp.Name = "z__OFU_RUNTIME" Then GoTo NextComp
+
+        Dim cm As Object
+        Set cm = vbComp.CodeModule
+
+        If cm.CountOfLines = 0 Then GoTo NextComp
+
+        ' Clave por componente
+        key = CLng(1 + (Rnd() * 65000))
+        If key < 1 Then key = 12345
+
+        Dim original As String
+        original = cm.Lines(1, cm.CountOfLines)
+
+        Dim processed As String
+        processed = ProcessCode_Obfuscate(original, key, noiseEvery)
+
+        ' Sustituir todo el módulo (preserva el componente, no lo recrea)
+        cm.DeleteLines 1, cm.CountOfLines
+        cm.AddFromString processed
+
+NextComp:
+    Next vbComp
+End Sub
+
+Private Sub DesofuscarVBProject(ByVal wb As Workbook)
+    Dim vbProj As Object, vbComp As Object
+    Set vbProj = wb.VBProject
+
+    For Each vbComp In vbProj.VBComponents
+
+        ' Runtime lo dejamos, no molesta. Si quieres eliminarlo, se puede, pero no lo hago por seguridad.
+        Dim cm As Object
+        Set cm = vbComp.CodeModule
+
+        If cm.CountOfLines = 0 Then GoTo NextComp
+
+        Dim original As String
+        original = cm.Lines(1, cm.CountOfLines)
+
+        Dim processed As String
+        processed = ProcessCode_Deobfuscate(original)
+
+        cm.DeleteLines 1, cm.CountOfLines
+        cm.AddFromString processed
+
+NextComp:
+    Next vbComp
+End Sub
+
+'=========================
+'  CORE: PROCESADO DE CÓDIGO (OFU)
+'=========================
+
+Private Function ProcessCode_Obfuscate(ByVal src As String, ByVal key As Long, ByVal noiseEvery As Long) As String
+    Dim lines() As String
+    lines = SplitToLines(src)
+
+    Dim out As String
+    Dim i As Long, counter As Long
+
+    For i = LBound(lines) To UBound(lines)
+        Dim line As String
+        line = lines(i)
+
+        ' No tocar líneas Attribute (Excel las usa internamente)
+        If StartsWithTrim(line, "Attribute ") Then
+            out = out & line & vbCrLf
+            GoTo MaybeNoise
+        End If
+
+        ' No tocar Option Explicit/Compare/Private Module etc.
+        If StartsWithTrim(line, "Option ") Then
+            out = out & line & vbCrLf
+            GoTo MaybeNoise
+        End If
+
+        ' Obfuscar una línea:
+        out = out & ObfuscateLine(line, key) & vbCrLf
+
+MaybeNoise:
+        counter = counter + 1
+        If noiseEvery > 0 Then
+            If (counter Mod noiseEvery) = 0 Then
+                out = out & NoiseBlock() & vbCrLf
+            End If
+        End If
+    Next i
+
+    ProcessCode_Obfuscate = TrimEndCrLf(out)
+End Function
+
+Private Function ObfuscateLine(ByVal line As String, ByVal key As Long) As String
+    ' Ofusca:
+    '  - Comentarios: hex
+    '  - Strings: _d("HEX4", key)
+    '
+    ' Se hace con un mini-lexer para:
+    '  - no confundir ' dentro de string
+    '  - soportar "" dentro de string (escape VBA)
+
+    Dim codePart As String, commentPart As String
+    SplitCodeAndComment line, codePart, commentPart
+
+    ' 1) Ofuscar strings solo en la parte de código
+    Dim ofuCode As String
+    ofuCode = ReplaceStringLiterals(codePart, key)
+
+    ' 2) Ofuscar comentario (si existe)
+    If Len(commentPart) > 0 Then
+        ' Mantener el apóstrofe, pero convertir contenido a hex con marca
+        ObfuscateLine = ofuCode & " ' __OFU__CMT " & TextToHex2(commentPart)
+    Else
+        ObfuscateLine = ofuCode
+    End If
+End Function
+
+Private Sub SplitCodeAndComment(ByVal line As String, ByRef codeOut As String, ByRef commentOut As String)
+    ' Encuentra el primer apostrofe ' que NO esté dentro de string
+    Dim i As Long
+    Dim inStr As Boolean
+    inStr = False
+
+    For i = 1 To Len(line)
+        Dim ch As String
+        ch = Mid$(line, i, 1)
+
+        If ch = """" Then
+            ' Manejar "" dentro de string
+            If inStr Then
+                If i < Len(line) And Mid$(line, i + 1, 1) = """" Then
+                    i = i + 1 ' saltar la comilla escapada
+                Else
+                    inStr = False
+                End If
+            Else
+                inStr = True
+            End If
+        ElseIf ch = "'" Then
+            If Not inStr Then
+                codeOut = Left$(line, i - 1)
+                commentOut = Mid$(line, i + 1) ' sin el apostrofe
+                Exit Sub
+            End If
+        End If
+    Next i
+
+    codeOut = line
+    commentOut = ""
+End Sub
+
+Private Function ReplaceStringLiterals(ByVal code As String, ByVal key As Long) As String
+    ' Reemplaza cada "literal" por _d("HEX4", key)
+    ' Soporta "" dentro del literal.
+    Dim i As Long, out As String
+    Dim inStr As Boolean
+    Dim buf As String
+
+    inStr = False
+    out = ""
+
+    i = 1
+    Do While i <= Len(code)
+        Dim ch As String
+        ch = Mid$(code, i, 1)
+
+        If ch = """" Then
+            If Not inStr Then
+                ' Inicio de string
+                inStr = True
+                buf = ""
+                out = out & ch
+                i = i + 1
+                GoTo ContinueLoop
+            Else
+                ' Dentro de string: puede ser fin o escape ""
+                If i < Len(code) And Mid$(code, i + 1, 1) = """" Then
+                    ' Comilla escapada
+                    buf = buf & """"
+                    out = out & """" & """"  ' dejamos "" en el texto temporal
+                    i = i + 2
+                    GoTo ContinueLoop
+                Else
+                    ' Fin de string: aquí es donde OFUSCAMOS
+                    ' Ojo: out contiene el literal tal cual hasta ahora; vamos a reconstruir:
+                    ' Para no complicar, reconstruimos desde buf real (sin escapes duplicados).
+                    ' Solución: volvemos a construir el literal ofuscado y sustituimos el contenido.
+
+                    ' Quitar el último literal no es trivial si ya lo hemos volcado.
+                    ' Así que usaremos una estrategia distinta:
+                    '  - En lugar de volcar caracteres dentro del string, capturamos hasta el fin.
+                    '  - Implementación más simple: re-parse con extractor.
+                    Exit Do
+                End If
+            End If
+        Else
+            out = out & ch
+            i = i + 1
+        End If
+
+ContinueLoop:
+    Loop
+
+    ' Si no había strings, devolvemos el original
+    If InStr(1, code, """") = 0 Then
+        ReplaceStringLiterals = code
+        Exit Function
+    End If
+
+    ' Parser completo (robusto):
+    ReplaceStringLiterals = ReplaceStringLiterals_Full(code, key)
+End Function
+
+Private Function ReplaceStringLiterals_Full(ByVal code As String, ByVal key As Long) As String
+    Dim i As Long
+    Dim out As String
+    Dim inStr As Boolean
+    Dim lit As String
+
+    out = ""
+    inStr = False
+    lit = ""
+
+    i = 1
+    Do While i <= Len(code)
+        Dim ch As String
+        ch = Mid$(code, i, 1)
+
+        If Not inStr Then
+            If ch = """" Then
+                inStr = True
+                lit = ""
+                i = i + 1
+            Else
+                out = out & ch
+                i = i + 1
+            End If
+        Else
+            ' Dentro de literal string
+            If ch = """" Then
+                If i < Len(code) And Mid$(code, i + 1, 1) = """" Then
+                    ' Escape ""
+                    lit = lit & """"
+                    i = i + 2
+                Else
+                    ' Fin literal: reemplazar por _d("HEX4", key)
+                    Dim hex4 As String
+                    hex4 = TextToHex4_Xor(lit, key)
+                    out = out & "_d(""" & hex4 & """," & CStr(key) & ")"
+                    inStr = False
+                    i = i + 1
+                End If
+            Else
+                lit = lit & ch
+                i = i + 1
+            End If
+        End If
+    Loop
+
+    ' Si quedó string sin cerrar, lo dejamos tal cual (raro, pero no rompemos)
+    If inStr Then
+        out = out & """" & lit
+    End If
+
+    ReplaceStringLiterals_Full = out
+End Function
+
+Private Function NoiseBlock() As String
+    ' Ruido muerto y marcado (para poder eliminarlo en DESOFU)
+    Dim a As Long, b As Long
+    a = CLng(1000 + Rnd() * 9000)
+    b = CLng(1000 + Rnd() * 9000)
+    NoiseBlock = _
+        "'__OFU__NOISE" & vbCrLf & _
+        "If 1 = 0 Then" & vbCrLf & _
+        "    Dim __n" & a & " As Long: __n" & a & " = " & b & " Xor " & a & vbCrLf & _
+        "End If"
+End Function
+
+'=========================
+'  CORE: PROCESADO DE CÓDIGO (DESOFU)
+'=========================
+
+Private Function ProcessCode_Deobfuscate(ByVal src As String) As String
+    Dim lines() As String
+    lines = SplitToLines(src)
+
+    Dim out As String
+    Dim i As Long
+
+    For i = LBound(lines) To UBound(lines)
+        Dim line As String
+        line = lines(i)
+
+        ' Eliminar ruido marcado
+        If InStr(1, line, "'__OFU__NOISE", vbTextCompare) > 0 Then GoTo SkipLine
+        If StartsWithTrim(line, "If 1 = 0 Then") Then GoTo SkipLine
+        If StartsWithTrim(line, "End If") Then GoTo SkipLine
+        If InStr(1, line, "Dim __n", vbTextCompare) > 0 And InStr(1, line, "Xor", vbTextCompare) > 0 Then GoTo SkipLine
+
+        ' Revertir comentarios hex con marca
+        line =
