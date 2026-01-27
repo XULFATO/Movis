@@ -1,12 +1,15 @@
 Option Explicit
 
-Sub OfuscarCodigoVBA()
+Sub OfuscarYGenerarBas()
     Dim fDialog As FileDialog
     Dim origen As String
     Dim destino As String
     Dim wb As Workbook
     Dim vbComp As Object
     Dim codigo As String
+    Dim filePath As String
+    Dim basFileName As String
+    Dim respuesta As VbMsgBoxResult
     
     ' Seleccionar archivo de origen
     Set fDialog = Application.FileDialog(msoFileDialogOpen)
@@ -17,27 +20,33 @@ Sub OfuscarCodigoVBA()
     If fDialog.Show = -1 Then
         origen = fDialog.SelectedItems(1)
         
-        ' Copiar archivo a destino
-        destino = Left(origen, InStrRev(origen, ".")) & "_OFUSCADO.xlsm"
-        FileCopy origen, destino
+        ' Abrir el archivo de origen
+        Set wb = Workbooks.Open(origen, ReadOnly:=True, Password:="")
         
-        ' Abrir el archivo de destino
-        Set wb = Workbooks.Open(destino, ReadOnly:=True, Password:="")
+        ' Preguntar al usuario por la ruta de destino del archivo .bas
+        filePath = Application.InputBox("Escribe la ruta completa (incluyendo el nombre) para guardar el archivo .bas", "Guardar archivo .bas", Type:=2)
+        
+        ' Comprobar si el usuario ha cancelado o no ha ingresado un nombre
+        If filePath = "" Then
+            MsgBox "Operación cancelada.", vbExclamation
+            Exit Sub
+        End If
         
         ' Procesar cada componente VBA
         For Each vbComp In wb.VBProject.VBComponents
-            If vbComp.Type = vbext_ct_StdModule Or vbComp.Type = vbext_ct_ClassModule Or _
-               vbComp.Type = vbext_ct_MSForm Or vbComp.Type = vbext_ct_ActiveXDesigner Then
+            If vbComp.Type = vbext_ct_StdModule Or vbComp.Type = vbext_ct_ClassModule Or vbComp.Type = vbext_ct_MSForm Or vbComp.Type = vbext_ct_ActiveXDesigner Then
                 codigo = vbComp.CodeModule.Lines(1, vbComp.CodeModule.CountOfLines)
                 codigo = OfuscarCodigo(codigo)
-                vbComp.CodeModule.DeleteLines 1, vbComp.CodeModule.CountOfLines
-                vbComp.CodeModule.AddFromString codigo
+                
+                ' Crear archivo .bas
+                basFileName = filePath & "\" & vbComp.Name & ".bas"
+                Call CrearArchivoBas(basFileName, codigo)
             End If
         Next vbComp
         
-        ' Guardar y cerrar el archivo de destino
-        wb.Close SaveChanges:=True
-        MsgBox "Ofuscación completa. Archivo guardado como: " & destino, vbInformation
+        ' Cerrar el archivo de origen
+        wb.Close SaveChanges:=False
+        MsgBox "Ofuscación completa. Archivos .bas generados.", vbInformation
     End If
 End Sub
 
@@ -95,6 +104,14 @@ Function OfuscarCodigo(codigo As String) As String
     
     OfuscarCodigo = nuevoCodigo
 End Function
+
+Sub CrearArchivoBas(path As String, codigo As String)
+    Dim fileNum As Integer
+    fileNum = FreeFile
+    Open path For Output As #fileNum
+    Print #fileNum, codigo
+    Close #fileNum
+End Sub
 
 Function VariableYaRenombrada(variable As String, ByRef renombrados As Collection) As Boolean
     Dim i As Long
