@@ -1,127 +1,289 @@
 Option Explicit
 
-Sub OfuscarYGenerarBas()
-    Dim fDialog As FileDialog
-    Dim origen As String
-    Dim destino As String
+' ============================
+' BLACKBOX VBA – PC CAPADO
+' One-way VBA obfuscator
+' ============================
+
+Private Const SUFFIX_OUT As String = "_BLACKBOX"
+Private Const MIN_NAME_LEN As Long = 12
+
+' ============================
+' ENTRY
+' ============================
+Public Sub BLACKBOX_RUN()
+    Dim srcPath As String, dstPath As String
     Dim wb As Workbook
-    Dim vbComp As Object
-    Dim codigo As String
-    Dim filePath As String
-    Dim basFileName As String
-    Dim respuesta As VbMsgBoxResult
-    
-    ' Seleccionar archivo de origen
-    Set fDialog = Application.FileDialog(msoFileDialogOpen)
-    fDialog.Title = "Seleccionar archivo Excel (.xlsm)"
-    fDialog.Filters.Clear
-    fDialog.Filters.Add "Archivos de Excel", "*.xlsm"
-    
-    If fDialog.Show = -1 Then
-        origen = fDialog.SelectedItems(1)
-        
-        ' Abrir el archivo de origen
-        Set wb = Workbooks.Open(origen, ReadOnly:=True, Password:="")
-        
-        ' Preguntar al usuario por la ruta de destino del archivo .bas
-        filePath = Application.InputBox("Escribe la ruta completa (incluyendo el nombre) para guardar el archivo .bas", "Guardar archivo .bas", Type:=2)
-        
-        ' Comprobar si el usuario ha cancelado o no ha ingresado un nombre
-        If filePath = "" Then
-            MsgBox "Operación cancelada.", vbExclamation
-            Exit Sub
-        End If
-        
-        ' Procesar cada componente VBA
-        For Each vbComp In wb.VBProject.VBComponents
-            If vbComp.Type = vbext_ct_StdModule Or vbComp.Type = vbext_ct_ClassModule Or vbComp.Type = vbext_ct_MSForm Or vbComp.Type = vbext_ct_ActiveXDesigner Then
-                codigo = vbComp.CodeModule.Lines(1, vbComp.CodeModule.CountOfLines)
-                codigo = OfuscarCodigo(codigo)
-                
-                ' Crear archivo .bas
-                basFileName = filePath & "\" & vbComp.Name & ".bas"
-                Call CrearArchivoBas(basFileName, codigo)
-            End If
-        Next vbComp
-        
-        ' Cerrar el archivo de origen
-        wb.Close SaveChanges:=False
-        MsgBox "Ofuscación completa. Archivos .bas generados.", vbInformation
-    End If
+    Dim fso As Object
+    Dim sec As MsoAutomationSecurity
+
+    srcPath = PickXlsmFile()
+    If srcPath = "" Then Exit Sub
+
+    If LCase$(Left$(srcPath, 4)) = "http" Then Exit Sub
+
+    dstPath = AddSuffixToPath(srcPath, SUFFIX_OUT)
+
+    Application.ScreenUpdating = False
+    Application.DisplayAlerts = False
+
+    On Error GoTo EH
+
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    fso.CopyFile srcPath, dstPath, True
+
+    sec = Application.AutomationSecurity
+    Application.AutomationSecurity = msoAutomationSecurityForceDisable
+    Set wb = Workbooks.Open(dstPath, ReadOnly:=False)
+    Application.AutomationSecurity = sec
+
+    If wb.ReadOnly Then GoTo EH
+
+    BlackBoxProject wb
+
+    wb.Save
+    wb.Close False
+
+    Application.DisplayAlerts = True
+    Application.ScreenUpdating = True
+    Exit Sub
+
+EH:
+    Application.AutomationSecurity = sec
+    Application.DisplayAlerts = True
+    Application.ScreenUpdating = True
 End Sub
 
-Function OfuscarCodigo(codigo As String) As String
-    Dim lineas() As String
-    Dim i As Long
-    Dim linea As String
-    Dim nuevoCodigo As String
-    Dim variableCounter As Long
-    Dim renombrados As Collection
-    
-    ' Inicializar colección para renombrar variables
-    Set renombrados = New Collection
-    variableCounter = 1
-    
-    ' Separar el código en líneas
-    lineas = Split(codigo, vbNewLine)
-    
-    ' Procesar cada línea
-    For i = LBound(lineas) To UBound(lineas)
-        linea = lineas(i)
-        
-        ' Eliminar comentarios
-        If InStr(linea, "'") > 0 Then
-            linea = Left(linea, InStr(linea, "'") - 1)
-        End If
-        
-        ' Renombrar Private Subs y Functions
-        If InStr(linea, "Private Sub ") > 0 Then
-            linea = Replace(linea, "Private Sub ", "Private Sub P_" & variableCounter & "_")
-            variableCounter = variableCounter + 1
-        ElseIf InStr(linea, "Private Function ") > 0 Then
-            linea = Replace(linea, "Private Function ", "Private Function F_" & variableCounter & "_")
-            variableCounter = variableCounter + 1
-        End If
-        
-        ' Renombrado de variables locales (simplificado)
-        If InStr(linea, "Dim ") > 0 Then
-            Do While InStr(linea, "Dim ") > 0
-                Dim variable As String
-                variable = Mid(linea, InStr(linea, "Dim ") + 4, InStr(InStr(linea, "Dim "), " As ") - InStr(linea, "Dim ") - 4)
-                If Not VariableYaRenombrada(variable, renombrados) Then
-                    linea = Replace(linea, variable, "v_" & variableCounter)
-                    renombrados.Add variable
-                    variableCounter = variableCounter + 1
-                End If
-            Loop
-        End If
-        
-        ' Añadir línea procesada al nuevo código
-        If Trim(linea) <> "" Then
-            nuevoCodigo = nuevoCodigo & linea & vbNewLine
-        End If
-    Next i
-    
-    OfuscarCodigo = nuevoCodigo
+' ============================
+' PROJECT
+' ============================
+Private Sub BlackBoxProject(ByVal wb As Workbook)
+    Dim c As Object
+    For Each c In wb.VBProject.VBComponents
+        BlackBoxComponent c
+    Next
+End Sub
+
+Private Sub BlackBoxComponent(ByVal c As Object)
+    Dim code As String
+    code = GetCode(c)
+    If code = "" Then Exit Sub
+
+    code = RemoveCommentsSmart(code)
+
+    Dim mapPriv As Object, mapLoc As Object
+    Set mapPriv = CreateObject("Scripting.Dictionary")
+    Set mapLoc = CreateObject("Scripting.Dictionary")
+
+    BuildMapsSafe code, mapPriv, mapLoc
+
+    code = ApplyRenameMapSafe(code, mapPriv)
+    code = ApplyRenameMapSafe(code, mapLoc)
+
+    code = CompactBlankLines(code)
+
+    SetCode c, code
+End Sub
+
+' ============================
+' READ / WRITE
+' ============================
+Private Function GetCode(ByVal c As Object) As String
+    With c.CodeModule
+        If .CountOfLines > 0 Then GetCode = .Lines(1, .CountOfLines)
+    End With
 End Function
 
-Sub CrearArchivoBas(path As String, codigo As String)
-    Dim fileNum As Integer
-    fileNum = FreeFile
-    Open path For Output As #fileNum
-    Print #fileNum, codigo
-    Close #fileNum
+Private Sub SetCode(ByVal c As Object, ByVal txt As String)
+    With c.CodeModule
+        If .CountOfLines > 0 Then .DeleteLines 1, .CountOfLines
+        If txt <> "" Then .AddFromString txt
+    End With
 End Sub
 
-Function VariableYaRenombrada(variable As String, ByRef renombrados As Collection) As Boolean
-    Dim i As Long
-    VariableYaRenombrada = False
-    On Error Resume Next
-    For i = 1 To renombrados.Count
-        If renombrados(i) = variable Then
-            VariableYaRenombrada = True
-            Exit Function
+' ============================
+' COMMENTS
+' ============================
+Private Function RemoveCommentsSmart(ByVal src As String) As String
+    Dim a() As String, o() As String, i As Long, n As Long
+    a = Split(src, vbCrLf)
+    ReDim o(UBound(a))
+    For i = 0 To UBound(a)
+        If Left$(Trim$(a(i)), 1) <> "'" Then
+            o(n) = StripTrailingComment(a(i))
+            n = n + 1
         End If
-    Next i
-    On Error GoTo 0
+    Next
+    If n > 0 Then
+        ReDim Preserve o(n - 1)
+        RemoveCommentsSmart = Join(o, vbCrLf)
+    End If
+End Function
+
+Private Function StripTrailingComment(ByVal ln As String) As String
+    Dim i As Long, inStr As Boolean
+    For i = 1 To Len(ln)
+        Select Case Mid$(ln, i, 1)
+            Case """": inStr = Not inStr
+            Case "'": If Not inStr Then StripTrailingComment = Left$(ln, i - 1): Exit Function
+        End Select
+    Next
+    StripTrailingComment = ln
+End Function
+
+' ============================
+' MAP BUILD
+' ============================
+Private Sub BuildMapsSafe(ByVal code As String, ByVal mapPriv As Object, ByVal mapLoc As Object)
+    Dim l() As String, i As Long, inside As Boolean
+    l = Split(code, vbCrLf)
+
+    For i = 0 To UBound(l)
+        Dim t As String, tl As String
+        t = Trim$(l(i)): tl = LCase$(t)
+
+        If IsProcHeader(tl) Then inside = True
+
+        If Left$(tl, 8) = "private " Then
+            Dim nm As String
+            nm = ExtractProcName(t)
+            If nm <> "" Then
+                If Not IsProtectedProcName(nm) Then
+                    If Not mapPriv.exists(nm) Then mapPriv(nm) = "p" & RandomName(MIN_NAME_LEN)
+                End If
+            End If
+        End If
+
+        If inside Then
+            If Left$(tl, 4) = "dim " Or Left$(tl, 7) = "static " Then
+                AddLocalVars t, mapLoc
+            End If
+        End If
+
+        If tl = "end sub" Or tl = "end function" Or tl = "end property" Then inside = False
+    Next
+End Sub
+
+Private Function IsProcHeader(ByVal tl As String) As Boolean
+    IsProcHeader = (InStr(1, tl, "sub ") = 1) Or (InStr(1, tl, "function ") = 1) Or (InStr(1, tl, "property ") = 1)
+End Function
+
+Private Function IsProtectedProcName(ByVal n As String) As Boolean
+    n = LCase$(n)
+    IsProtectedProcName = (Left$(n, 9) = "workbook_") Or (Left$(n, 10) = "worksheet_") Or _
+                          (Left$(n, 8) = "userform") Or (n Like "auto_*")
+End Function
+
+Private Function ExtractProcName(ByVal s As String) As String
+    Dim p As Long
+    p = InStr(1, s, "Sub ", vbTextCompare)
+    If p > 0 Then ExtractProcName = TakeWord(Mid$(s, p + 4)): Exit Function
+    p = InStr(1, s, "Function ", vbTextCompare)
+    If p > 0 Then ExtractProcName = TakeWord(Mid$(s, p + 9))
+End Function
+
+Private Sub AddLocalVars(ByVal d As String, ByVal mapLoc As Object)
+    Dim s As String, a() As String, i As Long
+    s = Replace(Replace(Trim$(d), "Dim ", "", , , vbTextCompare), "Static ", "", , , vbTextCompare)
+    a = Split(s, ",")
+    For i = 0 To UBound(a)
+        Dim v As String
+        v = TakeWord(Trim$(a(i)))
+        If v <> "" Then If Not mapLoc.exists(v) Then mapLoc(v) = "v" & RandomName(MIN_NAME_LEN)
+    Next
+End Sub
+
+' ============================
+' APPLY MAP
+' ============================
+Private Function ApplyRenameMapSafe(ByVal code As String, ByVal map As Object) As String
+    Dim k As Variant
+    For Each k In map.Keys
+        code = ReplaceWholeWordSafe(code, CStr(k), CStr(map(k)))
+    Next
+    ApplyRenameMapSafe = code
+End Function
+
+Private Function ReplaceWholeWordSafe(ByVal txt As String, ByVal o As String, ByVal n As String) As String
+    Dim r As String, i As Long, inStr As Boolean
+    Do While i < Len(txt)
+        i = i + 1
+        Select Case Mid$(txt, i, 1)
+            Case """": inStr = Not inStr: r = r & """"
+            Case Else
+                If Not inStr And Mid$(txt, i, Len(o)) = o Then
+                    If (i = 1 Or Not IsWordChar(Mid$(txt, i - 1, 1))) And _
+                       (i + Len(o) > Len(txt) Or Not IsWordChar(Mid$(txt, i + Len(o), 1))) Then
+                        r = r & n
+                        i = i + Len(o) - 1
+                    Else
+                        r = r & Mid$(txt, i, 1)
+                    End If
+                Else
+                    r = r & Mid$(txt, i, 1)
+                End If
+        End Select
+    Loop
+    ReplaceWholeWordSafe = r
+End Function
+
+Private Function IsWordChar(ByVal c As String) As Boolean
+    IsWordChar = c Like "[A-Za-z0-9_]"
+End Function
+
+' ============================
+' FORMAT
+' ============================
+Private Function CompactBlankLines(ByVal src As String) As String
+    Dim a() As String, o() As String, i As Long, n As Long, b As Boolean
+    a = Split(src, vbCrLf)
+    ReDim o(UBound(a))
+    For i = 0 To UBound(a)
+        If Trim$(a(i)) = "" Then
+            If Not b Then o(n) = "": n = n + 1
+            b = True
+        Else
+            o(n) = a(i): n = n + 1: b = False
+        End If
+    Next
+    If n > 0 Then
+        ReDim Preserve o(n - 1)
+        CompactBlankLines = Join(o, vbCrLf)
+    End If
+End Function
+
+' ============================
+' UTILS
+' ============================
+Private Function PickXlsmFile() As String
+    With Application.FileDialog(msoFileDialogFilePicker)
+        .AllowMultiSelect = False
+        .Filters.Clear
+        .Filters.Add "Excel Macro (*.xlsm)", "*.xlsm"
+        If .Show = -1 Then PickXlsmFile = .SelectedItems(1)
+    End With
+End Function
+
+Private Function AddSuffixToPath(ByVal p As String, ByVal s As String) As String
+    Dim i As Long
+    i = InStrRev(p, ".")
+    If i > 0 Then AddSuffixToPath = Left$(p, i - 1) & s & Mid$(p, i)
+End Function
+
+Private Function RandomName(ByVal n As Long) As String
+    Dim c As String, i As Long
+    c = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    Randomize
+    For i = 1 To n
+        RandomName = RandomName & Mid$(c, 1 + Int(Rnd * Len(c)), 1)
+    Next
+End Function
+
+Private Function TakeWord(ByVal s As String) As String
+    Dim i As Long
+    s = Trim$(s)
+    For i = 1 To Len(s)
+        If Not IsWordChar(Mid$(s, i, 1)) Then TakeWord = Left$(s, i - 1): Exit Function
+    Next
+    TakeWord = s
 End Function
