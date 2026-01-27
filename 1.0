@@ -622,3 +622,298 @@ Private Function ObfuscateLineSmart(ByVal ln As String, ByVal key As Long) As St
     End If
 
  
+' =============================================================================
+' OFUSCACIÓN DE LÍNEA
+' =============================================================================
+
+Private Function ObfuscateLineSmart(ByVal ln As String, ByVal key As Long) As String
+    Dim i As Long, ch As String, result As String
+    Dim inString As Boolean, commentStart As Long
+
+    If IsConstDeclaration(ln) Then
+        ObfuscateLineSmart = ln
+        Exit Function
+    End If
+
+    inString = False
+    commentStart = 0
+
+    For i = 1 To Len(ln)
+        ch = Mid$(ln, i, 1)
+        If ch = """" Then
+            inString = Not inString
+        ElseIf ch = "'" And Not inString Then
+            commentStart = i
+            Exit For
+        End If
+    Next
+
+    Dim codePart As String, commentPart As String
+
+    If commentStart > 0 Then
+        codePart = Left$(ln, commentStart - 1)
+        commentPart = Mid$(ln, commentStart + 1)
+    Else
+        codePart = ln
+        commentPart = ""
+    End If
+
+    result = ObfuscateStringsInCode(codePart, key)
+
+    If Len(commentPart) > 0 Then
+        result = result & m_TagComment & ToHex4(commentPart, key)
+    End If
+
+    ObfuscateLineSmart = result
+End Function
+
+Private Function IsConstDeclaration(ByVal ln As String) As Boolean
+    Dim trimmed As String
+    trimmed = LCase$(Trim$(ln))
+
+    IsConstDeclaration = (trimmed Like "const *") Or _
+                         (trimmed Like "private const *") Or _
+                         (trimmed Like "public const *")
+End Function
+
+Private Function ObfuscateStringsInCode(ByVal code As String, ByVal key As Long) As String
+    Dim result As String, i As Long, ch As String
+    Dim inString As Boolean, currentString As String, beforeString As String
+
+    result = ""
+    inString = False
+    currentString = ""
+    beforeString = ""
+
+    For i = 1 To Len(code)
+        ch = Mid$(code, i, 1)
+
+        If ch = """" Then
+            If inString Then
+                result = result & beforeString
+                If Len(currentString) > 0 Then
+                    result = result & "dDecode(""" & ToHex4(currentString, key) & """," & key & ")"
+                Else
+                    result = result & """"""
+                End If
+                beforeString = ""
+                currentString = ""
+                inString = False
+            Else
+                result = result & beforeString
+                beforeString = ""
+                inString = True
+            End If
+        Else
+            If inString Then
+                currentString = currentString & ch
+            Else
+                beforeString = beforeString & ch
+            End If
+        End If
+    Next
+
+    result = result & beforeString
+    ObfuscateStringsInCode = result
+End Function
+
+' =============================================================================
+' DESOFUSCACIÓN
+' =============================================================================
+
+Private Function DeobfuscateCodeSmart(ByVal src As String, ByVal key As Long) As String
+    Dim lines() As String, i As Long
+    Dim result() As String
+    Dim count As Long, skipNext As Long
+
+    lines = Split(src, vbCrLf)
+    ReDim result(UBound(lines))
+
+    count = 0
+    skipNext = 0
+
+    For i = LBound(lines) To UBound(lines)
+        If skipNext > 0 Then
+            skipNext = skipNext - 1
+            GoTo NextLine
+        End If
+
+        Dim ln As String, trimLine As String
+        ln = lines(i)
+        trimLine = Trim$(ln)
+
+        ' ================================
+        ' FIX A: si hay dDecode, restaurar SIEMPRE antes de filtros
+        ' ================================
+        If InStr(ln, "dDecode(""") > 0 Then
+            result(count) = RestoreLineSmart(ln, key)
+            count = count + 1
+            GoTo NextLine
+        End If
+
+        ' Saltar tags
+        If Left$(ln, 2) = "'_" Then
+            If InStr(ln, "_K=") > 0 Or InStr(ln, "_VMAP:") > 0 Then
+                GoTo NextLine
+            Else
+                If i + 1 <= UBound(lines) Then
+                    Dim nextLine As String
+                    nextLine = Trim$(lines(i + 1))
+
+                    If nextLine = "If False Then" Or nextLine = "On Error Resume Next" Or nextLine = "Do While False" Then
+                        ' FIX B: comerse el bloque completo (3 líneas después del tag)
+                        skipNext = 3
+                    End If
+                End If
+                GoTo NextLine
+            End If
+        End If
+
+        ' FIX C: limpiar restos de ruido/errores
+        If trimLine = "If False Then" Or trimLine = "End If" Or _
+           trimLine = "Do While False" Or trimLine = "Loop" Or _
+           trimLine = "On Error Resume Next" Or trimLine = "On Error GoTo 0" Or _
+           InStr(trimLine, "Dim ofuDummy") > 0 Or _
+           trimLine = "ofuDummy = ofuDummy + 0" Or trimLine = "ofuDummy = 0" Or trimLine = "ofuDummy = 1" Then
+            GoTo NextLine
+        End If
+
+        result(count) = RestoreLineSmart(ln, key)
+        count = count + 1
+
+NextLine:
+    Next
+
+    ReDim Preserve result(count - 1)
+    DeobfuscateCodeSmart = Join(result, vbCrLf)
+End Function
+
+Private Function RestoreLineSmart(ByVal ln As String, ByVal key As Long) As String
+    ' Conservador: mismo flujo que tenías, pero robusto con comentario inline
+    Dim codePart As String, commentPart As String
+    Dim pComment As Long
+
+    ' Separar comentario inline (si existe) para que no rompa el parseo del dDecode
+    pComment = InStr(ln, "'")
+    If pComment > 0 Then
+        codePart = Left$(ln, pComment - 1)
+        commentPart = Mid$(ln, pComment) ' incluye la comilla '
+    Else
+        codePart = ln
+        commentPart = ""
+    End If
+
+    Dim p As Long, result As String
+    result = codePart
+
+    ' Restaurar comentario ofuscado tipo '_XXXX:HEX
+    p = InStr(result, "'_")
+    If p > 0 Then
+        Dim colonPos As Long
+        colonPos = InStr(p, result, ":")
+        If colonPos > 0 Then
+            Dim hexStr As String
+            hexStr = Mid$(result, colonPos + 1)
+            RestoreLineSmart = Left$(result, p - 1) & "'" & FromHex4Fast(hexStr, key) & commentPart
+            Exit Function
+        End If
+    End If
+
+    ' Restaurar dDecode("HEX",key) -> "texto"
+    Dim maxIterations As Long
+    maxIterations = 0
+
+    Do While InStr(result, "dDecode(""") > 0 And maxIterations < 200
+        maxIterations = maxIterations + 1
+
+        Dim p1 As Long, p2 As Long, pEnd As Long
+        Dim hex As String, decoded As String
+
+        p1 = InStr(result, "dDecode(""")
+        p2 = InStr(p1 + 10, result, """")
+        If p2 = 0 Then Exit Do
+
+        pEnd = InStr(p2 + 1, result, ")")
+        If pEnd = 0 Then Exit Do
+
+        hex = Mid$(result, p1 + 10, p2 - (p1 + 10))
+        decoded = FromHex4Fast(hex, key)
+
+        result = Left$(result, p1 - 1) & """" & decoded & """" & Mid$(result, pEnd + 1)
+    Loop
+
+    RestoreLineSmart = result & commentPart
+End Function
+
+' =============================================================================
+' HEX4
+' =============================================================================
+
+Private Function ToHex4(ByVal s As String, ByVal k As Long) As String
+    Dim i As Long, charCode As Long, result As String, hexChunk As String
+
+    result = Space$(Len(s) * 4)
+
+    For i = 1 To Len(s)
+        charCode = AscW(Mid$(s, i, 1)) Xor k
+        hexChunk = Right$("0000" & Hex$(charCode), 4)
+        Mid$(result, (i - 1) * 4 + 1, 4) = hexChunk
+    Next
+
+    ToHex4 = result
+End Function
+
+Private Function FromHex4Fast(ByVal hex4 As String, ByVal k As Long) As String
+    Dim i As Long, v As Long, length As Long, result As String
+
+    length = Len(hex4)
+    If length Mod 4 <> 0 Then
+        FromHex4Fast = ""
+        Exit Function
+    End If
+
+    result = Space$(length \ 4)
+
+    On Error Resume Next
+    For i = 1 To length Step 4
+        v = CLng("&H" & Mid$(hex4, i, 4))
+        If Err.Number = 0 Then
+            Mid$(result, (i \ 4) + 1, 1) = ChrW$(v Xor k)
+        End If
+        Err.Clear
+    Next
+    On Error GoTo 0
+
+    FromHex4Fast = result
+End Function
+
+' =============================================================================
+' UTILIDADES
+' =============================================================================
+
+Private Function MakeKey() As Long
+    Randomize
+    MakeKey = CLng(Rnd * 65534) + 1
+End Function
+
+Private Function ExtractKey(ByVal src As String) As Long
+    Dim lines() As String, i As Long, ln As String, p As Long, s As String
+
+    lines = Split(src, vbCrLf)
+
+    For i = LBound(lines) To UBound(lines)
+        ln = lines(i)
+        If InStr(ln, "_K=") > 0 Then
+            p = InStr(ln, "=")
+            If p > 0 Then
+                s = Trim$(Mid$(ln, p + 1))
+                If IsNumeric(s) Then
+                    ExtractKey = CLng(s)
+                    Exit Function
+                End If
+            End If
+        End If
+    Next
+
+    ExtractKey = 0
+End Function
