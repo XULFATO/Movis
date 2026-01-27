@@ -15,7 +15,7 @@ Private Function IsProtectedProcName(ByVal procName As String) As Boolean
     IsProtectedProcName = _
         (Left$(n, 9) = "workbook_") Or _
         (Left$(n, 10) = "worksheet_") Or _
-        (Left$(n, 6) = "userform") Or _
+        (Left$(n, 8) = "userform") Or _
         (n = "auto_open") Or (n = "auto_close") Or (n = "autoexec") Or (n = "autoclose")
 End Function
 
@@ -55,45 +55,40 @@ Public Sub CAJA_NEGRA_COPIA()
 EH:
     Application.DisplayAlerts = True
     Application.ScreenUpdating = True
-    MsgBox "ERROR: " & Err.Description, vbCritical
+    MsgBox "ERROR: " & Err.Number & " - " & Err.Description, vbCritical
 End Sub
 
 ' ============================
 ' Proyecto: módulos + código
 ' ============================
 Private Sub BlackBoxProject(ByVal wb As Workbook)
-    Dim comps As VBIDE.VBComponents
-    Dim c As VBIDE.VBComponent
+    Dim comps As Object
+    Dim c As Object
 
-    ' Necesario: referencia a VBIDE
     Set comps = wb.VBProject.VBComponents
 
-    ' 1) Renombrar módulos (excepto ThisWorkbook / Sheets)
+    ' 1) Renombrar módulos (excepto documentos: ThisWorkbook/Sheets)
     For Each c In comps
-        If c.Type = vbext_ct_StdModule Or c.Type = vbext_ct_ClassModule Then
-            If LCase$(c.Name) <> LCase$(ThisWorkbook.VBProject.VBComponents(ThisWorkbook.CodeName).Name) Then
-                ' No podemos detectar "módulo herramienta" dentro del destino,
-                ' así que renombramos todos los módulos estándar/clase del archivo objetivo.
-                SafeRenameComponent c
-            End If
+        If c.Type = 1 Or c.Type = 2 Then ' 1=StdModule, 2=ClassModule
+            SafeRenameComponent c
         End If
     Next c
 
     ' 2) Ofuscar código componente por componente
     For Each c In comps
-        If c.Type = vbext_ct_StdModule Or c.Type = vbext_ct_ClassModule Or c.Type = vbext_ct_Document Then
+        If c.Type = 1 Or c.Type = 2 Or c.Type = 100 Then ' 100=Document
             BlackBoxComponent c
         End If
     Next c
 End Sub
 
-Private Sub SafeRenameComponent(ByVal c As VBIDE.VBComponent)
+Private Sub SafeRenameComponent(ByVal c As Object)
     On Error Resume Next
     c.Name = "m" & RandomName(MIN_NAME_LEN)
     On Error GoTo 0
 End Sub
 
-Private Sub BlackBoxComponent(ByVal c As VBIDE.VBComponent)
+Private Sub BlackBoxComponent(ByVal c As Object)
     Dim code As String
     code = GetCode(c)
     If Len(code) = 0 Then Exit Sub
@@ -111,7 +106,7 @@ Private Sub BlackBoxComponent(ByVal c As VBIDE.VBComponent)
     BuildRenameMap code, map
     code = ApplyRenameMap(code, map)
 
-    ' 3) Compactar espacios vacíos (opcional, reduce legibilidad)
+    ' 3) Compactar espacios vacíos (reduce legibilidad)
     code = CompactBlankLines(code)
 
     SetCode c, code
@@ -120,7 +115,7 @@ End Sub
 ' ============================
 ' Lectura/escritura código
 ' ============================
-Private Function GetCode(ByVal c As VBIDE.VBComponent) As String
+Private Function GetCode(ByVal c As Object) As String
     With c.CodeModule
         If .CountOfLines = 0 Then
             GetCode = ""
@@ -130,7 +125,7 @@ Private Function GetCode(ByVal c As VBIDE.VBComponent) As String
     End With
 End Function
 
-Private Sub SetCode(ByVal c As VBIDE.VBComponent, ByVal txt As String)
+Private Sub SetCode(ByVal c As Object, ByVal txt As String)
     With c.CodeModule
         If .CountOfLines > 0 Then .DeleteLines 1, .CountOfLines
         If Len(txt) > 0 Then .AddFromString txt
@@ -143,6 +138,7 @@ End Sub
 Private Function RemoveCommentsSmart(ByVal src As String) As String
     Dim lines() As String, i As Long
     Dim out() As String, n As Long
+
     lines = Split(src, vbCrLf)
     ReDim out(UBound(lines))
 
@@ -153,15 +149,17 @@ Private Function RemoveCommentsSmart(ByVal src As String) As String
 
         ' Si la línea empieza por comentario, fuera
         If LCase$(Left$(Trim$(ln), Len("'" & TOOL_MARKER))) = "'" & LCase$(TOOL_MARKER) Then
-            ' Por si quieres marcar líneas en tu fuente para preservarlas (opcional)
+            ' Permite "marcar" líneas para preservarlas si quisieras
             out(n) = ln: n = n + 1
+
         ElseIf Left$(Trim$(ln), 1) = "'" Then
-            ' eliminar
+            ' eliminar línea completa de comentario
+
         Else
             out(n) = StripTrailingComment(ln)
             n = n + 1
         End If
-    Next
+    Next i
 
     If n = 0 Then
         RemoveCommentsSmart = ""
@@ -171,19 +169,23 @@ Private Function RemoveCommentsSmart(ByVal src As String) As String
     End If
 End Function
 
+' ✅ CORREGIDO: NO usar parámetro llamado "In" (palabra reservada)
 Private Function StripTrailingComment(ByVal ln As String) As String
     Dim i As Long, ch As String
-    Dim inStr As Boolean
+    Dim inStrLit As Boolean
 
-    inStr = False
+    inStrLit = False
     For i = 1 To Len(ln)
         ch = Mid$(ln, i, 1)
-        If ch = """" Then inStr = Not inStr
-        If (Not inStr) And ch = "'" Then
+
+        If ch = """" Then
+            inStrLit = Not inStrLit
+        ElseIf (Not inStrLit) And ch = "'" Then
             StripTrailingComment = RTrim$(Left$(ln, i - 1))
             Exit Function
         End If
-    Next
+    Next i
+
     StripTrailingComment = ln
 End Function
 
@@ -192,8 +194,8 @@ End Function
 ' ============================
 Private Sub BuildRenameMap(ByVal code As String, ByVal map As Object)
     ' Renombra:
-    '  - Private Sub/Function NOMBRE -> rXXXXXXXXXX
-    '  - Variables en declaraciones Dim/Static (locales)
+    '  - Private Sub/Function NOMBRE -> pXXXXXXXXXX
+    '  - Variables en declaraciones Dim/Static
     '
     ' NO renombra Public ni eventos.
 
@@ -217,8 +219,7 @@ Private Sub BuildRenameMap(ByVal code As String, ByVal map As Object)
             End If
         End If
 
-        ' Declaraciones locales: Dim / Static dentro de procedimientos
-        ' (No podemos “saber” si estamos dentro por AST sin parser, pero es suficiente práctico)
+        ' Declaraciones: Dim / Static (cubre la mayoría)
         If Left$(tl, 4) = "dim " Or Left$(tl, 7) = "static " Then
             AddVarRenamesFromDeclaration t, map
         End If
@@ -242,28 +243,23 @@ Private Function ExtractProcName(ByVal lineText As String, ByVal kind As String)
     Dim s As String
     s = Trim$(lineText)
 
-    ' s = "Private Sub X(..."
     Dim p As Long
     p = InStr(1, s, kind & " ", vbTextCompare)
     If p = 0 Then Exit Function
 
-    s = Mid$(s, p + Len(kind) + 1) ' después de "sub " / "function "
+    s = Mid$(s, p + Len(kind) + 1)
     s = Trim$(s)
 
-    ' hasta "(" o espacio
     Dim q As Long
     q = InStr(1, s, "(", vbTextCompare)
     If q > 0 Then
         ExtractProcName = Trim$(Left$(s, q - 1))
     Else
-        ' sin paréntesis (raro)
         ExtractProcName = TakeWord(s)
     End If
 End Function
 
 Private Sub AddVarRenamesFromDeclaration(ByVal decl As String, ByVal map As Object)
-    ' Soporta: Dim a As Long, b As String
-    ' No renombra arrays complejos ni tipos definidos al 100%, pero cubre la mayoría.
     Dim s As String
     s = Trim$(decl)
 
@@ -278,7 +274,6 @@ Private Sub AddVarRenamesFromDeclaration(ByVal decl As String, ByVal map As Obje
         item = Trim$(parts(i))
         If Len(item) = 0 Then GoTo NextItem
 
-        ' cortar en "As"
         Dim p As Long
         p = InStr(1, item, " As ", vbTextCompare)
         If p > 0 Then
@@ -287,11 +282,9 @@ Private Sub AddVarRenamesFromDeclaration(ByVal decl As String, ByVal map As Obje
             varName = TakeWord(item)
         End If
 
-        ' quitar () de arrays
         p = InStr(varName, "(")
         If p > 0 Then varName = Trim$(Left$(varName, p - 1))
 
-        ' excluir dummy/keywords
         If Len(varName) = 0 Then GoTo NextItem
         If LCase$(varName) = "err" Then GoTo NextItem
 
@@ -308,31 +301,33 @@ Private Function ApplyRenameMap(ByVal code As String, ByVal map As Object) As St
     Dim result As String
     result = code
 
-    ' Reemplazo conservador "palabra completa" fuera de strings
     For Each k In map.Keys
         result = ReplaceWholeWordSafe(result, CStr(k), CStr(map(k)))
-    Next
+    Next k
 
     ApplyRenameMap = result
 End Function
 
 Private Function ReplaceWholeWordSafe(ByVal text As String, ByVal oldWord As String, ByVal newWord As String) As String
     Dim res As String, i As Long, ch As String
-    Dim inStr As Boolean
+    Dim inStrLit As Boolean
+
     res = ""
     i = 1
-    inStr = False
+    inStrLit = False
 
     Do While i <= Len(text)
         ch = Mid$(text, i, 1)
 
         If ch = """" Then
-            inStr = Not inStr
+            inStrLit = Not inStrLit
             res = res & ch
             i = i + 1
-        ElseIf Not inStr And IsWordChar(ch) Then
+
+        ElseIf Not inStrLit And IsWordChar(ch) Then
             Dim startPos As Long
             startPos = i
+
             Do While i <= Len(text) And IsWordChar(Mid$(text, i, 1))
                 i = i + 1
             Loop
@@ -345,6 +340,7 @@ Private Function ReplaceWholeWordSafe(ByVal text As String, ByVal oldWord As Str
             Else
                 res = res & w
             End If
+
         Else
             res = res & ch
             i = i + 1
@@ -370,6 +366,7 @@ Private Function CompactBlankLines(ByVal src As String) As String
 
     lines = Split(src, vbCrLf)
     ReDim out(UBound(lines))
+
     n = 0
     lastBlank = False
 
@@ -388,7 +385,7 @@ Private Function CompactBlankLines(ByVal src As String) As String
             n = n + 1
             lastBlank = False
         End If
-    Next
+    Next i
 
     If n = 0 Then
         CompactBlankLines = ""
@@ -433,18 +430,20 @@ Private Function RandomName(ByVal n As Long) As String
     Randomize
     For i = 1 To n
         RandomName = RandomName & Mid$(chars, Int(Rnd * Len(chars)) + 1, 1)
-    Next
+    Next i
 End Function
 
 Private Function TakeWord(ByVal s As String) As String
     Dim i As Long, ch As String
     s = Trim$(s)
+
     For i = 1 To Len(s)
         ch = Mid$(s, i, 1)
         If Not IsWordChar(ch) Then
             TakeWord = Left$(s, i - 1)
             Exit Function
         End If
-    Next
+    Next i
+
     TakeWord = s
 End Function
