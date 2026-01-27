@@ -1,39 +1,28 @@
-'==========================================================================================
-' modVBACodeObfuscator
-'
-' REQUIERE (VBE -> Tools -> References):
-'  - Microsoft Visual Basic for Applications Extensibility 5.3
-'  - Microsoft VBScript Regular Expressions 5.5
-'
-' REQUIERE (Excel):
-'  - Archivo -> Opciones -> Centro de confianza -> Configuración -> Configuración de macros ->
-'    marcar: "Confiar en el acceso al modelo de objetos de proyectos de VBA"
-'
-' OBJETIVO:
-'  - Pide fichero ORIGEN y DESTINO por pantalla
-'  - Crea DESTINO como .XLSM (copia del origen)
-'  - Ofusca SOLO identificadores internos (Dim/Private + argumentos + Private Subs/Functions)
-'  - NO cambia nombres de Public Sub / Public Function (para no romper botones/asignaciones)
-'
-' NOTAS IMPORTANTES:
-'  - No usa formularios ni ActiveX.
-'  - No usa VBComponents.Remove/Add (toca el código "in place": borra y reescribe líneas).
-'==========================================================================================
-
 Option Explicit
 
-'-----------------------------
-' Configuración de ofuscación
-'-----------------------------
-Private Const OBSFUCATED_PREFIX As String = "Obsf_"
-Private Const OBSFUCATED_LEN As Long = 40
+'==========================================================================================
+' VBA Code Obfuscator - VERSIÓN MEJORADA
+'
+' REQUIERE:
+'  - Microsoft Visual Basic for Applications Extensibility 5.3
+'  - Microsoft VBScript Regular Expressions 5.5
+'  - Trust access to VBA project object model (ACTIVADO)
+'
+' MEJORAS:
+'  - Elimina TODOS los comentarios
+'  - Ofusca strings literales (excepto en contextos Excel)
+'  - Maneja correctamente VBProject
+'  - Renombra variables locales
+'  - Respeta Sub/Function públicos (no rompe botones)
+'==========================================================================================
 
-'-----------------------------
+Private Const OBSFUCATED_PREFIX As String = "v"
+Private Const OBSFUCATED_LEN As Long = 12
+
 ' Mapa de reemplazos
-'-----------------------------
 Private Type TMapItem
-    k As String
-    v As String
+    originalName As String
+    obfuscatedName As String
 End Type
 
 Private mMap() As TMapItem
@@ -46,186 +35,404 @@ Public Sub ObfuscateWorkbook_Interactive()
     Dim srcPath As Variant, dstPath As Variant
     Dim srcWb As Workbook, dstWb As Workbook
 
+    ' Verificar acceso VBProject
     If Not HasVBAProjectAccess() Then
-        MsgBox "No hay acceso al modelo VBProject." & vbCrLf & vbCrLf & _
-               "Activa: Centro de confianza -> 'Confiar en el acceso al modelo de objetos de proyectos de VBA'", _
+        MsgBox "ERROR: No hay acceso al modelo VBProject." & vbCrLf & vbCrLf & _
+               "Solución:" & vbCrLf & _
+               "1. Archivo → Opciones → Centro de confianza" & vbCrLf & _
+               "2. Configuración del Centro de confianza" & vbCrLf & _
+               "3. Configuración de macros" & vbCrLf & _
+               "4. Marcar: 'Confiar en el acceso al modelo de objetos de proyectos de VBA'", _
                vbCritical, "VBA Obfuscator"
         Exit Sub
     End If
 
+    ' Seleccionar origen
     srcPath = Application.GetOpenFilename( _
-                FileFilter:="Excel macro-enabled (*.xlsm;*.xlam;*.xlsb;*.xls;*.xlsx),*.xlsm;*.xlam;*.xlsb;*.xls;*.xlsx", _
-                Title:="Selecciona el EXCEL ORIGEN")
+                FileFilter:="Excel macro-enabled (*.xlsm;*.xlam),*.xlsm;*.xlam", _
+                Title:="Selecciona el archivo ORIGEN")
     If srcPath = False Then Exit Sub
 
+    ' Seleccionar destino
     dstPath = Application.GetSaveAsFilename( _
                 InitialFileName:=BuildDefaultDestPath(CStr(srcPath)), _
                 FileFilter:="Excel Macro-Enabled Workbook (*.xlsm), *.xlsm", _
-                Title:="Guardar DESTINO (XLSM)")
+                Title:="Guardar archivo OFUSCADO")
     If dstPath = False Then Exit Sub
     If LCase$(Right$(CStr(dstPath), 5)) <> ".xlsm" Then dstPath = CStr(dstPath) & ".xlsm"
 
     Application.ScreenUpdating = False
     Application.DisplayAlerts = False
+    On Error GoTo ErrorHandler
 
-    Set srcWb = Workbooks.Open(Filename:=CStr(srcPath), ReadOnly:=True)
+    ' Abrir origen
+    Set srcWb = Workbooks.Open(Filename:=CStr(srcPath), ReadOnly:=True, UpdateLinks:=False)
 
-    ' Crear destino como copia (mantiene macros)
+    ' Crear copia
     srcWb.SaveCopyAs CStr(dstPath)
+    srcWb.Close SaveChanges:=False
 
-    ' Abrir destino en modo editable
-    Set dstWb = Workbooks.Open(Filename:=CStr(dstPath), ReadOnly:=False)
+    ' Abrir destino para editar
+    Set dstWb = Workbooks.Open(Filename:=CStr(dstPath), ReadOnly:=False, UpdateLinks:=False)
 
-    ' Construir mapa (FASE 1)
+    ' FASE 1: Construir mapa de identificadores
     MapInit
     CollectIdentifiers dstWb
 
-    ' Aplicar reemplazos (FASE 2)
+    ' FASE 2: Aplicar ofuscación
     ApplyObfuscation dstWb
 
     dstWb.Save
     dstWb.Close SaveChanges:=True
-    srcWb.Close SaveChanges:=False
 
     Application.DisplayAlerts = True
     Application.ScreenUpdating = True
 
-    MsgBox "OK. Ofuscación terminada:" & vbCrLf & CStr(dstPath), vbInformation, "VBA Obfuscator"
+    MsgBox "Ofuscación completada correctamente:" & vbCrLf & vbCrLf & CStr(dstPath), _
+           vbInformation, "VBA Obfuscator"
+    Exit Sub
+
+ErrorHandler:
+    Application.DisplayAlerts = True
+    Application.ScreenUpdating = True
+    MsgBox "ERROR: " & Err.Description & vbCrLf & vbCrLf & _
+           "Número: " & Err.Number, vbCritical, "VBA Obfuscator"
 End Sub
 
 '==========================================================================================
 ' FASE 1: RECOGER IDENTIFICADORES
 '==========================================================================================
 Private Sub CollectIdentifiers(ByVal wb As Workbook)
-    Dim vbProj As VBIDE.VBProject
-    Dim comp As VBIDE.VBComponent
-    Dim cm As VBIDE.CodeModule
+    Dim vbProj As Object ' VBIDE.VBProject
+    Dim comp As Object   ' VBIDE.VBComponent
+    Dim cm As Object     ' VBIDE.CodeModule
     Dim codeText As String
+    Dim i As Long
+
+    On Error GoTo ErrorHandler
 
     Set vbProj = wb.VBProject
 
-    For Each comp In vbProj.VBComponents
+    For i = 1 To vbProj.VBComponents.count
+        Set comp = vbProj.VBComponents(i)
         Set cm = comp.CodeModule
-        If cm.CountOfLines <= 0 Then GoTo NextComp
 
-        codeText = cm.Lines(1, cm.CountOfLines)
+        If cm.CountOfLines > 0 Then
+            codeText = cm.Lines(1, cm.CountOfLines)
 
-        ' 1) Variables (Dim/Private/Public)
-        CollectVariablesFromText codeText
+            ' 1) Variables (Dim/Private)
+            CollectVariablesFromText codeText
 
-        ' 2) Procedimientos (Private Sub/Function) -> se pueden ofuscar (pero protegemos eventos)
-        CollectPrivateProceduresFromText codeText, comp.Type
+            ' 2) Argumentos de procedimientos
+            CollectArgumentsFromText codeText, comp.Type
 
-        ' 3) Argumentos de Sub/Function (Private/Public) -> ofuscamos argumentos si NO son eventos protegidos
-        CollectArgumentsFromText codeText, comp.Type
+            ' 3) Procedimientos Private (SOLO Private Sub/Function)
+            CollectPrivateProceduresFromText codeText, comp.Type
+        End If
+    Next i
 
-NextComp:
-    Next comp
+    Exit Sub
+
+ErrorHandler:
+    MsgBox "Error en CollectIdentifiers: " & Err.Description, vbCritical
 End Sub
 
 Private Sub CollectVariablesFromText(ByVal codeText As String)
-    Dim lines() As String, i As Long, s As String
-    Dim decl As String, declType As String
+    Dim lines() As String, i As Long, s As String, trimmed As String
+    Dim declType As String, decl As String
 
     lines = Split(codeText, vbCrLf)
 
     For i = LBound(lines) To UBound(lines)
-        s = Trim$(lines(i))
+        s = lines(i)
+        trimmed = Trim$(s)
 
-        If s = "" Then GoTo NextLine
-        If Left$(s, 1) = "'" Then GoTo NextLine
-        If LCase$(Left$(s, 10)) = "attribute " Then GoTo NextLine
-        If IsProcHeaderLine(s) Then GoTo NextLine
-        If InStr(1, s, "Enum", vbTextCompare) = 1 Then GoTo NextLine
-        If InStr(1, s, "Type", vbTextCompare) = 1 Then GoTo NextLine
-        If InStr(1, s, "Const", vbTextCompare) = 1 Then GoTo NextLine
+        ' Ignorar líneas vacías, comentarios, atributos
+        If trimmed = "" Then GoTo NextLine
+        If Left$(trimmed, 1) = "'" Then GoTo NextLine
+        If LCase$(Left$(trimmed, 10)) = "attribute " Then GoTo NextLine
 
-        If StartsWithWord(s, "Dim") Or StartsWithWord(s, "Private") Or StartsWithWord(s, "Public") Then
-            declType = FirstWord(s) ' Dim/Private/Public
-            decl = Trim$(Mid$(s, Len(declType) + 1))
+        ' Detectar declaraciones Dim/Private (NO Public)
+        If StartsWithWord(trimmed, "Dim") Or StartsWithWord(trimmed, "Private") Then
+            ' No procesar constantes
+            If InStr(1, trimmed, "Const", vbTextCompare) > 0 Then GoTo NextLine
 
-            ' Dim a As Long, b As String
-            CollectNamesFromDeclarationList decl, True  ' True = variables
+            declType = FirstWord(trimmed)
+            decl = Trim$(Mid$(trimmed, Len(declType) + 1))
+
+            CollectNamesFromDeclarationList decl
         End If
 
 NextLine:
     Next i
 End Sub
 
-Private Sub CollectPrivateProceduresFromText(ByVal codeText As String, ByVal compType As VBIDE.vbext_ComponentType)
-    Dim re As RegExp, m As MatchCollection, x As Match
+Private Sub CollectPrivateProceduresFromText(ByVal codeText As String, ByVal compType As Long)
+    Dim re As Object ' RegExp
+    Dim matches As Object, match As Object
     Dim procName As String
 
-    Set re = New RegExp
+    Set re = CreateObject("VBScript.RegExp")
     re.Global = True
     re.IgnoreCase = False
     re.Pattern = "^\s*Private\s+(Sub|Function)\s+([A-Za-z_][A-Za-z0-9_]*)\b"
-    Set m = re.Execute(codeText)
 
-    For Each x In m
-        procName = CStr(x.SubMatches(1))
+    Set matches = re.Execute(codeText)
+
+    For Each match In matches
+        procName = CStr(match.SubMatches(1))
+
+        ' No ofuscar eventos protegidos
         If Not IsProtectedProcName(procName, compType) Then
             MapAdd procName, MakeObfuscated(procName)
         End If
-    Next x
+    Next match
 End Sub
 
-Private Sub CollectArgumentsFromText(ByVal codeText As String, ByVal compType As VBIDE.vbext_ComponentType)
-    Dim re As RegExp, m As MatchCollection, x As Match
-    Dim header As String, procName As String, argsBlock As String
+Private Sub CollectArgumentsFromText(ByVal codeText As String, ByVal compType As Long)
+    Dim re As Object, matches As Object, match As Object
+    Dim procName As String, argsBlock As String
 
-    Set re = New RegExp
+    Set re = CreateObject("VBScript.RegExp")
     re.Global = True
     re.IgnoreCase = False
-    ' Captura: [Public|Private] Sub/Function ProcName( ... )
     re.Pattern = "^\s*(Public|Private)?\s*(Sub|Function)\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)"
-    Set m = re.Execute(codeText)
 
-    For Each x In m
-        header = CStr(x.Value)
-        procName = CStr(x.SubMatches(2))
-        argsBlock = CStr(x.SubMatches(3))
+    Set matches = re.Execute(codeText)
 
-        If InStr(1, header, "IRibbon", vbTextCompare) > 0 Then GoTo NextHeader
-        If IsProtectedProcName(procName, compType) Then GoTo NextHeader
+    For Each match In matches
+        procName = CStr(match.SubMatches(2))
+        argsBlock = CStr(match.SubMatches(3))
 
-        CollectNamesFromArgumentList argsBlock
-
-NextHeader:
-    Next x
+        ' Ignorar eventos protegidos
+        If Not IsProtectedProcName(procName, compType) Then
+            CollectNamesFromArgumentList argsBlock
+        End If
+    Next match
 End Sub
 
 '==========================================================================================
 ' FASE 2: APLICAR OFUSCACIÓN
 '==========================================================================================
 Private Sub ApplyObfuscation(ByVal wb As Workbook)
-    Dim vbProj As VBIDE.VBProject
-    Dim comp As VBIDE.VBComponent
-    Dim cm As VBIDE.CodeModule
+    Dim vbProj As Object
+    Dim comp As Object
+    Dim cm As Object
     Dim originalText As String, newText As String
+    Dim i As Long
+
+    On Error GoTo ErrorHandler
 
     Set vbProj = wb.VBProject
 
-    For Each comp In vbProj.VBComponents
+    For i = 1 To vbProj.VBComponents.count
+        Set comp = vbProj.VBComponents(i)
         Set cm = comp.CodeModule
-        If cm.CountOfLines <= 0 Then GoTo NextComp
 
-        originalText = cm.Lines(1, cm.CountOfLines)
-        newText = ReplaceWithMap(originalText, comp.Type)
+        If cm.CountOfLines > 0 Then
+            originalText = cm.Lines(1, cm.CountOfLines)
 
-        If newText <> originalText Then
-            cm.DeleteLines 1, cm.CountOfLines
-            cm.InsertLines 1, newText
+            ' 1) Eliminar comentarios
+            newText = RemoveComments(originalText)
+
+            ' 2) Ofuscar strings literales
+            newText = ObfuscateStrings(newText)
+
+            ' 3) Renombrar identificadores
+            newText = ReplaceWithMap(newText, comp.Type)
+
+            ' Escribir código modificado
+            If newText <> originalText Then
+                cm.DeleteLines 1, cm.CountOfLines
+                If Len(newText) > 0 Then
+                    cm.InsertLines 1, newText
+                End If
+            End If
         End If
+    Next i
 
-NextComp:
-    Next comp
+    Exit Sub
+
+ErrorHandler:
+    MsgBox "Error en ApplyObfuscation: " & Err.Description, vbCritical
 End Sub
 
 '==========================================================================================
-' REEMPLAZO (respeta strings, ignora comentarios de línea completa)
+' ELIMINACIÓN DE COMENTARIOS
 '==========================================================================================
-Private Function ReplaceWithMap(ByVal codeText As String, ByVal compType As VBIDE.vbext_ComponentType) As String
+Private Function RemoveComments(ByVal codeText As String) As String
+    Dim lines() As String, i As Long, s As String
+    Dim outLines() As String
+    Dim inString As Boolean, j As Long, ch As String
+    Dim cleaned As String
+
+    lines = Split(codeText, vbCrLf)
+    ReDim outLines(LBound(lines) To UBound(lines))
+
+    For i = LBound(lines) To UBound(lines)
+        s = lines(i)
+
+        ' Si es comentario completo, eliminar
+        If Trim$(s) <> "" And Left$(Trim$(s), 1) = "'" Then
+            outLines(i) = ""
+            GoTo NextLine
+        End If
+
+        ' Eliminar comentarios inline (respetando strings)
+        inString = False
+        cleaned = ""
+
+        For j = 1 To Len(s)
+            ch = Mid$(s, j, 1)
+
+            If ch = """" Then
+                inString = Not inString
+                cleaned = cleaned & ch
+            ElseIf ch = "'" And Not inString Then
+                ' Resto de línea es comentario
+                Exit For
+            Else
+                cleaned = cleaned & ch
+            End If
+        Next j
+
+        outLines(i) = cleaned
+
+NextLine:
+    Next i
+
+    RemoveComments = Join(outLines, vbCrLf)
+End Function
+
+'==========================================================================================
+' OFUSCACIÓN DE STRINGS
+'==========================================================================================
+Private Function ObfuscateStrings(ByVal codeText As String) As String
+    Dim lines() As String, i As Long
+    Dim outLines() As String
+
+    lines = Split(codeText, vbCrLf)
+    ReDim outLines(LBound(lines) To UBound(lines))
+
+    For i = LBound(lines) To UBound(lines)
+        outLines(i) = ObfuscateStringsInLine(lines(i))
+    Next i
+
+    ObfuscateStrings = Join(outLines, vbCrLf)
+End Function
+
+Private Function ObfuscateStringsInLine(ByVal lineText As String) As String
+    Dim result As String, i As Long, ch As String
+    Dim inString As Boolean, currentString As String, beforeString As String
+
+    result = ""
+    inString = False
+    currentString = ""
+    beforeString = ""
+
+    For i = 1 To Len(lineText)
+        ch = Mid$(lineText, i, 1)
+
+        If ch = """" Then
+            If inString Then
+                ' Fin del string
+                result = result & beforeString
+
+                ' Verificar si es contexto Excel (Worksheets, Range, etc.)
+                If Not IsExcelCollectionContext(beforeString) And Len(currentString) > 0 Then
+                    result = result & """" & ROT13(currentString) & """"
+                ElseIf Len(currentString) > 0 Then
+                    result = result & """" & currentString & """"
+                Else
+                    result = result & """"""
+                End If
+
+                beforeString = ""
+                currentString = ""
+                inString = False
+            Else
+                ' Inicio del string
+                result = result & beforeString
+                beforeString = ""
+                inString = True
+            End If
+        Else
+            If inString Then
+                currentString = currentString & ch
+            Else
+                beforeString = beforeString & ch
+            End If
+        End If
+    Next i
+
+    result = result & beforeString
+    ObfuscateStringsInLine = result
+End Function
+
+Private Function IsExcelCollectionContext(ByVal precedingCode As String) As Boolean
+    Dim trimmed As String, lastWord As String
+    Dim i As Long, wordStart As Long
+
+    trimmed = RTrim$(precedingCode)
+    i = Len(trimmed)
+
+    Do While i > 0
+        If Mid$(trimmed, i, 1) = "(" Or Mid$(trimmed, i, 1) = "." Then
+            wordStart = i - 1
+            Do While wordStart > 0
+                If Not IsWordChar(Mid$(trimmed, wordStart, 1)) Then Exit Do
+                wordStart = wordStart - 1
+            Loop
+
+            lastWord = LCase$(Mid$(trimmed, wordStart + 1, i - wordStart - 1))
+
+            Select Case lastWord
+                Case "worksheets", "sheets", "workbooks", "range", "cells", "names"
+                    IsExcelCollectionContext = True
+                    Exit Function
+            End Select
+
+            Exit Do
+        End If
+        i = i - 1
+    Loop
+
+    IsExcelCollectionContext = False
+End Function
+
+Private Function IsWordChar(ByVal ch As String) As Boolean
+    Dim code As Long
+    code = Asc(ch)
+    IsWordChar = (code >= 65 And code <= 90) Or _
+                 (code >= 97 And code <= 122) Or _
+                 (code >= 48 And code <= 57) Or _
+                 ch = "_"
+End Function
+
+' ROT13 simple para ofuscar strings
+Private Function ROT13(ByVal s As String) As String
+    Dim i As Long, ch As String, code As Long, result As String
+
+    For i = 1 To Len(s)
+        ch = Mid$(s, i, 1)
+        code = Asc(ch)
+
+        If code >= 65 And code <= 90 Then ' A-Z
+            code = ((code - 65 + 13) Mod 26) + 65
+        ElseIf code >= 97 And code <= 122 Then ' a-z
+            code = ((code - 97 + 13) Mod 26) + 97
+        End If
+
+        result = result & Chr$(code)
+    Next i
+
+    ROT13 = result
+End Function
+
+'==========================================================================================
+' REEMPLAZO CON MAPA
+'==========================================================================================
+Private Function ReplaceWithMap(ByVal codeText As String, ByVal compType As Long) As String
     Dim lines() As String, i As Long, s As String
     Dim outLines() As String
 
@@ -237,28 +444,25 @@ Private Function ReplaceWithMap(ByVal codeText As String, ByVal compType As VBID
 
         If Trim$(s) = "" Then
             outLines(i) = s
-        ElseIf Left$(Trim$(s), 1) = "'" Then
-            outLines(i) = s
         ElseIf LCase$(Left$(Trim$(s), 10)) = "attribute " Then
             outLines(i) = s
         Else
-            outLines(i) = ReplaceOutsideQuotes(s, compType)
+            outLines(i) = ReplaceOutsideQuotes(s)
         End If
     Next i
 
     ReplaceWithMap = Join(outLines, vbCrLf)
 End Function
 
-Private Function ReplaceOutsideQuotes(ByVal lineText As String, ByVal compType As VBIDE.vbext_ComponentType) As String
+Private Function ReplaceOutsideQuotes(ByVal lineText As String) As String
     Dim parts() As String, i As Long
     Dim result As String
 
-    ' Divide por comillas: pares (0,2,4...) fuera; impares dentro de string
     parts = Split(lineText, """")
 
     For i = LBound(parts) To UBound(parts)
         If (i Mod 2) = 0 Then
-            parts(i) = ReplaceTokens(parts(i), compType)
+            parts(i) = ReplaceTokens(parts(i))
         End If
     Next i
 
@@ -266,19 +470,16 @@ Private Function ReplaceOutsideQuotes(ByVal lineText As String, ByVal compType A
     ReplaceOutsideQuotes = result
 End Function
 
-Private Function ReplaceTokens(ByVal textPart As String, ByVal compType As VBIDE.vbext_ComponentType) As String
-    Dim i As Long
-    Dim re As RegExp
+Private Function ReplaceTokens(ByVal textPart As String) As String
+    Dim i As Long, re As Object
 
-    ' Aplica reemplazos por word boundary
-    ' (no tocamos Public Subs/Functions porque NO están en el mapa si son Public)
     For i = 0 To mMapCount - 1
-        If mMap(i).k <> "" Then
-            Set re = New RegExp
+        If mMap(i).originalName <> "" Then
+            Set re = CreateObject("VBScript.RegExp")
             re.Global = True
             re.IgnoreCase = False
-            re.Pattern = "\b" & RegexEscape(mMap(i).k) & "\b"
-            textPart = re.Replace(textPart, mMap(i).v)
+            re.Pattern = "\b" & RegexEscape(mMap(i).originalName) & "\b"
+            textPart = re.Replace(textPart, mMap(i).obfuscatedName)
         End If
     Next i
 
@@ -298,21 +499,19 @@ Private Sub MapAdd(ByVal originalName As String, ByVal obfuscatedName As String)
     If originalName = "" Then Exit Sub
     If Not IsValidIdentifier(originalName) Then Exit Sub
     If IsReservedWord(originalName) Then Exit Sub
-
-    ' ya existe?
     If MapGet(originalName) <> "" Then Exit Sub
 
     ReDim Preserve mMap(0 To mMapCount)
-    mMap(mMapCount).k = originalName
-    mMap(mMapCount).v = obfuscatedName
+    mMap(mMapCount).originalName = originalName
+    mMap(mMapCount).obfuscatedName = obfuscatedName
     mMapCount = mMapCount + 1
 End Sub
 
 Private Function MapGet(ByVal originalName As String) As String
     Dim i As Long
     For i = 0 To mMapCount - 1
-        If StrComp(mMap(i).k, originalName, vbBinaryCompare) = 0 Then
-            MapGet = mMap(i).v
+        If StrComp(mMap(i).originalName, originalName, vbBinaryCompare) = 0 Then
+            MapGet = mMap(i).obfuscatedName
             Exit Function
         End If
     Next i
@@ -320,19 +519,17 @@ Private Function MapGet(ByVal originalName As String) As String
 End Function
 
 Private Function MakeObfuscated(ByVal seed As String) As String
-    Dim s As String, i As Long, n As Long, c As Long
+    Dim s As String, i As Long, n As Long
+    Dim chars As String
 
-    Randomize
+    chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
     s = OBSFUCATED_PREFIX
 
+    Randomize Timer + Len(seed)
+
     For i = 1 To OBSFUCATED_LEN
-        n = Int((35 * Rnd) + 1)
-        If n <= 9 Then
-            c = n + 48
-        Else
-            c = n + 55
-        End If
-        s = s & Chr$(c)
+        n = Int(Rnd * Len(chars)) + 1
+        s = s & Mid$(chars, n, 1)
     Next i
 
     MakeObfuscated = s
@@ -341,22 +538,19 @@ End Function
 '==========================================================================================
 ' PARSERS
 '==========================================================================================
-Private Sub CollectNamesFromDeclarationList(ByVal decl As String, ByVal areVariables As Boolean)
+Private Sub CollectNamesFromDeclarationList(ByVal decl As String)
     Dim parts() As String, i As Long, one As String, name As String
 
-    ' Divide por comas (manejo simple; suficiente para Dim a As Long, b As String)
     parts = Split(decl, ",")
 
     For i = LBound(parts) To UBound(parts)
         one = Trim$(parts(i))
         If one = "" Then GoTo NextOne
 
-        ' Quitar ByVal/ByRef si colara (no debería en Dim, pero por si acaso)
         one = StripTokens(one, Array("ByVal", "ByRef", "Optional", "ParamArray"))
-
         name = ExtractIdentifierLeft(one)
+
         If name <> "" Then
-            ' Variables: ofuscar siempre (Dim/Private/Public) salvo que sea Public macro? (no aplica)
             MapAdd name, MakeObfuscated(name)
         End If
 
@@ -377,8 +571,8 @@ Private Sub CollectNamesFromArgumentList(ByVal argsBlock As String)
         If one = "" Then GoTo NextArg
 
         one = StripTokens(one, Array("ByVal", "ByRef", "Optional", "ParamArray"))
-
         name = ExtractIdentifierLeft(one)
+
         If name <> "" Then
             MapAdd name, MakeObfuscated(name)
         End If
@@ -388,21 +582,13 @@ NextArg:
 End Sub
 
 Private Function ExtractIdentifierLeft(ByVal fragment As String) As String
-    ' Devuelve el primer identificador de un fragmento:
-    '  "x As Long" -> x
-    '  "arr() As Variant" -> arr
-    '  "x=5" -> x
     fragment = Trim$(fragment)
     If fragment = "" Then Exit Function
 
-    ' cortar antes de "As", "=", "("
     fragment = CutBeforeToken(fragment, " As ")
     fragment = CutBeforeChar(fragment, "=")
     fragment = CutBeforeChar(fragment, "(")
-
     fragment = Trim$(fragment)
-
-    ' quitar trailing símbolos raros
     fragment = Replace(fragment, "()", vbNullString)
 
     If IsValidIdentifier(fragment) Then
@@ -440,26 +626,16 @@ Private Function StripTokens(ByVal s As String, ByVal tokens As Variant) As Stri
     StripTokens = Trim$(s)
 End Function
 
-Private Function IsProcHeaderLine(ByVal s As String) As Boolean
-    Dim t As String
-    t = LCase$(Trim$(s))
-    IsProcHeaderLine = (Left$(t, 4) = "sub ") Or (Left$(t, 9) = "public sub") Or _
-                       (Left$(t, 11) = "private sub") Or (Left$(t, 9) = "function ") Or _
-                       (Left$(t, 14) = "public function") Or (Left$(t, 16) = "private function")
-End Function
-
-Private Function IsProtectedProcName(ByVal procName As String, ByVal compType As VBIDE.vbext_ComponentType) As Boolean
-    ' Protegemos eventos típicos + Auto macros
-    If StartsWith(procName, "Workbook_") Then IsProtectedProcName = True: Exit Function
-    If StartsWith(procName, "Worksheet_") Then IsProtectedProcName = True: Exit Function
-    If StartsWith(procName, "Auto_") Then IsProtectedProcName = True: Exit Function
+Private Function IsProtectedProcName(ByVal procName As String, ByVal compType As Long) As Boolean
+    If InStr(1, procName, "Workbook_", vbTextCompare) = 1 Then IsProtectedProcName = True: Exit Function
+    If InStr(1, procName, "Worksheet_", vbTextCompare) = 1 Then IsProtectedProcName = True: Exit Function
+    If InStr(1, procName, "Auto_", vbTextCompare) = 1 Then IsProtectedProcName = True: Exit Function
     If StrComp(procName, "AutoOpen", vbTextCompare) = 0 Then IsProtectedProcName = True: Exit Function
     If StrComp(procName, "AutoClose", vbTextCompare) = 0 Then IsProtectedProcName = True: Exit Function
 
-    ' En módulos documento, si suena a evento, protegerlo
-    If compType = vbext_ct_Document Then
+    ' vbext_ct_Document = 100
+    If compType = 100 Then
         If InStr(1, procName, "_", vbBinaryCompare) > 0 Then
-            ' Conservador para no romper handlers (Worksheet_Change, etc.)
             IsProtectedProcName = True
             Exit Function
         End If
@@ -469,11 +645,11 @@ Private Function IsProtectedProcName(ByVal procName As String, ByVal compType As
 End Function
 
 '==========================================================================================
-' UTILIDADES / VALIDACIONES
+' UTILIDADES
 '==========================================================================================
 Private Function HasVBAProjectAccess() As Boolean
     On Error GoTo Nope
-    Dim t As VBIDE.VBProject
+    Dim t As Object
     Set t = ThisWorkbook.VBProject
     HasVBAProjectAccess = True
     Exit Function
@@ -489,7 +665,7 @@ Private Function BuildDefaultDestPath(ByVal srcPath As String) As String
     Else
         base = srcPath
     End If
-    BuildDefaultDestPath = base & "_BLACKBOX.xlsm"
+    BuildDefaultDestPath = base & "_OFUSCADO.xlsm"
 End Function
 
 Private Function RegexEscape(ByVal s As String) As String
@@ -502,8 +678,8 @@ Private Function RegexEscape(ByVal s As String) As String
 End Function
 
 Private Function IsValidIdentifier(ByVal s As String) As Boolean
-    Dim re As RegExp
-    Set re = New RegExp
+    Dim re As Object
+    Set re = CreateObject("VBScript.RegExp")
     re.Global = False
     re.IgnoreCase = False
     re.Pattern = "^[A-Za-z_][A-Za-z0-9_]*$"
@@ -511,7 +687,6 @@ Private Function IsValidIdentifier(ByVal s As String) As Boolean
 End Function
 
 Private Function IsReservedWord(ByVal s As String) As Boolean
-    ' Lista corta de palabras que NO conviene tocar
     Dim w As String
     w = LCase$(s)
 
@@ -519,7 +694,7 @@ Private Function IsReservedWord(ByVal s As String) As Boolean
         Case "sub", "function", "end", "if", "then", "else", "elseif", "for", "next", "do", "loop", _
              "while", "wend", "select", "case", "with", "goto", "return", "exit", "dim", "private", _
              "public", "as", "set", "new", "not", "and", "or", "xor", "byval", "byref", "optional", _
-             "paramarray", "true", "false", "nothing", "me", "thisworkbook"
+             "paramarray", "true", "false", "nothing", "me", "thisworkbook", "on", "error", "resume"
             IsReservedWord = True
         Case Else
             IsReservedWord = False
@@ -543,12 +718,6 @@ Private Function FirstWord(ByVal s As String) As String
         FirstWord = t
     End If
 End Function
-
-Private Function StartsWith(ByVal s As String, ByVal prefix As String) As Boolean
-    StartsWith = (StrComp(Left$(s, Len(prefix)), prefix, vbTextCompare) = 0)
-End Function
-
-
 
 
 
