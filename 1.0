@@ -1,14 +1,483 @@
 Option Explicit
 
+' ============================
+' BlackBox (one-way) VBA Obfuscator
+' Inspirado en el enfoque de VBad/VBASH pero viable en PC capado:
+' - Sin herramientas externas
+' - Sin DLL
+' - Sin desofuscar (no reversible)
+' - Seguro para botones: NO renombra Public Sub
+' ============================
+
+Private Const SUFFIX_OUT As String = "_BLACKBOX"
+Private Const MIN_NAME_LEN As Long = 10
+
+' ============================
+' ENTRYPOINT
+' ============================
+Public Sub BLACKBOX_ONEWAY_COPIA()
+    Dim srcPath As String, dstPath As String
+    Dim wb As Workbook
+    Dim fso As Object
+
+    srcPath = PickXlsmFile()
+    If Len(srcPath) = 0 Then Exit Sub
+
+    ' Si el usuario selecciona una URL (SharePoint web), no se puede copiar con FSO
+    If LCase$(Left$(srcPath, 4)) = "http" Then
+        MsgBox "Has seleccionado una URL (http/https). " & vbCrLf & _
+               "Para PC capado, usa la ruta local (SharePoint sincronizado/OneDrive) " & _
+               "o guarda el archivo en una carpeta local y vuelve a intentarlo.", vbExclamation
+        Exit Sub
+    End If
+
+    dstPath = AddSuffixToPath(srcPath, SUFFIX_OUT)
+
+    Application.ScreenUpdating = False
+    Application.DisplayAlerts = False
+    On Error GoTo EH
+
+    ' Copia física (evita Error 5 y bloqueos de SaveCopyAs)
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    fso.CopyFile srcPath, dstPath, True
+
+    ' Abrir copia y ofuscar
+    Set wb = Workbooks.Open(dstPath, ReadOnly:=False)
+
+    BlackBoxProject wb
+
+    wb.Save
+    wb.Close False
+
+    Application.DisplayAlerts = True
+    Application.ScreenUpdating = True
+
+    MsgBox "OK. Caja negra creada:" & vbCrLf & dstPath, vbInformation
+    Exit Sub
+
+EH:
+    Application.DisplayAlerts = True
+    Application.ScreenUpdating = True
+    MsgBox "ERROR: " & Err.Number & " - " & Err.Description, vbCritical
+End Sub
+
+' ============================
+' PROJECT PROCESS
+' ============================
+Private Sub BlackBoxProject(ByVal wb As Workbook)
+    Dim comps As Object, c As Object
+
+    Set comps = wb.VBProject.VBComponents  ' Requiere "Trust access to VBA project object model"
+
+    For Each c In comps
+        ' Tipos: 1=StdModule, 2=ClassModule, 3=MSForm, 100=Document (ThisWorkbook/Sheets)
+        If c.Type = 1 Or c.Type = 2 Or c.Type = 100 Or c.Type = 3 Then
+            BlackBoxComponent c
+        End If
+    Next c
+End Sub
+
+Private Sub BlackBoxComponent(ByVal c As Object)
+    Dim code As String
+    code = GetCode(c)
+    If Len(code) = 0 Then Exit Sub
+
+    ' 1) Quitar comentarios (sin romper strings)
+    code = RemoveCommentsSmart(code)
+
+    ' 2) Renombrado seguro (VBAD-like mínimo):
+    '    - Private Sub/Function (no eventos)
+    '    - Dim/Static SOLO dentro de procedimientos (variables locales)
+    Dim mapPriv As Object, mapLocals As Object
+    Set mapPriv = CreateObject("Scripting.Dictionary")
+    Set mapLocals = CreateObject("Scripting.Dictionary")
+
+    BuildMapsSafe code, mapPriv, mapLocals
+
+    ' Aplicar primero privados (pueden ser llamados desde todo el módulo)
+    code = ApplyRenameMapSafe(code, mapPriv)
+
+    ' Aplicar luego variables locales (dentro de procedimientos)
+    code = ApplyRenameMapSafe(code, mapLocals)
+
+    ' 3) Compactar líneas vacías (reduce legibilidad)
+    code = CompactBlankLines(code)
+
+    SetCode c, code
+End Sub
+
+' ============================
+' CODE READ/WRITE
+' ============================
+Private Function GetCode(ByVal c As Object) As String
+    With c.CodeModule
+        If .CountOfLines = 0 Then
+            GetCode = ""
+        Else
+            GetCode = .Lines(1, .CountOfLines)
+        End If
+    End With
+End Function
+
+Private Sub SetCode(ByVal c As Object, ByVal txt As String)
+    With c.CodeModule
+        If .CountOfLines > 0 Then .DeleteLines 1, .CountOfLines
+        If Len(txt) > 0 Then .AddFromString txt
+    End With
+End Sub
+
+' ============================
+' COMMENT REMOVAL (SAFE)
+' ============================
+Private Function RemoveCommentsSmart(ByVal src As String) As String
+    Dim lines() As String, out() As String
+    Dim i As Long, n As Long
+
+    lines = Split(src, vbCrLf)
+    ReDim out(UBound(lines))
+
+    For i = LBound(lines) To UBound(lines)
+        Dim ln As String
+        ln = lines(i)
+
+        ' Quitar línea completa si empieza por comentario
+        If Left$(Trim$(ln), 1) = "'" Then
+            ' skip
+        Else
+            out(n) = StripTrailingComment(ln)
+            n = n + 1
+        End If
+    Next i
+
+    If n = 0 Then
+        RemoveCommentsSmart = ""
+    Else
+        ReDim Preserve out(n - 1)
+        RemoveCommentsSmart = Join(out, vbCrLf)
+    End If
+End Function
+
+Private Function StripTrailingComment(ByVal ln As String) As String
+    Dim i As Long, ch As String
+    Dim inStrLit As Boolean
+
+    inStrLit = False
+    For i = 1 To Len(ln)
+        ch = Mid$(ln, i, 1)
+
+        If ch = """" Then
+            inStrLit = Not inStrLit
+        ElseIf (Not inStrLit) And ch = "'" Then
+            StripTrailingComment = RTrim$(Left$(ln, i - 1))
+            Exit Function
+        End If
+    Next i
+
+    StripTrailingComment = ln
+End Function
+
+' ============================
+' MAP BUILDING (SAFE)
+' ============================
+Private Sub BuildMapsSafe(ByVal code As String, ByVal mapPriv As Object, ByVal mapLocals As Object)
+    Dim lines() As String, i As Long
+    Dim insideProc As Boolean
+
+    lines = Split(code, vbCrLf)
+    insideProc = False
+
+    For i = LBound(lines) To UBound(lines)
+        Dim t As String, tl As String
+        t = Trim$(lines(i))
+        tl = LCase$(t)
+
+        ' Detect start of procedure
+        If IsProcHeader(tl) Then insideProc = True
+
+        ' Map private proc names (never rename public, never rename events)
+        If Left$(tl, 8) = "private " Then
+            Dim nm As String
+            nm = ExtractProcNameFromHeader(t)
+            If Len(nm) > 0 Then
+                If Not IsProtectedProcName(nm) Then
+                    If Not mapPriv.exists(nm) Then mapPriv(nm) = "p" & RandomName(MIN_NAME_LEN)
+                End If
+            End If
+        End If
+
+        ' Map local vars only inside procedures
+        If insideProc Then
+            If Left$(tl, 4) = "dim " Or Left$(tl, 7) = "static " Then
+                AddLocalVarRenamesFromDeclaration t, mapLocals
+            End If
+        End If
+
+        ' Detect end of procedure
+        If tl = "end sub" Or tl = "end function" Or tl = "end property" Then insideProc = False
+    Next i
+End Sub
+
+Private Function IsProcHeader(ByVal tl As String) As Boolean
+    IsProcHeader = _
+        (Left$(tl, 4) = "sub ") Or (Left$(tl, 9) = "public sub") Or (Left$(tl, 10) = "private sub") Or _
+        (Left$(tl, 9) = "function ") Or (Left$(tl, 14) = "public function") Or (Left$(tl, 15) = "private function") Or _
+        (Left$(tl, 9) = "property ") Or (Left$(tl, 14) = "public property") Or (Left$(tl, 15) = "private property")
+End Function
+
+' Eventos y auto-macros: no tocar
+Private Function IsProtectedProcName(ByVal procName As String) As Boolean
+    Dim n As String
+    n = LCase$(procName)
+
+    IsProtectedProcName = _
+        (Left$(n, 9) = "workbook_") Or _
+        (Left$(n, 10) = "worksheet_") Or _
+        (Left$(n, 8) = "userform") Or _
+        (n = "auto_open") Or (n = "auto_close") Or (n = "autoexec") Or (n = "autoclose")
+End Function
+
+Private Function ExtractProcNameFromHeader(ByVal headerLine As String) As String
+    Dim s As String
+    s = Trim$(headerLine)
+
+    ' Find keyword Sub/Function/Property
+    Dim p As Long, k As String
+
+    p = InStr(1, s, "Sub ", vbTextCompare)
+    If p > 0 Then
+        k = "Sub "
+        ExtractProcNameFromHeader = TakeWord(Mid$(s, p + Len(k)))
+        Exit Function
+    End If
+
+    p = InStr(1, s, "Function ", vbTextCompare)
+    If p > 0 Then
+        k = "Function "
+        ExtractProcNameFromHeader = TakeWord(Mid$(s, p + Len(k)))
+        Exit Function
+    End If
+
+    p = InStr(1, s, "Property ", vbTextCompare)
+    If p > 0 Then
+        k = "Property "
+        ExtractProcNameFromHeader = TakeWord(Mid$(s, p + Len(k)))
+        Exit Function
+    End If
+End Function
+
+Private Sub AddLocalVarRenamesFromDeclaration(ByVal decl As String, ByVal mapLocals As Object)
+    ' Soporta: Dim a As Long, b As String
+    ' Conservador a propósito (PC capado / estabilidad)
+    Dim s As String
+    s = Trim$(decl)
+
+    If LCase$(Left$(s, 4)) = "dim " Then s = Trim$(Mid$(s, 5))
+    If LCase$(Left$(s, 7)) = "static " Then s = Trim$(Mid$(s, 8))
+
+    Dim parts() As String, i As Long
+    parts = Split(s, ",")
+
+    For i = LBound(parts) To UBound(parts)
+        Dim item As String, varName As String
+        item = Trim$(parts(i))
+        If Len(item) = 0 Then GoTo NextItem
+
+        ' cortar "As"
+        Dim p As Long
+        p = InStr(1, item, " As ", vbTextCompare)
+        If p > 0 Then
+            varName = Trim$(Left$(item, p - 1))
+        Else
+            varName = TakeWord(item)
+        End If
+
+        ' quitar () arrays
+        p = InStr(varName, "(")
+        If p > 0 Then varName = Trim$(Left$(varName, p - 1))
+
+        If Len(varName) = 0 Then GoTo NextItem
+        If Not mapLocals.exists(varName) Then mapLocals(varName) = "v" & RandomName(MIN_NAME_LEN)
+
+NextItem:
+    Next i
+End Sub
+
+' ============================
+' APPLY RENAMES (SAFE WHOLE WORD, IGNORE STRINGS)
+' ============================
+Private Function ApplyRenameMapSafe(ByVal code As String, ByVal map As Object) As String
+    Dim k As Variant
+    Dim result As String
+    result = code
+
+    For Each k In map.Keys
+        result = ReplaceWholeWordSafe(result, CStr(k), CStr(map(k)))
+    Next k
+
+    ApplyRenameMapSafe = result
+End Function
+
+Private Function ReplaceWholeWordSafe(ByVal text As String, ByVal oldWord As String, ByVal newWord As String) As String
+    Dim res As String, i As Long, ch As String
+    Dim inStrLit As Boolean
+
+    res = ""
+    i = 1
+    inStrLit = False
+
+    Do While i <= Len(text)
+        ch = Mid$(text, i, 1)
+
+        If ch = """" Then
+            inStrLit = Not inStrLit
+            res = res & ch
+            i = i + 1
+
+        ElseIf Not inStrLit And IsWordChar(ch) Then
+            Dim startPos As Long
+            startPos = i
+
+            Do While i <= Len(text) And IsWordChar(Mid$(text, i, 1))
+                i = i + 1
+            Loop
+
+            Dim w As String
+            w = Mid$(text, startPos, i - startPos)
+
+            If StrComp(w, oldWord, vbTextCompare) = 0 Then
+                res = res & newWord
+            Else
+                res = res & w
+            End If
+
+        Else
+            res = res & ch
+            i = i + 1
+        End If
+    Loop
+
+    ReplaceWholeWordSafe = res
+End Function
+
+Private Function IsWordChar(ByVal ch As String) As Boolean
+    Dim a As Long
+    a = Asc(ch)
+    IsWordChar = (a >= 48 And a <= 57) Or (a >= 65 And a <= 90) Or _
+                 (a >= 97 And a <= 122) Or (ch = "_")
+End Function
+
+' ============================
+' COMPACT BLANK LINES
+' ============================
+Private Function CompactBlankLines(ByVal src As String) As String
+    Dim lines() As String, out() As String
+    Dim i As Long, n As Long
+    Dim lastBlank As Boolean
+
+    lines = Split(src, vbCrLf)
+    ReDim out(UBound(lines))
+
+    n = 0
+    lastBlank = False
+
+    For i = LBound(lines) To UBound(lines)
+        If Len(Trim$(lines(i))) = 0 Then
+            If Not lastBlank Then
+                out(n) = ""
+                n = n + 1
+                lastBlank = True
+            End If
+        Else
+            out(n) = lines(i)
+            n = n + 1
+            lastBlank = False
+        End If
+    Next i
+
+    If n = 0 Then
+        CompactBlankLines = ""
+    Else
+        ReDim Preserve out(n - 1)
+        CompactBlankLines = Join(out, vbCrLf)
+    End If
+End Function
+
+' ============================
+' FILE PICK + PATH
+' ============================
+Private Function PickXlsmFile() As String
+    With Application.FileDialog(msoFileDialogFilePicker)
+        .Title = "Selecciona el archivo .XLSM (origen)"
+        .AllowMultiSelect = False
+        .Filters.Clear
+        .Filters.Add "Excel Macro-Enabled (*.xlsm)", "*.xlsm"
+        If .Show <> -1 Then
+            PickXlsmFile = ""
+        Else
+            PickXlsmFile = .SelectedItems(1)
+        End If
+    End With
+End Function
+
+Private Function AddSuffixToPath(ByVal fullPath As String, ByVal suffix As String) As String
+    Dim p As Long
+    p = InStrRev(fullPath, ".")
+    If p > 0 Then
+        AddSuffixToPath = Left$(fullPath, p - 1) & suffix & Mid$(fullPath, p)
+    Else
+        AddSuffixToPath = fullPath & suffix
+    End If
+End Function
+
+Private Function RandomName(ByVal n As Long) As String
+    Dim chars As String, i As Long
+    chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    Randomize
+    For i = 1 To n
+        RandomName = RandomName & Mid$(chars, Int(Rnd * Len(chars)) + 1, 1)
+    Next i
+End Function
+
+Private Function TakeWord(ByVal s As String) As String
+    Dim i As Long, ch As String
+    s = Trim$(s)
+
+    For i = 1 To Len(s)
+        ch = Mid$(s, i, 1)
+        If Not IsWordChar(ch) Then
+            TakeWord = Left$(s, i - 1)
+            Exit Function
+        End If
+    Next i
+
+    TakeWord = s
+End Function
+
+
+
+
+
+
+
+
+
+99999999999999999999999999999999
+
+
+
+
+Option Explicit
+
 ' =============================================================================
 ' VBA Excel Workbook Obfuscator / Deobfuscator - VERSIÓN FINAL FUNCIONAL
 '
-' GARANTIZA:
-'   1. Comentarios totalmente ofuscados
-'   2. Strings totalmente ofuscados
-'   3. Desofuscación restaura TODO al original
-'   4. Variables renombradas consistentemente
-'   5. Ruido solo dentro de Sub/Function
+' CORRECCIONES CRÍTICAS:
+'   1. NO ofusca strings en contextos que requieren valores inmediatos:
+'      - Worksheets("nombre"), Sheets("nombre")
+'      - Range("A1"), Cells(), etc.
+'      - Cualquier índice de colección de Excel
+'   2. Comentarios totalmente ofuscados
+'   3. Desofuscador completamente funcional
 ' =============================================================================
 
 Private Const RUNTIME_MODULE_NAME As String = "z_ofu_runtime"
@@ -94,7 +563,7 @@ End Sub
 
 Private Sub GenerateRandomTags()
     m_TagKey = "'_" & RandomString(4) & "_K="
-    m_TagNoise = "'_" & RandomString(5) & "_N"
+    m_TagNoise = "'_" & RandomString(5) & "_"
     m_TagComment = "'_" & RandomString(6) & "_C:"
     m_TagVarMap = "'_" & RandomString(5) & "_V:"
 End Sub
@@ -547,7 +1016,7 @@ Private Function LineEndsWithContinuation(ByVal ln As String) As Boolean
 End Function
 
 ' =============================================================================
-' OFUSCACIÓN DE LÍNEA
+' OFUSCACIÓN DE LÍNEA - CON DETECCIÓN DE CONTEXTO EXCEL
 ' =============================================================================
 
 Private Function ObfuscateLineSmart(ByVal ln As String, ByVal key As Long) As String
@@ -582,7 +1051,8 @@ Private Function ObfuscateLineSmart(ByVal ln As String, ByVal key As Long) As St
         commentPart = ""
     End If
     
-    result = ObfuscateStringsInCode(codePart, key)
+    ' CRÍTICO: Ofuscar strings con contexto
+    result = ObfuscateStringsWithContext(codePart, key)
     
     If Len(commentPart) > 0 Then
         result = result & m_TagComment & ToHex4(commentPart, key)
@@ -600,32 +1070,47 @@ Private Function IsConstDeclaration(ByVal ln As String) As Boolean
                          (trimmed Like "public const *")
 End Function
 
-Private Function ObfuscateStringsInCode(ByVal code As String, ByVal key As Long) As String
+' =============================================================================
+' OFUSCACIÓN INTELIGENTE CON CONTEXTO
+' =============================================================================
+
+Private Function ObfuscateStringsWithContext(ByVal code As String, ByVal key As Long) As String
     Dim result As String, i As Long, ch As String
     Dim inString As Boolean, currentString As String, beforeString As String
+    Dim stringStart As Long
     
     result = ""
     inString = False
     currentString = ""
     beforeString = ""
+    stringStart = 0
     
     For i = 1 To Len(code)
         ch = Mid$(code, i, 1)
         
         If ch = """" Then
             If inString Then
+                ' Fin de string - verificar contexto ANTES de ofuscar
+                Dim shouldObfuscate As Boolean
+                shouldObfuscate = Not IsExcelCollectionContext(beforeString)
+                
                 result = result & beforeString
-                If Len(currentString) > 0 Then
+                
+                If Len(currentString) > 0 And shouldObfuscate Then
                     result = result & "dDecode(""" & ToHex4(currentString, key) & """," & key & ")"
+                ElseIf Len(currentString) > 0 Then
+                    result = result & """" & currentString & """"
                 Else
                     result = result & """"""
                 End If
+                
                 beforeString = ""
                 currentString = ""
                 inString = False
             Else
                 result = result & beforeString
                 beforeString = ""
+                stringStart = Len(result)
                 inString = True
             End If
         Else
@@ -638,11 +1123,50 @@ Private Function ObfuscateStringsInCode(ByVal code As String, ByVal key As Long)
     Next
     
     result = result & beforeString
-    ObfuscateStringsInCode = result
+    ObfuscateStringsWithContext = result
+End Function
+
+' Detecta si el string está en un contexto de colección de Excel
+Private Function IsExcelCollectionContext(ByVal precedingCode As String) As Boolean
+    Dim trimmed As String, lastWord As String
+    Dim i As Long, wordStart As Long
+    
+    trimmed = RTrim$(precedingCode)
+    
+    ' Buscar última palabra antes del string
+    i = Len(trimmed)
+    Do While i > 0
+        If Mid$(trimmed, i, 1) = "(" Or Mid$(trimmed, i, 1) = "." Then
+            wordStart = i - 1
+            Do While wordStart > 0 And IsWordChar(Mid$(trimmed, wordStart, 1))
+                wordStart = wordStart - 1
+            Loop
+            
+            lastWord = LCase$(Mid$(trimmed, wordStart + 1, i - wordStart - 1))
+            
+            ' Lista de métodos/propiedades de Excel que NO se pueden ofuscar
+            Select Case lastWord
+                Case "worksheets", "sheets", "workbooks"
+                    IsExcelCollectionContext = True
+                    Exit Function
+                Case "range", "cells", "offset", "resize"
+                    IsExcelCollectionContext = True
+                    Exit Function
+                Case "names", "add", "item"
+                    IsExcelCollectionContext = True
+                    Exit Function
+            End Select
+            
+            Exit Do
+        End If
+        i = i - 1
+    Loop
+    
+    IsExcelCollectionContext = False
 End Function
 
 ' =============================================================================
-' DESOFUSCACIÓN PRINCIPAL
+' DESOFUSCACIÓN
 ' =============================================================================
 
 Private Function DeobfuscateCodeSmart(ByVal src As String, ByVal key As Long) As String
@@ -665,12 +1189,11 @@ Private Function DeobfuscateCodeSmart(ByVal src As String, ByVal key As Long) As
         ln = lines(i)
         trimLine = Trim$(ln)
         
-        ' Saltar TODAS las líneas que empiecen con '_
+        ' Saltar tags
         If Left$(ln, 2) = "'_" Then
             If InStr(ln, "_K=") > 0 Or InStr(ln, "_V:") > 0 Then
                 GoTo NextLine
             Else
-                ' Es tag de ruido - saltar siguientes líneas
                 If i + 1 <= UBound(lines) Then
                     Dim nextLine As String
                     nextLine = Trim$(lines(i + 1))
@@ -683,7 +1206,7 @@ Private Function DeobfuscateCodeSmart(ByVal src As String, ByVal key As Long) As
             End If
         End If
         
-        ' Filtrar líneas de ruido
+        ' Filtrar ruido
         If trimLine = "If False Then" Or trimLine = "End If" Or _
            trimLine = "Do While False" Or trimLine = "Loop" Or _
            InStr(trimLine, "Dim ofuDummy") > 0 Or _
@@ -691,7 +1214,6 @@ Private Function DeobfuscateCodeSmart(ByVal src As String, ByVal key As Long) As
             GoTo NextLine
         End If
         
-        ' Restaurar línea
         result(count) = RestoreLineSmart(ln, key)
         count = count + 1
         
@@ -703,11 +1225,11 @@ NextLine:
 End Function
 
 Private Function RestoreLineSmart(ByVal ln As String, ByVal key As Long) As String
-    Dim p As Long, result As String, colonPos As Long, hexStr As String
+    Dim p As Long, result As String, hexStr As String
     
     result = ln
     
-    ' 1. Restaurar comentario (buscar _C:)
+    ' Restaurar comentario
     p = InStr(result, "_C:")
     If p > 0 Then
         hexStr = Mid$(result, p + 3)
@@ -716,7 +1238,7 @@ Private Function RestoreLineSmart(ByVal ln As String, ByVal key As Long) As Stri
         Exit Function
     End If
     
-    ' 2. Restaurar strings (buscar dDecode)
+    ' Restaurar strings
     Dim maxIterations As Long, p2 As Long, pEnd As Long, decoded As String
     maxIterations = 0
     
@@ -811,3 +1333,6 @@ Private Function ExtractKey(ByVal src As String) As Long
     
     ExtractKey = 0
 End Function
+
+
+
