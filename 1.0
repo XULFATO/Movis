@@ -1,178 +1,110 @@
-' ============================================================================
-' VERSIÓN DEBUG - Para identificar el error exacto
-' ============================================================================
-
 Option Explicit
 
-Public Sub TestOfuscador()
-    Dim srcPath As String
-    Dim dstPath As String
-    Dim wbDst As Workbook
-    Dim fso As Object
-    
-    On Error GoTo ErrorHandler
-    
-    Debug.Print "=== INICIO TEST ==="
-    
-    ' PASO 1: Seleccionar archivo
-    Debug.Print "Paso 1: Seleccionando archivo..."
-    srcPath = Application.GetOpenFilename("Excel con macros (*.xlsm),*.xlsm", , "Seleccionar archivo")
-    
-    If srcPath = "False" Or srcPath = "" Then
-        MsgBox "Cancelado por usuario", vbInformation
-        Exit Sub
-    End If
-    Debug.Print "  Archivo: " & srcPath
-    
-    ' PASO 2: Crear ruta destino
-    Debug.Print "Paso 2: Creando ruta destino..."
-    Set fso = CreateObject("Scripting.FileSystemObject")
-    dstPath = fso.GetParentFolderName(srcPath) & "\" & fso.GetBaseName(srcPath) & "_BLACKBOX.xlsm"
-    Debug.Print "  Destino: " & dstPath
-    
-    ' PASO 3: Copiar archivo
-    Debug.Print "Paso 3: Copiando archivo..."
-    If fso.FileExists(dstPath) Then
-        Debug.Print "  Eliminando destino existente..."
-        fso.DeleteFile dstPath, True
-    End If
-    fso.CopyFile srcPath, dstPath, True
-    Debug.Print "  Copia OK"
-    
-    ' PASO 4: Abrir archivo
-    Debug.Print "Paso 4: Abriendo archivo..."
-    Application.EnableEvents = False
-    Application.DisplayAlerts = False
-    Application.AutomationSecurity = msoAutomationSecurityForceDisable
-    
-    Set wbDst = Workbooks.Open(Filename:=dstPath, UpdateLinks:=0, ReadOnly:=False)
-    Debug.Print "  Archivo abierto: " & wbDst.Name
-    
-    ' PASO 5: Verificar VBProject
-    Debug.Print "Paso 5: Verificando acceso VBProject..."
-    Dim countComp As Long
-    countComp = wbDst.VBProject.VBComponents.Count
-    Debug.Print "  Componentes VBA: " & countComp
-    
-    ' PASO 6: Listar módulos
-    Debug.Print "Paso 6: Listando módulos..."
+Sub OfuscarCodigoVBA()
+    Dim fDialog As FileDialog
+    Dim origen As String
+    Dim destino As String
+    Dim wb As Workbook
     Dim vbComp As Object
-    For Each vbComp In wbDst.VBProject.VBComponents
-        Debug.Print "  - " & vbComp.Name & " (Tipo: " & vbComp.Type & ", Líneas: " & vbComp.CodeModule.CountOfLines & ")"
-    Next vbComp
+    Dim codigo As String
     
-    ' PASO 7: Procesar un módulo de prueba
-    Debug.Print "Paso 7: Procesando módulos..."
-    For Each vbComp In wbDst.VBProject.VBComponents
-        If vbComp.Type = 1 Then ' Módulo estándar
-            Debug.Print "  Procesando: " & vbComp.Name
-            ProcesarModuloDebug vbComp
-        End If
-    Next vbComp
+    ' Seleccionar archivo de origen
+    Set fDialog = Application.FileDialog(msoFileDialogOpen)
+    fDialog.Title = "Seleccionar archivo Excel (.xlsm)"
+    fDialog.Filters.Clear
+    fDialog.Filters.Add "Archivos de Excel", "*.xlsm"
     
-    ' PASO 8: Guardar
-    Debug.Print "Paso 8: Guardando..."
-    wbDst.Save
-    wbDst.Close SaveChanges:=False
-    
-    Application.EnableEvents = True
-    Application.DisplayAlerts = True
-    
-    Debug.Print "=== COMPLETADO ==="
-    MsgBox "Test completado. Ver ventana Inmediato (Ctrl+G)", vbInformation
-    Exit Sub
-
-ErrorHandler:
-    Application.EnableEvents = True
-    Application.DisplayAlerts = True
-    
-    Debug.Print "*** ERROR ***"
-    Debug.Print "  Número: " & Err.Number
-    Debug.Print "  Descripción: " & Err.Description
-    Debug.Print "  Fuente: " & Err.Source
-    
-    MsgBox "Error " & Err.Number & vbCrLf & vbCrLf & _
-           Err.Description & vbCrLf & vbCrLf & _
-           "Ver ventana Inmediato (Ctrl+G) para detalles", vbCritical
-    
-    If Not wbDst Is Nothing Then
-        On Error Resume Next
-        wbDst.Close SaveChanges:=False
+    If fDialog.Show = -1 Then
+        origen = fDialog.SelectedItems(1)
+        
+        ' Copiar archivo a destino
+        destino = Left(origen, InStrRev(origen, ".")) & "_OFUSCADO.xlsm"
+        FileCopy origen, destino
+        
+        ' Abrir el archivo de destino
+        Set wb = Workbooks.Open(destino, ReadOnly:=True, Password:="")
+        
+        ' Procesar cada componente VBA
+        For Each vbComp In wb.VBProject.VBComponents
+            If vbComp.Type = vbext_ct_StdModule Or vbComp.Type = vbext_ct_ClassModule Or _
+               vbComp.Type = vbext_ct_MSForm Or vbComp.Type = vbext_ct_ActiveXDesigner Then
+                codigo = vbComp.CodeModule.Lines(1, vbComp.CodeModule.CountOfLines)
+                codigo = OfuscarCodigo(codigo)
+                vbComp.CodeModule.DeleteLines 1, vbComp.CodeModule.CountOfLines
+                vbComp.CodeModule.AddFromString codigo
+            End If
+        Next vbComp
+        
+        ' Guardar y cerrar el archivo de destino
+        wb.Close SaveChanges:=True
+        MsgBox "Ofuscación completa. Archivo guardado como: " & destino, vbInformation
     End If
 End Sub
 
-Private Sub ProcesarModuloDebug(ByVal vbComp As Object)
-    Dim codeMod As Object
-    Dim totalLineas As Long
-    Dim codigo As String
+Function OfuscarCodigo(codigo As String) As String
     Dim lineas() As String
     Dim i As Long
-    Dim lineaProcesada As String
-    Dim resultado As String
+    Dim linea As String
+    Dim nuevoCodigo As String
+    Dim variableCounter As Long
+    Dim renombrados As Collection
     
-    On Error GoTo ErrorProc
+    ' Inicializar colección para renombrar variables
+    Set renombrados = New Collection
+    variableCounter = 1
     
-    Set codeMod = vbComp.CodeModule
-    totalLineas = codeMod.CountOfLines
+    ' Separar el código en líneas
+    lineas = Split(codigo, vbNewLine)
     
-    Debug.Print "    Total líneas: " & totalLineas
-    
-    If totalLineas = 0 Then
-        Debug.Print "    (vacío, saltando)"
-        Exit Sub
-    End If
-    
-    ' Leer código
-    codigo = codeMod.Lines(1, totalLineas)
-    Debug.Print "    Código leído: " & Len(codigo) & " caracteres"
-    
-    ' Dividir en líneas
-    lineas = Split(codigo, vbCrLf)
-    Debug.Print "    Líneas parseadas: " & (UBound(lineas) + 1)
-    
-    ' Procesar cada línea (solo quitar comentarios)
-    resultado = ""
-    For i = 0 To UBound(lineas)
-        lineaProcesada = QuitarComentario(lineas(i))
-        If resultado <> "" Then resultado = resultado & vbCrLf
-        resultado = resultado & lineaProcesada
+    ' Procesar cada línea
+    For i = LBound(lineas) To UBound(lineas)
+        linea = lineas(i)
+        
+        ' Eliminar comentarios
+        If InStr(linea, "'") > 0 Then
+            linea = Left(linea, InStr(linea, "'") - 1)
+        End If
+        
+        ' Renombrar Private Subs y Functions
+        If InStr(linea, "Private Sub ") > 0 Then
+            linea = Replace(linea, "Private Sub ", "Private Sub P_" & variableCounter & "_")
+            variableCounter = variableCounter + 1
+        ElseIf InStr(linea, "Private Function ") > 0 Then
+            linea = Replace(linea, "Private Function ", "Private Function F_" & variableCounter & "_")
+            variableCounter = variableCounter + 1
+        End If
+        
+        ' Renombrado de variables locales (simplificado)
+        If InStr(linea, "Dim ") > 0 Then
+            Do While InStr(linea, "Dim ") > 0
+                Dim variable As String
+                variable = Mid(linea, InStr(linea, "Dim ") + 4, InStr(InStr(linea, "Dim "), " As ") - InStr(linea, "Dim ") - 4)
+                If Not VariableYaRenombrada(variable, renombrados) Then
+                    linea = Replace(linea, variable, "v_" & variableCounter)
+                    renombrados.Add variable
+                    variableCounter = variableCounter + 1
+                End If
+            Loop
+        End If
+        
+        ' Añadir línea procesada al nuevo código
+        If Trim(linea) <> "" Then
+            nuevoCodigo = nuevoCodigo & linea & vbNewLine
+        End If
     Next i
     
-    Debug.Print "    Resultado: " & Len(resultado) & " caracteres"
-    
-    ' Reemplazar código
-    codeMod.DeleteLines 1, totalLineas
-    Debug.Print "    Líneas eliminadas"
-    
-    If Len(resultado) > 0 Then
-        codeMod.AddFromString resultado
-        Debug.Print "    Código nuevo insertado"
-    End If
-    
-    Debug.Print "    OK"
-    Exit Sub
+    OfuscarCodigo = nuevoCodigo
+End Function
 
-ErrorProc:
-    Debug.Print "    ERROR en módulo: " & Err.Number & " - " & Err.Description
-End Sub
-
-Private Function QuitarComentario(ByVal linea As String) As String
+Function VariableYaRenombrada(variable As String, ByRef renombrados As Collection) As Boolean
     Dim i As Long
-    Dim enString As Boolean
-    Dim c As String
-    
-    enString = False
-    
-    For i = 1 To Len(linea)
-        c = Mid(linea, i, 1)
-        
-        If c = """" Then
-            enString = Not enString
-        ElseIf c = "'" And Not enString Then
-            QuitarComentario = RTrim(Left(linea, i - 1))
+    VariableYaRenombrada = False
+    On Error Resume Next
+    For i = 1 To renombrados.Count
+        If renombrados(i) = variable Then
+            VariableYaRenombrada = True
             Exit Function
         End If
     Next i
-    
-    QuitarComentario = linea
+    On Error GoTo 0
 End Function
