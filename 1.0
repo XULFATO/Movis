@@ -1,19 +1,21 @@
 Option Explicit
 
 ' =============================================================================
-' VBA Excel Workbook Obfuscator / Deobfuscator - VERSIÓN CORREGIDA
+' VBA Excel Workbook Obfuscator / Deobfuscator - VERSIÓN DEFINITIVA
 '
-' CORRIGE:
-'   - Strings que no se ofuscaban
-'   - Duplicación de dDecode
-'   - Manejo correcto de comillas anidadas
+' CORRECCIONES:
+'   1. No ofusca valores de constantes (Const X = "valor")
+'   2. No inserta ruido después de líneas con continuación (_)
+'   3. Tags aleatorios y variados para dificultar seguimiento
 ' =============================================================================
 
-Private Const TAG_KEY As String = "'__OFUKEY__="
-Private Const TAG_NOISE As String = "'__OFUNOISE__"
-Private Const TAG_COMMENT As String = "'__OFUCOMMENT__:"
 Private Const RUNTIME_MODULE_NAME As String = "z_ofu_runtime"
 Private Const NOISE_RATE As Long = 5
+
+' Tags variables (se generan dinámicamente)
+Private m_TagKey As String
+Private m_TagNoise As String
+Private m_TagComment As String
 
 ' =============================================================================
 ' PUNTOS DE ENTRADA
@@ -57,6 +59,7 @@ Private Sub ProcessWorkbook(ByVal doObfuscate As Boolean)
     Set wbDst = Workbooks.Open(dstPath, ReadOnly:=False)
 
     If doObfuscate Then
+        GenerateRandomTags
         EnsureRuntimeModule wbDst
         ObfuscateProject wbDst
     Else
@@ -79,6 +82,35 @@ ErrorHandler:
     Application.ScreenUpdating = True
     MsgBox "Error: " & Err.Description, vbCritical
 End Sub
+
+' =============================================================================
+' GENERACIÓN DE TAGS ALEATORIOS
+' =============================================================================
+
+Private Sub GenerateRandomTags()
+    ' Tags aleatorios para dificultar el análisis
+    Dim r1 As String, r2 As String, r3 As String
+    
+    r1 = RandomString(4)
+    r2 = RandomString(5)
+    r3 = RandomString(6)
+    
+    m_TagKey = "'_" & r1 & "_K="
+    m_TagNoise = "'_" & r2 & "_"
+    m_TagComment = "'_" & r3 & ":"
+End Sub
+
+Private Function RandomString(ByVal length As Long) As String
+    Dim i As Long, chars As String, result As String
+    chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    
+    Randomize
+    For i = 1 To length
+        result = result & Mid$(chars, Int(Rnd * Len(chars)) + 1, 1)
+    Next
+    
+    RandomString = result
+End Function
 
 ' =============================================================================
 ' SELECCIÓN DE ARCHIVO
@@ -164,8 +196,8 @@ Private Sub ObfuscateProject(ByVal wb As Workbook)
             If Len(code) > 0 Then
                 key = MakeKey()
                 code = InjectDummyDeclarationOnce(code)
-                code = ObfuscateCodeFast(code, key)
-                SetCode c, TAG_KEY & key & vbCrLf & code
+                code = ObfuscateCodeSmart(code, key)
+                SetCode c, m_TagKey & key & vbCrLf & code
             End If
         End If
     Next
@@ -178,7 +210,7 @@ Private Sub DeobfuscateProject(ByVal wb As Workbook)
         code = GetCode(c)
         key = ExtractKey(code)
         If key > 0 Then
-            code = DeobfuscateCodeFast(code, key)
+            code = DeobfuscateCodeSmart(code, key)
             SetCode c, code
         End If
     Next
@@ -243,45 +275,92 @@ Private Function InjectDummyDeclarationOnce(ByVal code As String) As String
 End Function
 
 ' =============================================================================
-' OFUSCACIÓN RÁPIDA
+' OFUSCACIÓN INTELIGENTE
 ' =============================================================================
 
-Private Function ObfuscateCodeFast(ByVal src As String, ByVal key As Long) As String
+Private Function ObfuscateCodeSmart(ByVal src As String, ByVal key As Long) As String
     Dim lines() As String, i As Long
     Dim result() As String
     Dim count As Long
+    Dim noiseVariant As Long
     
     lines = Split(src, vbCrLf)
     ReDim result(UBound(lines) * 2)
     
     count = 0
+    noiseVariant = 0
 
     For i = LBound(lines) To UBound(lines)
-        result(count) = ObfuscateLineRobust(lines(i), key)
+        result(count) = ObfuscateLineSmart(lines(i), key)
         count = count + 1
         
+        ' Insertar ruido SOLO si la línea NO termina con _
         If NOISE_RATE > 0 And i Mod NOISE_RATE = 0 And i > LBound(lines) Then
-            result(count) = TAG_NOISE: count = count + 1
-            result(count) = "If False Then": count = count + 1
-            result(count) = "    ofuDummy = 0": count = count + 1
-            result(count) = "End If": count = count + 1
+            If Not LineEndsWithContinuation(lines(i)) Then
+                ' Variar el tipo de ruido
+                noiseVariant = (noiseVariant + 1) Mod 3
+                Select Case noiseVariant
+                    Case 0
+                        result(count) = m_TagNoise: count = count + 1
+                        result(count) = "If False Then": count = count + 1
+                        result(count) = "    ofuDummy = 0": count = count + 1
+                        result(count) = "End If": count = count + 1
+                    Case 1
+                        result(count) = m_TagNoise: count = count + 1
+                        result(count) = "On Error Resume Next": count = count + 1
+                        result(count) = "ofuDummy = ofuDummy + 0": count = count + 1
+                        result(count) = "On Error GoTo 0": count = count + 1
+                    Case 2
+                        result(count) = m_TagNoise: count = count + 1
+                        result(count) = "Do While False": count = count + 1
+                        result(count) = "    ofuDummy = 1": count = count + 1
+                        result(count) = "Loop": count = count + 1
+                End Select
+            End If
         End If
     Next
 
     ReDim Preserve result(count - 1)
-    ObfuscateCodeFast = Join(result, vbCrLf)
+    ObfuscateCodeSmart = Join(result, vbCrLf)
+End Function
+
+' Detecta si una línea termina con continuación _
+Private Function LineEndsWithContinuation(ByVal ln As String) As Boolean
+    Dim trimmed As String
+    trimmed = RTrim$(ln)
+    
+    ' Verificar si termina con _ (fuera de comentarios y strings)
+    If Len(trimmed) > 0 Then
+        If Right$(trimmed, 1) = "_" Then
+            ' Verificar que no esté dentro de un comentario
+            Dim commentPos As Long
+            commentPos = InStr(trimmed, "'")
+            If commentPos = 0 Or commentPos > Len(trimmed) - 1 Then
+                LineEndsWithContinuation = True
+                Exit Function
+            End If
+        End If
+    End If
+    
+    LineEndsWithContinuation = False
 End Function
 
 ' =============================================================================
-' OFUSCACIÓN DE LÍNEA ROBUSTA (CORREGIDA)
+' OFUSCACIÓN DE LÍNEA INTELIGENTE
 ' =============================================================================
 
-Private Function ObfuscateLineRobust(ByVal ln As String, ByVal key As Long) As String
+Private Function ObfuscateLineSmart(ByVal ln As String, ByVal key As Long) As String
     Dim i As Long, ch As String
-    Dim result As String, buffer As String
+    Dim result As String
     Dim inString As Boolean, commentStart As Long
     
-    ' 1. Buscar comentario primero (fuera de strings)
+    ' 1. NO OFUSCAR líneas con Const
+    If IsConstDeclaration(ln) Then
+        ObfuscateLineSmart = ln
+        Exit Function
+    End If
+    
+    ' 2. Buscar comentario (fuera de strings)
     inString = False
     commentStart = 0
     
@@ -295,7 +374,7 @@ Private Function ObfuscateLineRobust(ByVal ln As String, ByVal key As Long) As S
         End If
     Next
     
-    ' 2. Separar código y comentario
+    ' 3. Separar código y comentario
     Dim codePart As String, commentPart As String
     
     If commentStart > 0 Then
@@ -306,18 +385,37 @@ Private Function ObfuscateLineRobust(ByVal ln As String, ByVal key As Long) As S
         commentPart = ""
     End If
     
-    ' 3. Ofuscar strings en la parte de código
+    ' 4. Ofuscar strings en código
     result = ObfuscateStringsInCode(codePart, key)
     
-    ' 4. Agregar comentario ofuscado si existe
+    ' 5. Agregar comentario ofuscado con tag aleatorio
     If Len(commentPart) > 0 Then
-        result = result & TAG_COMMENT & ToHex4(commentPart, key)
+        result = result & m_TagComment & ToHex4(commentPart, key)
     End If
     
-    ObfuscateLineRobust = result
+    ObfuscateLineSmart = result
 End Function
 
-' Ofusca SOLO los strings literales en código
+' Detecta si es una declaración de constante
+Private Function IsConstDeclaration(ByVal ln As String) As Boolean
+    Dim trimmed As String, firstWord As String
+    Dim p As Long
+    
+    trimmed = LCase$(Trim$(ln))
+    
+    ' Buscar "Const" al inicio (puede tener Private/Public antes)
+    If trimmed Like "const *" Then
+        IsConstDeclaration = True
+    ElseIf trimmed Like "private const *" Then
+        IsConstDeclaration = True
+    ElseIf trimmed Like "public const *" Then
+        IsConstDeclaration = True
+    Else
+        IsConstDeclaration = False
+    End If
+End Function
+
+' Ofusca strings en código
 Private Function ObfuscateStringsInCode(ByVal code As String, ByVal key As Long) As String
     Dim result As String, i As Long
     Dim ch As String, inString As Boolean
@@ -333,7 +431,6 @@ Private Function ObfuscateStringsInCode(ByVal code As String, ByVal key As Long)
         
         If ch = """" Then
             If inString Then
-                ' Fin del string - ofuscar y agregar
                 result = result & beforeString
                 If Len(currentString) > 0 Then
                     result = result & "dDecode(""" & ToHex4(currentString, key) & """," & key & ")"
@@ -344,7 +441,6 @@ Private Function ObfuscateStringsInCode(ByVal code As String, ByVal key As Long)
                 currentString = ""
                 inString = False
             Else
-                ' Inicio del string
                 result = result & beforeString
                 beforeString = ""
                 inString = True
@@ -358,17 +454,15 @@ Private Function ObfuscateStringsInCode(ByVal code As String, ByVal key As Long)
         End If
     Next
     
-    ' Agregar lo que quedó
     result = result & beforeString
-    
     ObfuscateStringsInCode = result
 End Function
 
 ' =============================================================================
-' DESOFUSCACIÓN RÁPIDA
+' DESOFUSCACIÓN INTELIGENTE
 ' =============================================================================
 
-Private Function DeobfuscateCodeFast(ByVal src As String, ByVal key As Long) As String
+Private Function DeobfuscateCodeSmart(ByVal src As String, ByVal key As Long) As String
     Dim lines() As String, i As Long
     Dim result() As String
     Dim count As Long, skipNext As Long
@@ -385,47 +479,82 @@ Private Function DeobfuscateCodeFast(ByVal src As String, ByVal key As Long) As 
             GoTo NextLine
         End If
         
-        Dim trimLine As String
-        trimLine = Trim$(lines(i))
+        Dim ln As String, trimLine As String
+        ln = lines(i)
+        trimLine = Trim$(ln)
         
-        If Left$(lines(i), Len(TAG_KEY)) = TAG_KEY Then GoTo NextLine
-        If Left$(lines(i), Len(TAG_NOISE)) = TAG_NOISE Then
-            skipNext = 2
-            GoTo NextLine
+        ' Detectar tags de ruido (cualquier tag que empiece con '_)
+        If Left$(ln, 2) = "'_" Then
+            ' Es un tag - determinar qué tipo de ruido viene
+            If InStr(ln, "_K=") > 0 Then
+                ' Es la clave - saltar
+                GoTo NextLine
+            Else
+                ' Es tag de ruido - detectar cuántas líneas saltar
+                If i + 1 <= UBound(lines) Then
+                    Dim nextLine As String
+                    nextLine = Trim$(lines(i + 1))
+                    
+                    If nextLine = "If False Then" Then
+                        skipNext = 2
+                    ElseIf nextLine = "On Error Resume Next" Then
+                        skipNext = 2
+                    ElseIf nextLine = "Do While False" Then
+                        skipNext = 2
+                    End If
+                End If
+                GoTo NextLine
+            End If
         End If
-        If trimLine = "If False Then" Or trimLine = "End If" Then GoTo NextLine
-        If InStr(trimLine, "Dim ofuDummy") > 0 Then GoTo NextLine
         
-        result(count) = RestoreLineRobust(lines(i), key)
+        ' Filtrar líneas de ruido conocidas
+        If trimLine = "If False Then" Or trimLine = "End If" Then GoTo NextLine
+        If trimLine = "On Error Resume Next" Or trimLine = "On Error GoTo 0" Then
+            ' Solo saltar si es ruido (verificar contexto)
+            If i > 0 And Left$(Trim$(lines(i - 1)), 2) = "'_" Then GoTo NextLine
+        End If
+        If trimLine = "Do While False" Or trimLine = "Loop" Then
+            If i > 0 And Left$(Trim$(lines(i - 1)), 2) = "'_" Then GoTo NextLine
+        End If
+        If InStr(trimLine, "Dim ofuDummy") > 0 Then GoTo NextLine
+        If trimLine = "ofuDummy = ofuDummy + 0" Or trimLine = "ofuDummy = 0" Or trimLine = "ofuDummy = 1" Then GoTo NextLine
+        
+        ' Restaurar línea
+        result(count) = RestoreLineSmart(ln, key)
         count = count + 1
         
 NextLine:
     Next
 
     ReDim Preserve result(count - 1)
-    DeobfuscateCodeFast = Join(result, vbCrLf)
+    DeobfuscateCodeSmart = Join(result, vbCrLf)
 End Function
 
 ' =============================================================================
-' RESTAURACIÓN ROBUSTA
+' RESTAURACIÓN INTELIGENTE
 ' =============================================================================
 
-Private Function RestoreLineRobust(ByVal ln As String, ByVal key As Long) As String
+Private Function RestoreLineSmart(ByVal ln As String, ByVal key As Long) As String
     Dim p As Long, result As String
     
     result = ln
     
-    ' 1. Restaurar comentario
-    p = InStr(result, TAG_COMMENT)
+    ' 1. Restaurar comentario (buscar cualquier tag que empiece con '_' y tenga ':')
+    p = InStr(result, "'_")
     If p > 0 Then
-        Dim hexStr As String
-        hexStr = Mid$(result, p + Len(TAG_COMMENT))
-        result = Left$(result, p - 1) & "'" & FromHex4Fast(hexStr, key)
-        RestoreLineRobust = result
-        Exit Function
+        Dim colonPos As Long
+        colonPos = InStr(p, result, ":")
+        If colonPos > 0 Then
+            ' Es un comentario ofuscado
+            Dim hexStr As String
+            hexStr = Mid$(result, colonPos + 1)
+            result = Left$(result, p - 1) & "'" & FromHex4Fast(hexStr, key)
+            RestoreLineSmart = result
+            Exit Function
+        End If
     End If
     
-    ' 2. Restaurar strings (loop seguro)
+    ' 2. Restaurar strings
     Dim maxIterations As Long
     maxIterations = 0
     
@@ -448,7 +577,7 @@ Private Function RestoreLineRobust(ByVal ln As String, ByVal key As Long) As Str
         result = Left$(result, p - 1) & """" & decoded & """" & Mid$(result, pEnd + 1)
     Loop
     
-    RestoreLineRobust = result
+    RestoreLineSmart = result
 End Function
 
 ' =============================================================================
@@ -484,37 +613,4 @@ Private Function FromHex4Fast(ByVal hex4 As String, ByVal k As Long) As String
     
     result = Space$(length \ 4)
     
-    On Error Resume Next
-    For i = 1 To length Step 4
-        v = CLng("&H" & Mid$(hex4, i, 4))
-        If Err.Number = 0 Then
-            Mid$(result, (i \ 4) + 1, 1) = ChrW$(v Xor k)
-        End If
-    Next
-    On Error GoTo 0
-    
-    FromHex4Fast = result
-End Function
-
-' =============================================================================
-' UTILIDADES
-' =============================================================================
-
-Private Function MakeKey() As Long
-    Randomize
-    MakeKey = CLng(Rnd * 65534) + 1
-End Function
-
-Private Function ExtractKey(ByVal src As String) As Long
-    Dim p As Long, e As Long, s As String
-    
-    p = InStr(src, TAG_KEY)
-    If p = 0 Then Exit Function
-    
-    e = InStr(p, src, vbCrLf)
-    If e = 0 Then e = Len(src) + 1
-    
-    s = Trim$(Mid$(src, p + Len(TAG_KEY), e - p - Len(TAG_KEY)))
-    
-    If IsNumeric(s) Then ExtractKey = CLng(s)
-End Function
+    On Error Res
