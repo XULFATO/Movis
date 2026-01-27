@@ -613,4 +613,50 @@ Private Function FromHex4Fast(ByVal hex4 As String, ByVal k As Long) As String
     
     result = Space$(length \ 4)
     
-    On Error Res
+    
+
+On Error Resume Next
+    For i = 1 To length Step 4
+        v = CLng("&H" & Mid$(hex4, i, 4))
+        If Err.Number = 0 Then
+            Mid$(result, (i \ 4) + 1, 1) = ChrW$(v Xor k)
+        End If
+    Next
+    On Error GoTo 0
+    
+    FromHex4Fast = result
+End Function
+
+' =============================================================================
+' UTILIDADES
+' =============================================================================
+
+Private Function MakeKey() As Long
+    Randomize
+    MakeKey = CLng(Rnd * 65534) + 1
+End Function
+
+Private Function ExtractKey(ByVal src As String) As Long
+    Dim lines() As String, i As Long
+    Dim ln As String
+    
+    lines = Split(src, vbCrLf)
+    
+    ' Buscar línea que contenga '_K='
+    For i = LBound(lines) To UBound(lines)
+        ln = lines(i)
+        If InStr(ln, "_K=") > 0 Then
+            Dim p As Long, s As String
+            p = InStr(ln, "=")
+            If p > 0 Then
+                s = Trim$(Mid$(ln, p + 1))
+                If IsNumeric(s) Then
+                    ExtractKey = CLng(s)
+                    Exit Function
+                End If
+            End If
+        End If
+    Next
+
+
+
