@@ -1,196 +1,609 @@
+' ============================================================================
+' OFUSCADOR VBA ONE-WAY (NO REVERSIBLE)
+' Inspirado en VBAD - Implementación 100% VBA
+' Para entornos corporativos restringidos
+' ============================================================================
+' USO: Ejecutar RunOfuscador desde Excel con acceso a VBProject habilitado
+' ============================================================================
+
 Option Explicit
 
-' Módulo: modObfuscator
-' Rol: Ofuscador unidireccional local, sin dependencias, estilo VBAD interno
-' Cumple: sin DLL, sin EXE, sin PowerShell, one-way, mantiene funcionalidad
+Private Const PREFIX_FUNC As String = "x_"
+Private Const PREFIX_VAR As String = "v_"
+Private Const CHARS_OFUSC As String = "abcdefghijklmnopqrstuvwxyz0123456789"
 
-Private Type TCodeUnit
-    Name As String
-    Code As String
-    IsClass As Boolean
-    IsPublic As Boolean
+Private Type RenameMap
+    Original As String
+    Ofuscado As String
 End Type
 
-Public Sub OfuscarProyecto()
-    Dim f As String, copyPath As String
-    Dim app As Excel.Application
-    Dim wbSrc As Workbook, wbCopy As Workbook
-    Dim vbp As VBIDE.VBProject, cmp As VBIDE.VBComponent
-    Dim cu As TCodeUnit, modified As String
-    Dim ok As VbMsgBoxResult
+Private mRenameMaps() As RenameMap
+Private mRenameCount As Long
+Private mVarCounter As Long
+Private mFuncCounter As Long
+
+' ============================================================================
+' PUNTO DE ENTRADA PRINCIPAL
+' ============================================================================
+Public Sub RunOfuscador()
+    Dim srcPath As String
+    Dim dstPath As String
+    Dim wbDst As Workbook
     
-    On Error GoTo ErrHandler
+    On Error GoTo ErrorHandler
     
-    f = GetFilePath()
-    If Len(f) = 0 Then Exit Sub
+    ' Seleccionar archivo origen
+    srcPath = SeleccionarArchivo()
+    If srcPath = "" Then
+        MsgBox "Operación cancelada.", vbInformation
+        Exit Sub
+    End If
     
-    copyPath = Left(f, InStrRev(f, ".")) & "_BLACKBOX.xlsm"
-    FileCopy f, copyPath
-    MsgBox "Procesando copia: " & vbCrLf & copyPath, vbInformation
+    ' Validar extensión
+    If LCase(Right(srcPath, 5)) <> ".xlsm" And LCase(Right(srcPath, 5)) <> ".xlsb" Then
+        MsgBox "Solo se admiten archivos .xlsm o .xlsb", vbExclamation
+        Exit Sub
+    End If
     
-    Set app = New Excel.Application
-    app.Visible = False
-    app.EnableEvents = False
-    app.DisplayAlerts = False
-    app.AutomationSecurity = msoAutomationSecurityForceDisable
+    ' Crear ruta destino
+    dstPath = CrearRutaDestino(srcPath)
     
-    Set wbCopy = app.Workbooks.Open(copyPath)
-    Set vbp = wbCopy.VBProject
+    ' Copiar archivo físicamente
+    If Not CopiarArchivo(srcPath, dstPath) Then
+        MsgBox "Error al copiar el archivo.", vbCritical
+        Exit Sub
+    End If
     
-    For Each cmp In vbp.VBComponents
-        If IsCodeComponent(cmp) Then
-            cu.Name = cmp.Name
-            cu.Code = cmp.CodeModule.Lines(1, cmp.CodeModule.CountOfLines)
-            cu.IsClass = (cmp.Type = vbext_ct_ClassModule)
-            cu.IsPublic = IsPublicComponent(cu.Code)
-            
-            modified = ProcessCode(cu.Code)
-            
-            With cmp.CodeModule
-                .DeleteLines 1, .CountOfLines
-                .InsertLines 1, modified
-            End With
-        End If
-    Next cmp
+    ' Abrir copia con macros deshabilitadas
+    Application.EnableEvents = False
+    Application.DisplayAlerts = False
     
-    wbCopy.Save
-    wbCopy.Close False
-    app.Quit
+    Set wbDst = AbrirArchivoSeguro(dstPath)
+    If wbDst Is Nothing Then
+        Application.EnableEvents = True
+        Application.DisplayAlerts = True
+        MsgBox "No se pudo abrir el archivo destino.", vbCritical
+        Exit Sub
+    End If
     
-    MsgBox "Ofuscado completado ✓" & vbCrLf & copyPath, vbInformation
+    ' Verificar acceso a VBProject
+    If Not TieneAccesoVBProject(wbDst) Then
+        wbDst.Close SaveChanges:=False
+        Application.EnableEvents = True
+        Application.DisplayAlerts = True
+        MsgBox "No hay acceso al VBProject. Habilitar en:" & vbCrLf & _
+               "Archivo > Opciones > Centro de confianza > " & vbCrLf & _
+               "Configuración > Macros > Confiar en acceso al modelo de objetos VBA", vbCritical
+        Exit Sub
+    End If
     
-CleanExit:
-    On Error Resume Next
-    Set cmp = Nothing: Set vbp = Nothing
-    If Not wbCopy Is Nothing Then wbCopy.Close False
-    If Not app Is Nothing Then app.Quit
-    Set app = Nothing
+    ' Inicializar contadores
+    InicializarContadores
+    
+    ' FASE 1: Recolectar todos los identificadores a renombrar
+    RecolectarIdentificadores wbDst
+    
+    ' FASE 2: Procesar cada módulo
+    ProcesarTodosModulos wbDst
+    
+    ' Guardar y cerrar
+    wbDst.Save
+    wbDst.Close SaveChanges:=False
+    
+    Application.EnableEvents = True
+    Application.DisplayAlerts = True
+    
+    MsgBox "Ofuscación completada:" & vbCrLf & dstPath, vbInformation
     Exit Sub
-ErrHandler:
-    MsgBox "Error: " & Err.Description, vbCritical
-    Resume CleanExit
+
+ErrorHandler:
+    Application.EnableEvents = True
+    Application.DisplayAlerts = True
+    If Not wbDst Is Nothing Then
+        On Error Resume Next
+        wbDst.Close SaveChanges:=False
+    End If
+    MsgBox "Error " & Err.Number & ": " & Err.Description, vbCritical
 End Sub
 
-Private Function GetFilePath() As String
-    With Application.FileDialog(msoFileDialogFilePicker)
-        .Title = "Selecciona el archivo Excel a ofuscar"
+' ============================================================================
+' SELECCIÓN Y COPIA DE ARCHIVOS
+' ============================================================================
+Private Function SeleccionarArchivo() As String
+    Dim fd As Object
+    Set fd = Application.FileDialog(3) ' msoFileDialogFilePicker
+    
+    With fd
+        .Title = "Seleccionar archivo Excel con macros"
         .Filters.Clear
-        .Filters.Add "Excel Macro-Enabled", "*.xlsm;*.xlsb"
-        If .Show = -1 Then GetFilePath = .SelectedItems(1)
+        .Filters.Add "Excel con macros", "*.xlsm;*.xlsb"
+        .AllowMultiSelect = False
+        
+        If .Show = -1 Then
+            SeleccionarArchivo = .SelectedItems(1)
+        Else
+            SeleccionarArchivo = ""
+        End If
     End With
 End Function
 
-Private Function IsCodeComponent(cmp As VBIDE.VBComponent) As Boolean
-    Select Case cmp.Type
-        Case vbext_ct_StdModule, vbext_ct_ClassModule, vbext_ct_Document
-            IsCodeComponent = True
-    End Select
+Private Function CrearRutaDestino(ByVal srcPath As String) As String
+    Dim fso As Object
+    Dim folder As String
+    Dim baseName As String
+    Dim ext As String
+    
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    
+    folder = fso.GetParentFolderName(srcPath)
+    baseName = fso.GetBaseName(srcPath)
+    ext = fso.GetExtensionName(srcPath)
+    
+    CrearRutaDestino = folder & "\" & baseName & "_BLACKBOX." & ext
 End Function
 
-Private Function IsPublicComponent(code As String) As Boolean
-    Dim firstPub As Long
-    firstPub = InStr(1, code, "Public Sub", vbTextCompare)
-    If firstPub > 0 Then IsPublicComponent = True
+Private Function CopiarArchivo(ByVal src As String, ByVal dst As String) As Boolean
+    Dim fso As Object
+    
+    On Error GoTo ErrorHandler
+    
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    
+    ' Eliminar destino si existe
+    If fso.FileExists(dst) Then
+        fso.DeleteFile dst, True
+    End If
+    
+    fso.CopyFile src, dst, True
+    CopiarArchivo = True
+    Exit Function
+
+ErrorHandler:
+    CopiarArchivo = False
 End Function
 
-Private Function ProcessCode(src As String) As String
-    Dim txt As String
-    txt = src
-    txt = RemoveComments(txt)
-    txt = CompactCode(txt)
-    txt = RenamePrivates(txt)
-    txt = RenameLocals(txt)
-    ProcessCode = txt
+Private Function AbrirArchivoSeguro(ByVal filePath As String) As Workbook
+    Dim wb As Workbook
+    
+    On Error GoTo ErrorHandler
+    
+    ' Abrir sin ejecutar macros, sin actualizar links, sin notificaciones
+    Set wb = Workbooks.Open( _
+        Filename:=filePath, _
+        UpdateLinks:=0, _
+        ReadOnly:=False, _
+        Notify:=False, _
+        CorruptLoad:=xlNormalLoad)
+    
+    Set AbrirArchivoSeguro = wb
+    Exit Function
+
+ErrorHandler:
+    Set AbrirArchivoSeguro = Nothing
 End Function
 
-Private Function RemoveComments(txt As String) As String
-    Dim lines() As String, i As Long, out As String
-    lines = Split(txt, vbCrLf)
-    For i = LBound(lines) To UBound(lines)
-        If InStr(lines(i), "'") > 0 Then
-            lines(i) = RemoveLineComment(lines(i))
+Private Function TieneAccesoVBProject(ByVal wb As Workbook) As Boolean
+    Dim test As Long
+    
+    On Error GoTo NoAccess
+    test = wb.VBProject.VBComponents.Count
+    TieneAccesoVBProject = True
+    Exit Function
+
+NoAccess:
+    TieneAccesoVBProject = False
+End Function
+
+' ============================================================================
+' INICIALIZACIÓN
+' ============================================================================
+Private Sub InicializarContadores()
+    mRenameCount = 0
+    mVarCounter = 0
+    mFuncCounter = 0
+    ReDim mRenameMaps(0 To 999)
+End Sub
+
+' ============================================================================
+' FASE 1: RECOLECTAR IDENTIFICADORES
+' ============================================================================
+Private Sub RecolectarIdentificadores(ByVal wb As Workbook)
+    Dim vbComp As Object
+    Dim codeMod As Object
+    Dim i As Long
+    Dim linea As String
+    
+    For Each vbComp In wb.VBProject.VBComponents
+        ' Solo módulos estándar y de clase (no UserForms completos)
+        If vbComp.Type = 1 Or vbComp.Type = 2 Then ' vbext_ct_StdModule, vbext_ct_ClassModule
+            Set codeMod = vbComp.CodeModule
+            
+            For i = 1 To codeMod.CountOfLines
+                linea = codeMod.Lines(i, 1)
+                RecolectarPrivateSubs linea
+            Next i
         End If
-        If Trim(lines(i)) <> "" Then out = out & lines(i) & vbCrLf
+    Next vbComp
+End Sub
+
+Private Sub RecolectarPrivateSubs(ByVal linea As String)
+    Dim lineaTrim As String
+    Dim nombre As String
+    Dim posOpen As Long
+    Dim posSpace As Long
+    
+    lineaTrim = UCase(Trim(linea))
+    
+    ' Buscar Private Sub / Private Function
+    If Left(lineaTrim, 11) = "PRIVATE SUB" Then
+        nombre = ExtraerNombreProcedimiento(linea, 11)
+        If nombre <> "" And Not EsEventoReservado(nombre) Then
+            AgregarRenameMap nombre, GenerarNombreOfuscado(PREFIX_FUNC)
+        End If
+        
+    ElseIf Left(lineaTrim, 16) = "PRIVATE FUNCTION" Then
+        nombre = ExtraerNombreProcedimiento(linea, 16)
+        If nombre <> "" And Not EsEventoReservado(nombre) Then
+            AgregarRenameMap nombre, GenerarNombreOfuscado(PREFIX_FUNC)
+        End If
+    End If
+End Sub
+
+Private Function ExtraerNombreProcedimiento(ByVal linea As String, ByVal offset As Long) As String
+    Dim resto As String
+    Dim posOpen As Long
+    Dim posSpace As Long
+    Dim nombre As String
+    
+    resto = Trim(Mid(linea, offset + 1))
+    
+    posOpen = InStr(resto, "(")
+    posSpace = InStr(resto, " ")
+    
+    If posOpen > 0 Then
+        nombre = Trim(Left(resto, posOpen - 1))
+    ElseIf posSpace > 0 Then
+        nombre = Trim(Left(resto, posSpace - 1))
+    Else
+        nombre = Trim(resto)
+    End If
+    
+    ExtraerNombreProcedimiento = nombre
+End Function
+
+Private Function EsEventoReservado(ByVal nombre As String) As Boolean
+    Dim n As String
+    n = UCase(nombre)
+    
+    ' Eventos de Workbook
+    If Left(n, 9) = "WORKBOOK_" Then EsEventoReservado = True: Exit Function
+    
+    ' Eventos de Worksheet
+    If Left(n, 10) = "WORKSHEET_" Then EsEventoReservado = True: Exit Function
+    
+    ' Eventos de UserForm
+    If Left(n, 9) = "USERFORM_" Then EsEventoReservado = True: Exit Function
+    
+    ' Eventos de clase
+    If n = "CLASS_INITIALIZE" Or n = "CLASS_TERMINATE" Then EsEventoReservado = True: Exit Function
+    
+    ' Eventos de controles comunes (CommandButton, etc.)
+    If InStr(n, "_CLICK") > 0 Then EsEventoReservado = True: Exit Function
+    If InStr(n, "_CHANGE") > 0 Then EsEventoReservado = True: Exit Function
+    If InStr(n, "_DBLCLICK") > 0 Then EsEventoReservado = True: Exit Function
+    If InStr(n, "_ENTER") > 0 Then EsEventoReservado = True: Exit Function
+    If InStr(n, "_EXIT") > 0 Then EsEventoReservado = True: Exit Function
+    If InStr(n, "_KEYDOWN") > 0 Then EsEventoReservado = True: Exit Function
+    If InStr(n, "_KEYUP") > 0 Then EsEventoReservado = True: Exit Function
+    If InStr(n, "_KEYPRESS") > 0 Then EsEventoReservado = True: Exit Function
+    If InStr(n, "_MOUSEDOWN") > 0 Then EsEventoReservado = True: Exit Function
+    If InStr(n, "_MOUSEUP") > 0 Then EsEventoReservado = True: Exit Function
+    If InStr(n, "_MOUSEMOVE") > 0 Then EsEventoReservado = True: Exit Function
+    
+    EsEventoReservado = False
+End Function
+
+Private Sub AgregarRenameMap(ByVal original As String, ByVal ofuscado As String)
+    Dim i As Long
+    
+    ' Verificar si ya existe
+    For i = 0 To mRenameCount - 1
+        If UCase(mRenameMaps(i).Original) = UCase(original) Then
+            Exit Sub
+        End If
     Next i
-    RemoveComments = out
-End Function
+    
+    ' Expandir array si es necesario
+    If mRenameCount > UBound(mRenameMaps) Then
+        ReDim Preserve mRenameMaps(0 To mRenameCount + 500)
+    End If
+    
+    mRenameMaps(mRenameCount).Original = original
+    mRenameMaps(mRenameCount).Ofuscado = ofuscado
+    mRenameCount = mRenameCount + 1
+End Sub
 
-Private Function RemoveLineComment(lineText As String) As String
-    Dim i As Long, c As String, inStr As Boolean, out As String
-    For i = 1 To Len(lineText)
-        c = Mid(lineText, i, 1)
-        Select Case c
-            Case """": inStr = Not inStr
-            Case "'": If Not inStr Then Exit For
-        End Select
-        out = out & c
+Private Function GenerarNombreOfuscado(ByVal prefix As String) As String
+    Dim result As String
+    Dim i As Long
+    Dim idx As Long
+    
+    mFuncCounter = mFuncCounter + 1
+    
+    result = prefix
+    For i = 1 To 8
+        idx = Int(Rnd * Len(CHARS_OFUSC)) + 1
+        result = result & Mid(CHARS_OFUSC, idx, 1)
     Next i
-    RemoveLineComment = RTrim(out)
+    result = result & mFuncCounter
+    
+    GenerarNombreOfuscado = result
 End Function
 
-Private Function CompactCode(txt As String) As String
-    Dim s As String
-    s = Replace(txt, vbTab, "")
-    s = Replace(s, "    ", "")
-    s = Replace(s, vbCrLf & vbCrLf, vbCrLf)
-    CompactCode = s
+Private Function GenerarNombreVariable() As String
+    Dim result As String
+    Dim i As Long
+    Dim idx As Long
+    
+    mVarCounter = mVarCounter + 1
+    
+    result = PREFIX_VAR
+    For i = 1 To 6
+        idx = Int(Rnd * Len(CHARS_OFUSC)) + 1
+        result = result & Mid(CHARS_OFUSC, idx, 1)
+    Next i
+    result = result & mVarCounter
+    
+    GenerarNombreVariable = result
 End Function
 
-Private Function RenamePrivates(txt As String) As String
-    Dim re As Object, mc As Object, m As Object
-    Dim dict As Object: Set dict = CreateObject("Scripting.Dictionary")
-    Dim i As Long, newName As String
-    Set re = CreateObject("VBScript.RegExp")
-    re.IgnoreCase = True
-    re.Global = True
-    re.Pattern = "\bPrivate\s+(Sub|Function)\s+([A-Za-z0-9_]+)"
-    Set mc = re.Execute(txt)
-    For Each m In mc
-        If Not dict.Exists(m.SubMatches(1)) Then
-            newName = "P" & Hex(CRC32(m.SubMatches(1) & Timer))
-            dict.Add m.SubMatches(1), newName
+' ============================================================================
+' FASE 2: PROCESAR MÓDULOS
+' ============================================================================
+Private Sub ProcesarTodosModulos(ByVal wb As Workbook)
+    Dim vbComp As Object
+    
+    For Each vbComp In wb.VBProject.VBComponents
+        ' Solo módulos estándar y de clase
+        If vbComp.Type = 1 Or vbComp.Type = 2 Then
+            ProcesarModulo vbComp
         End If
-    Next m
-    For Each m In dict.Keys
-        txt = Replace(txt, m, dict(m))
-    Next
-    RenamePrivates = txt
-End Function
+    Next vbComp
+End Sub
 
-Private Function RenameLocals(txt As String) As String
-    Dim re As Object, mc As Object, m As Object
-    Dim dict As Object: Set dict = CreateObject("Scripting.Dictionary")
-    Dim vName As String, repl As String
-    Set re = CreateObject("VBScript.RegExp")
-    re.Pattern = "\bDim\s+([A-Za-z_][A-Za-z0-9_]*)"
-    re.Global = True
-    Set mc = re.Execute(txt)
-    For Each m In mc
-        vName = m.SubMatches(0)
-        If Not dict.Exists(vName) Then
-            repl = "v" & Hex(CRC32(vName & Timer))
-            dict.Add vName, repl
+Private Sub ProcesarModulo(ByVal vbComp As Object)
+    Dim codeMod As Object
+    Dim allCode As String
+    Dim lineas() As String
+    Dim resultado As String
+    Dim i As Long
+    Dim lineaProcesada As String
+    
+    Set codeMod = vbComp.CodeModule
+    
+    If codeMod.CountOfLines = 0 Then Exit Sub
+    
+    ' Obtener todo el código
+    allCode = codeMod.Lines(1, codeMod.CountOfLines)
+    
+    ' Dividir en líneas
+    lineas = Split(allCode, vbCrLf)
+    If UBound(lineas) = 0 And InStr(allCode, vbLf) > 0 Then
+        lineas = Split(allCode, vbLf)
+    End If
+    
+    ' Procesar línea por línea
+    resultado = ""
+    For i = 0 To UBound(lineas)
+        lineaProcesada = ProcesarLinea(lineas(i))
+        
+        ' Eliminar líneas vacías consecutivas (compactar)
+        If Trim(lineaProcesada) <> "" Or (i > 0 And Trim(lineas(i - 1)) <> "") Then
+            If resultado <> "" Then resultado = resultado & vbCrLf
+            resultado = resultado & lineaProcesada
         End If
-    Next m
-    For Each vName In dict.Keys
-        txt = Replace(txt, vName, dict(vName))
-    Next
-    RenameLocals = txt
-End Function
+    Next i
+    
+    ' Aplicar renombrado de Private Sub/Function
+    resultado = AplicarRenombrados(resultado)
+    
+    ' Reemplazar código en el módulo
+    codeMod.DeleteLines 1, codeMod.CountOfLines
+    If Len(resultado) > 0 Then
+        codeMod.AddFromString resultado
+    End If
+End Sub
 
-Private Function CRC32(text As String) As Long
-    Dim crc As Long, i As Long, j As Long, c As Byte
-    crc = &HFFFFFFFF
-    For i = 1 To Len(text)
-        c = Asc(Mid$(text, i, 1))
-        crc = crc Xor c
-        For j = 0 To 7
-            If (crc And 1) Then
-                crc = &HEDB88320 Xor ((crc And &HFFFFFFFE) \ 2)
-            Else
-                crc = (crc And &HFFFFFFFE) \ 2
+Private Function ProcesarLinea(ByVal linea As String) As String
+    Dim resultado As String
+    Dim enString As Boolean
+    Dim charActual As String
+    Dim charAnterior As String
+    Dim i As Long
+    Dim posComentario As Long
+    
+    resultado = ""
+    enString = False
+    charAnterior = ""
+    posComentario = 0
+    
+    ' Buscar comentarios fuera de strings
+    For i = 1 To Len(linea)
+        charActual = Mid(linea, i, 1)
+        
+        If charActual = """" Then
+            enString = Not enString
+        End If
+        
+        If Not enString Then
+            ' Detectar comentario con '
+            If charActual = "'" Then
+                posComentario = i
+                Exit For
             End If
-        Next j
+            
+            ' Detectar REM (debe estar al inicio o después de : )
+            If UCase(Mid(linea, i, 4)) = "REM " Then
+                If i = 1 Or Mid(linea, i - 1, 1) = ":" Or Trim(Left(linea, i - 1)) = "" Then
+                    posComentario = i
+                    Exit For
+                End If
+            End If
+        End If
     Next i
-    CRC32 = crc Xor &HFFFFFFFF
+    
+    ' Quitar comentario si se encontró
+    If posComentario > 0 Then
+        resultado = Left(linea, posComentario - 1)
+    Else
+        resultado = linea
+    End If
+    
+    ' Quitar espacios al final
+    resultado = RTrim(resultado)
+    
+    ' Renombrar variables locales en declaraciones Dim
+    resultado = ProcesarDeclaracionesDim(resultado)
+    
+    ProcesarLinea = resultado
 End Function
+
+Private Function ProcesarDeclaracionesDim(ByVal linea As String) As String
+    Dim lineaTrim As String
+    Dim resultado As String
+    Dim partes() As String
+    Dim i As Long
+    Dim parte As String
+    Dim nombreVar As String
+    Dim posAs As Long
+    Dim nuevoNombre As String
+    
+    lineaTrim = UCase(Trim(linea))
+    
+    ' Solo procesar líneas Dim (variables locales)
+    If Left(lineaTrim, 4) <> "DIM " Then
+        ProcesarDeclaracionesDim = linea
+        Exit Function
+    End If
+    
+    ' No procesar si parece ser nivel de módulo (heurística simple)
+    ' Las variables de módulo típicamente están al inicio del módulo
+    ' Aquí asumimos que si hay Dim, es local (conservador)
+    
+    resultado = linea
+    ProcesarDeclaracionesDim = resultado
+End Function
+
+Private Function AplicarRenombrados(ByVal codigo As String) As String
+    Dim i As Long
+    Dim resultado As String
+    
+    resultado = codigo
+    
+    ' Aplicar cada renombrado
+    For i = 0 To mRenameCount - 1
+        resultado = ReemplazarIdentificador(resultado, _
+                                            mRenameMaps(i).Original, _
+                                            mRenameMaps(i).Ofuscado)
+    Next i
+    
+    AplicarRenombrados = resultado
+End Function
+
+Private Function ReemplazarIdentificador(ByVal codigo As String, _
+                                         ByVal original As String, _
+                                         ByVal nuevo As String) As String
+    Dim resultado As String
+    Dim pos As Long
+    Dim charAntes As String
+    Dim charDespues As String
+    Dim enString As Boolean
+    Dim i As Long
+    Dim checkPos As Long
+    
+    resultado = codigo
+    pos = 1
+    
+    Do
+        pos = InStr(pos, resultado, original, vbTextCompare)
+        If pos = 0 Then Exit Do
+        
+        ' Verificar que no estamos dentro de un string
+        enString = False
+        For i = 1 To pos - 1
+            If Mid(resultado, i, 1) = """" Then
+                enString = Not enString
+            End If
+        Next i
+        
+        If enString Then
+            pos = pos + 1
+            GoTo ContinueLoop
+        End If
+        
+        ' Verificar que es un identificador completo (no parte de otro)
+        charAntes = ""
+        charDespues = ""
+        
+        If pos > 1 Then charAntes = Mid(resultado, pos - 1, 1)
+        If pos + Len(original) <= Len(resultado) Then
+            charDespues = Mid(resultado, pos + Len(original), 1)
+        End If
+        
+        ' Un identificador válido no debe tener letras/números/guión bajo adyacentes
+        If EsCaracterIdentificador(charAntes) Or EsCaracterIdentificador(charDespues) Then
+            pos = pos + 1
+            GoTo ContinueLoop
+        End If
+        
+        ' Realizar el reemplazo
+        resultado = Left(resultado, pos - 1) & nuevo & Mid(resultado, pos + Len(original))
+        pos = pos + Len(nuevo)
+        
+ContinueLoop:
+    Loop
+    
+    ReemplazarIdentificador = resultado
+End Function
+
+Private Function EsCaracterIdentificador(ByVal c As String) As Boolean
+    If Len(c) = 0 Then
+        EsCaracterIdentificador = False
+        Exit Function
+    End If
+    
+    Dim code As Long
+    code = Asc(UCase(c))
+    
+    ' A-Z
+    If code >= 65 And code <= 90 Then EsCaracterIdentificador = True: Exit Function
+    
+    ' 0-9
+    If code >= 48 And code <= 57 Then EsCaracterIdentificador = True: Exit Function
+    
+    ' Guión bajo
+    If c = "_" Then EsCaracterIdentificador = True: Exit Function
+    
+    EsCaracterIdentificador = False
+End Function
+
+' ============================================================================
+' UTILIDADES ADICIONALES
+' ============================================================================
+Public Sub MostrarMapeoGenerado()
+    ' Utilidad para debug: muestra los renombrados realizados
+    Dim i As Long
+    Dim msg As String
+    
+    msg = "Mapeos generados:" & vbCrLf & vbCrLf
+    
+    For i = 0 To mRenameCount - 1
+        msg = msg & mRenameMaps(i).Original & " -> " & mRenameMaps(i).Ofuscado & vbCrLf
+        If i > 20 Then
+            msg = msg & "... (+" & (mRenameCount - i - 1) & " más)"
+            Exit For
+        End If
+    Next i
+    
+    MsgBox msg, vbInformation
+End Sub
