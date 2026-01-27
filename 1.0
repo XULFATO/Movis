@@ -1,51 +1,624 @@
-tion
-Private Function RestoreLineSmart(ByVal ln As String, ByVal key As Long) As String
-    Dim codePart As String, commentPart As String
-    Dim pComment As Long
+Option Explicit
 
-    ' --- separar comentario inline ---
-    pComment = InStr(ln, "'")
-    If pComment > 0 Then
-        codePart = Left$(ln, pComment - 1)
-        commentPart = Mid$(ln, pComment)
+' =============================================================================
+' VBA Excel Workbook Obfuscator / Deobfuscator - VERSIÓN FINAL CORREGIDA
+'
+' CORRECCIONES CRÍTICAS:
+'   1. Ruido SOLO dentro de Sub/Function (nunca en nivel módulo)
+'   2. Variables renombradas consistentemente (declaración + todos los usos)
+'   3. Al desofuscar, variables vuelven a nombres originales
+'
+' FIXES 2026-01-27 (basado en tus capturas):
+'   A) Desofuscar SIEMPRE líneas con dDecode(...) antes de filtros/saltos
+'   B) Limpiar completamente bloques de ruido (skipNext=3)
+'   C) Eliminar restos "On Error Resume Next" / "On Error GoTo 0"
+'   D) RestoreLineSmart robusto con comentario inline
+' =============================================================================
+
+Private Const RUNTIME_MODULE_NAME As String = "z_ofu_runtime"
+Private Const NOISE_RATE As Long = 5
+
+Private m_TagKey As String
+Private m_TagNoise As String
+Private m_TagComment As String
+Private m_TagVarMap As String
+
+Private m_VarMap As Object
+
+' =============================================================================
+' PUNTOS DE ENTRADA
+' =============================================================================
+
+Public Sub OFUSCAR_COPIA()
+    ProcessWorkbook True
+End Sub
+
+Public Sub DESOFUSCAR_COPIA()
+    ProcessWorkbook False
+End Sub
+
+' =============================================================================
+' FLUJO PRINCIPAL
+' =============================================================================
+
+Private Sub ProcessWorkbook(ByVal doObfuscate As Boolean)
+    Dim srcPath As String, dstPath As String
+    Dim wbSrc As Workbook, wbDst As Workbook
+    Dim startTime As Double
+
+    srcPath = PickXlsmFile()
+    If Len(srcPath) = 0 Then Exit Sub
+
+    If doObfuscate Then
+        dstPath = AddSuffixToPath(srcPath, "_OFUSCADO")
+    Else
+        dstPath = AddSuffixToPath(srcPath, "_DESOFUSCADO")
+    End If
+
+    startTime = Timer
+    Application.ScreenUpdating = False
+    Application.DisplayAlerts = False
+    On Error GoTo ErrorHandler
+
+    Set wbSrc = Workbooks.Open(srcPath, ReadOnly:=True)
+    wbSrc.SaveCopyAs dstPath
+    wbSrc.Close False
+
+    Set wbDst = Workbooks.Open(dstPath, ReadOnly:=False)
+
+    If doObfuscate Then
+        GenerateRandomTags
+        Set m_VarMap = CreateObject("Scripting.Dictionary")
+        EnsureRuntimeModule wbDst
+        ObfuscateProject wbDst
+    Else
+        DeobfuscateProject wbDst
+        RemoveRuntimeModule wbDst
+    End If
+
+    wbDst.Save
+    wbDst.Close
+
+    Application.DisplayAlerts = True
+    Application.ScreenUpdating = True
+
+    MsgBox IIf(doObfuscate, "OFUSCADO OK en ", "DESOFUSCADO OK en ") & _
+           Format$(Timer - startTime, "0.0") & "s" & vbCrLf & dstPath, vbInformation
+    Exit Sub
+
+ErrorHandler:
+    Application.DisplayAlerts = True
+    Application.ScreenUpdating = True
+    MsgBox "Error: " & Err.Description, vbCritical
+End Sub
+
+' =============================================================================
+' GENERACIÓN DE TAGS ALEATORIOS
+' =============================================================================
+
+Private Sub GenerateRandomTags()
+    m_TagKey = "'_" & RandomString(4) & "_K="
+    m_TagNoise = "'_" & RandomString(5) & "_"
+    m_TagComment = "'_" & RandomString(6) & ":"
+    m_TagVarMap = "'_" & RandomString(5) & "_VMAP:"
+End Sub
+
+Private Function RandomString(ByVal length As Long) As String
+    Dim i As Long, chars As String, result As String
+    chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+    Randomize
+    For i = 1 To length
+        result = result & Mid$(chars, Int(Rnd * Len(chars)) + 1, 1)
+    Next
+
+    RandomString = result
+End Function
+
+' =============================================================================
+' SELECCIÓN DE ARCHIVO
+' =============================================================================
+
+Private Function PickXlsmFile() As String
+    Dim fd As FileDialog
+    Set fd = Application.FileDialog(msoFileDialogFilePicker)
+    With fd
+        .Title = "Selecciona el archivo .XLSM"
+        .AllowMultiSelect = False
+        .Filters.Clear
+        .Filters.Add "Excel Macro-Enabled (*.xlsm)", "*.xlsm"
+        If .Show <> -1 Then
+            PickXlsmFile = ""
+        Else
+            PickXlsmFile = .SelectedItems(1)
+        End If
+    End With
+End Function
+
+Private Function AddSuffixToPath(ByVal fullPath As String, ByVal suffix As String) As String
+    Dim p As Long
+    p = InStrRev(fullPath, ".")
+    If p > 0 Then
+        AddSuffixToPath = Left$(fullPath, p - 1) & suffix & Mid$(fullPath, p)
+    Else
+        AddSuffixToPath = fullPath & suffix
+    End If
+End Function
+
+' =============================================================================
+' GESTIÓN DEL MÓDULO RUNTIME
+' =============================================================================
+
+Private Sub EnsureRuntimeModule(ByVal wb As Workbook)
+    Dim c As Object
+    On Error Resume Next
+    Set c = wb.VBProject.VBComponents(RUNTIME_MODULE_NAME)
+    On Error GoTo 0
+
+    If c Is Nothing Then
+        Set c = wb.VBProject.VBComponents.Add(1)
+        c.Name = RUNTIME_MODULE_NAME
+    End If
+
+    With c.CodeModule
+        If .CountOfLines > 0 Then .DeleteLines 1, .CountOfLines
+        .AddFromString RuntimeCode()
+    End With
+End Sub
+
+Private Sub RemoveRuntimeModule(ByVal wb As Workbook)
+    On Error Resume Next
+    wb.VBProject.VBComponents.Remove wb.VBProject.VBComponents(RUNTIME_MODULE_NAME)
+    On Error GoTo 0
+End Sub
+
+Private Function RuntimeCode() As String
+    RuntimeCode = _
+        "Option Explicit" & vbCrLf & _
+        vbCrLf & _
+        "Public Function dDecode(ByVal hex4 As String, ByVal k As Long) As String" & vbCrLf & _
+        "    Dim i As Long, v As Long, r As String" & vbCrLf & _
+        "    For i = 1 To Len(hex4) Step 4" & vbCrLf & _
+        "        v = CLng(""&H"" & Mid$(hex4, i, 4))" & vbCrLf & _
+        "        r = r & ChrW$(v Xor k)" & vbCrLf & _
+        "    Next i" & vbCrLf & _
+        "    dDecode = r" & vbCrLf & _
+        "End Function"
+End Function
+
+' =============================================================================
+' PROCESAMIENTO DEL PROYECTO
+' =============================================================================
+
+Private Sub ObfuscateProject(ByVal wb As Workbook)
+    Dim c As Object, code As String, key As Long
+
+    For Each c In wb.VBProject.VBComponents
+        If c.Name <> RUNTIME_MODULE_NAME Then
+            code = GetCode(c)
+            If Len(code) > 0 Then
+                key = MakeKey()
+
+                ' 1. Construir mapa de variables
+                m_VarMap.RemoveAll
+                BuildVariableMap code
+
+                ' 2. Renombrar variables en TODO el código
+                code = RenameVariables(code)
+
+                ' 3. Inyectar dummy
+                code = InjectDummyDeclarationOnce(code)
+
+                ' 4. Ofuscar strings/comentarios + ruido SOLO dentro de Sub/Function
+                code = ObfuscateCodeSmart(code, key)
+
+                ' 5. Guardar con clave y mapa de variables
+                SetCode c, m_TagKey & key & vbCrLf & _
+                          SerializeVarMap() & _
+                          code
+            End If
+        End If
+    Next
+End Sub
+
+Private Sub DeobfuscateProject(ByVal wb As Workbook)
+    Dim c As Object, code As String, key As Long
+
+    For Each c In wb.VBProject.VBComponents
+        code = GetCode(c)
+        key = ExtractKey(code)
+        If key > 0 Then
+            ' Extraer mapa de variables
+            ExtractVarMap code
+
+            ' Desofuscar
+            code = DeobfuscateCodeSmart(code, key)
+
+            ' Restaurar nombres de variables
+            code = RestoreVariableNames(code)
+
+            SetCode c, code
+        End If
+    Next
+End Sub
+
+' =============================================================================
+' LECTURA Y ESCRITURA
+' =============================================================================
+
+Private Function GetCode(ByVal c As Object) As String
+    With c.CodeModule
+        If .CountOfLines = 0 Then
+            GetCode = ""
+        Else
+            GetCode = .Lines(1, .CountOfLines)
+        End If
+    End With
+End Function
+
+Private Sub SetCode(ByVal c As Object, ByVal txt As String)
+    With c.CodeModule
+        If .CountOfLines > 0 Then .DeleteLines 1, .CountOfLines
+        If Len(txt) > 0 Then .AddFromString txt
+    End With
+End Sub
+
+' =============================================================================
+' MAPEO Y SERIALIZACIÓN DE VARIABLES
+' =============================================================================
+
+Private Sub BuildVariableMap(ByVal code As String)
+    Dim lines() As String, i As Long
+    Dim ln As String, trimmed As String, varName As String
+
+    lines = Split(code, vbCrLf)
+
+    For i = LBound(lines) To UBound(lines)
+        ln = lines(i)
+        trimmed = Trim$(ln)
+
+        ' Detectar declaraciones Dim/Private/Public
+        If trimmed Like "Dim *" Or trimmed Like "Private *" Or trimmed Like "Public *" Then
+            If InStr(1, trimmed, "Const", vbTextCompare) > 0 Then GoTo NextVar
+
+            varName = ExtractVariableName(trimmed)
+
+            If Len(varName) > 0 And varName <> "ofuDummy" Then
+                If Not m_VarMap.exists(varName) Then
+                    m_VarMap(varName) = "v" & RandomString(8)
+                End If
+            End If
+        End If
+NextVar:
+    Next
+End Sub
+
+Private Function ExtractVariableName(ByVal declaration As String) As String
+    Dim varPart As String, p As Long
+
+    declaration = Trim$(declaration)
+    If LCase$(Left$(declaration, 4)) = "dim " Then
+        declaration = Trim$(Mid$(declaration, 5))
+    ElseIf LCase$(Left$(declaration, 8)) = "private " Then
+        declaration = Trim$(Mid$(declaration, 9))
+    ElseIf LCase$(Left$(declaration, 7)) = "public " Then
+        declaration = Trim$(Mid$(declaration, 8))
+    End If
+
+    p = InStr(1, declaration, " As ", vbTextCompare)
+    If p > 0 Then
+        varPart = Trim$(Left$(declaration, p - 1))
+    Else
+        varPart = declaration
+    End If
+
+    p = InStr(varPart, "(")
+    If p > 0 Then varPart = Trim$(Left$(varPart, p - 1))
+
+    ExtractVariableName = varPart
+End Function
+
+Private Function SerializeVarMap() As String
+    Dim result As String, k As Variant
+
+    If m_VarMap.count = 0 Then Exit Function
+
+    For Each k In m_VarMap.Keys
+        result = result & CStr(k) & "=" & m_VarMap(k) & "|"
+    Next
+
+    If Len(result) > 0 Then
+        result = Left$(result, Len(result) - 1)
+        SerializeVarMap = m_TagVarMap & result & vbCrLf
+    End If
+End Function
+
+Private Sub ExtractVarMap(ByVal src As String)
+    Dim lines() As String, i As Long, ln As String
+    Dim p As Long, mapData As String
+    Dim pairs() As String, pair As String
+    Dim parts() As String
+
+    Set m_VarMap = CreateObject("Scripting.Dictionary")
+    lines = Split(src, vbCrLf)
+
+    For i = LBound(lines) To UBound(lines)
+        ln = lines(i)
+
+        p = InStr(ln, "_VMAP:")
+        If p > 0 Then
+            mapData = Mid$(ln, p + 6)
+
+            If Len(mapData) > 0 Then
+                pairs = Split(mapData, "|")
+
+                Dim j As Long
+                For j = LBound(pairs) To UBound(pairs)
+                    pair = pairs(j)
+                    If InStr(pair, "=") > 0 Then
+                        parts = Split(pair, "=")
+                        If UBound(parts) >= 1 Then
+                            ' Invertir el mapeo para desofuscar
+                            m_VarMap(parts(1)) = parts(0)
+                        End If
+                    End If
+                Next
+            End If
+            Exit For
+        End If
+    Next
+End Sub
+
+' =============================================================================
+' RENOMBRADO Y RESTAURACIÓN DE VARIABLES
+' =============================================================================
+
+Private Function RenameVariables(ByVal code As String) As String
+    Dim result As String, k As Variant
+
+    result = code
+
+    For Each k In m_VarMap.Keys
+        result = ReplaceWholeWord(result, CStr(k), m_VarMap(k))
+    Next
+
+    RenameVariables = result
+End Function
+
+Private Function RestoreVariableNames(ByVal code As String) As String
+    Dim result As String, k As Variant
+
+    result = code
+
+    For Each k In m_VarMap.Keys
+        result = ReplaceWholeWord(result, CStr(k), m_VarMap(k))
+    Next
+
+    RestoreVariableNames = result
+End Function
+
+Private Function ReplaceWholeWord(ByVal text As String, ByVal oldWord As String, ByVal newWord As String) As String
+    Dim result As String, i As Long, wordStart As Long
+    Dim ch As String, inString As Boolean, inComment As Boolean
+
+    result = ""
+    i = 1
+    inString = False
+    inComment = False
+
+    Do While i <= Len(text)
+        ch = Mid$(text, i, 1)
+
+        If ch = """" And Not inComment Then
+            inString = Not inString
+            result = result & ch
+            i = i + 1
+        ElseIf ch = "'" And Not inString Then
+            inComment = True
+            result = result & Mid$(text, i)
+            Exit Do
+        ElseIf Not inString And Not inComment Then
+            If IsWordChar(ch) Then
+                wordStart = i
+                Do While i <= Len(text) And IsWordChar(Mid$(text, i, 1))
+                    i = i + 1
+                Loop
+
+                Dim word As String
+                word = Mid$(text, wordStart, i - wordStart)
+
+                If StrComp(word, oldWord, vbTextCompare) = 0 Then
+                    result = result & newWord
+                Else
+                    result = result & word
+                End If
+            Else
+                result = result & ch
+                i = i + 1
+            End If
+        Else
+            result = result & ch
+            i = i + 1
+        End If
+    Loop
+
+    ReplaceWholeWord = result
+End Function
+
+Private Function IsWordChar(ByVal ch As String) As Boolean
+    Dim code As Long
+    code = Asc(ch)
+    IsWordChar = (code >= 65 And code <= 90) Or _
+                 (code >= 97 And code <= 122) Or _
+                 (code >= 48 And code <= 57) Or _
+                 ch = "_"
+End Function
+
+' =============================================================================
+' INYECCIÓN DE VARIABLE DUMMY
+' =============================================================================
+
+Private Function InjectDummyDeclarationOnce(ByVal code As String) As String
+    Dim lines() As String, i As Long
+    Dim result() As String
+    Dim injected As Boolean, count As Long
+
+    lines = Split(code, vbCrLf)
+    ReDim result(UBound(lines) + 1)
+
+    injected = False
+    count = 0
+
+    For i = LBound(lines) To UBound(lines)
+        result(count) = lines(i)
+        count = count + 1
+
+        If Not injected Then
+            Dim trimLine As String
+            trimLine = LCase$(Trim$(lines(i)))
+
+            If trimLine Like "sub *" Or trimLine Like "public sub *" Or _
+               trimLine Like "private sub *" Or trimLine Like "function *" Or _
+               trimLine Like "public function *" Or trimLine Like "private function *" Then
+                result(count) = "    Dim ofuDummy As Long"
+                count = count + 1
+                injected = True
+            End If
+        End If
+    Next i
+
+    ReDim Preserve result(count - 1)
+    InjectDummyDeclarationOnce = Join(result, vbCrLf)
+End Function
+
+' =============================================================================
+' OFUSCACIÓN INTELIGENTE - RUIDO SOLO DENTRO DE SUB/FUNCTION
+' =============================================================================
+
+Private Function ObfuscateCodeSmart(ByVal src As String, ByVal key As Long) As String
+    Dim lines() As String, i As Long
+    Dim result() As String
+    Dim count As Long, noiseVariant As Long
+    Dim insideProcedure As Boolean
+
+    lines = Split(src, vbCrLf)
+    ReDim result(UBound(lines) * 2)
+
+    count = 0
+    noiseVariant = 0
+    insideProcedure = False
+
+    For i = LBound(lines) To UBound(lines)
+        Dim trimLine As String
+        trimLine = LCase$(Trim$(lines(i)))
+
+        If trimLine Like "sub *" Or trimLine Like "public sub *" Or _
+           trimLine Like "private sub *" Or trimLine Like "function *" Or _
+           trimLine Like "public function *" Or trimLine Like "private function *" Then
+            insideProcedure = True
+        End If
+
+        If trimLine = "end sub" Or trimLine = "end function" Then
+            insideProcedure = False
+        End If
+
+        result(count) = ObfuscateLineSmart(lines(i), key)
+        count = count + 1
+
+        If NOISE_RATE > 0 And i Mod NOISE_RATE = 0 And i > LBound(lines) Then
+            If insideProcedure And Not LineEndsWithContinuation(lines(i)) Then
+                If Not (trimLine Like "sub *" Or trimLine Like "function *" Or _
+                        trimLine Like "public sub *" Or trimLine Like "public function *" Or _
+                        trimLine Like "private sub *" Or trimLine Like "private function *") Then
+
+                    noiseVariant = (noiseVariant + 1) Mod 3
+                    Select Case noiseVariant
+                        Case 0
+                            result(count) = m_TagNoise: count = count + 1
+                            result(count) = "If False Then": count = count + 1
+                            result(count) = "    ofuDummy = 0": count = count + 1
+                            result(count) = "End If": count = count + 1
+                        Case 1
+                            result(count) = m_TagNoise: count = count + 1
+                            result(count) = "On Error Resume Next": count = count + 1
+                            result(count) = "ofuDummy = ofuDummy + 0": count = count + 1
+                            result(count) = "On Error GoTo 0": count = count + 1
+                        Case 2
+                            result(count) = m_TagNoise: count = count + 1
+                            result(count) = "Do While False": count = count + 1
+                            result(count) = "    ofuDummy = 1": count = count + 1
+                            result(count) = "Loop": count = count + 1
+                    End Select
+                End If
+            End If
+        End If
+    Next
+
+    ReDim Preserve result(count - 1)
+    ObfuscateCodeSmart = Join(result, vbCrLf)
+End Function
+
+Private Function LineEndsWithContinuation(ByVal ln As String) As Boolean
+    Dim trimmed As String, commentPos As Long
+
+    trimmed = RTrim$(ln)
+    If Len(trimmed) = 0 Then
+        LineEndsWithContinuation = False
+        Exit Function
+    End If
+
+    commentPos = InStr(trimmed, "'")
+    If commentPos > 0 Then
+        trimmed = RTrim$(Left$(trimmed, commentPos - 1))
+    End If
+
+    If Len(trimmed) = 0 Then
+        LineEndsWithContinuation = False
+    Else
+        LineEndsWithContinuation = (Right$(trimmed, 1) = "_")
+    End If
+End Function
+
+' =============================================================================
+' OFUSCACIÓN DE LÍNEA
+' =============================================================================
+
+Private Function ObfuscateLineSmart(ByVal ln As String, ByVal key As Long) As String
+    Dim i As Long, ch As String, result As String
+    Dim inString As Boolean, commentStart As Long
+
+    If IsConstDeclaration(ln) Then
+        ObfuscateLineSmart = ln
+        Exit Function
+    End If
+
+    inString = False
+    commentStart = 0
+
+    For i = 1 To Len(ln)
+        ch = Mid$(ln, i, 1)
+        If ch = """" Then
+            inString = Not inString
+        ElseIf ch = "'" And Not inString Then
+            commentStart = i
+            Exit For
+        End If
+    Next
+
+    Dim codePart As String, commentPart As String
+
+    If commentStart > 0 Then
+        codePart = Left$(ln, commentStart - 1)
+        commentPart = Mid$(ln, commentStart + 1)
     Else
         codePart = ln
         commentPart = ""
     End If
 
-    ' --- restaurar comentarios ofuscados ---
-    Dim p As Long
-    p = InStr(codePart, "'_")
-    If p > 0 Then
-        Dim colonPos As Long
-        colonPos = InStr(p, codePart, ":")
-        If colonPos > 0 Then
-            Dim hexStr As String
-            hexStr = Mid$(codePart, colonPos + 1)
-            RestoreLineSmart = Left$(codePart, p - 1) & "'" & FromHex4Fast(hexStr, key) & commentPart
-            Exit Function
-        End If
+    result = ObfuscateStringsInCode(codePart, key)
+
+    If Len(commentPart) > 0 Then
+        result = result & m_TagComment & ToHex4(commentPart, key)
     End If
 
-    ' --- restaurar dDecode ---
-    Dim result As String
-    result = codePart
-
-    Do While InStr(result, "dDecode(""") > 0
-        Dim p1 As Long, p2 As Long, pEnd As Long
-        Dim hex As String, decoded As String
-
-        p1 = InStr(result, "dDecode(""")
-        p2 = InStr(p1 + 10, result, """")
-        pEnd = InStr(p2 + 1, result, ")")
-
-        If p2 = 0 Or pEnd = 0 Then Exit Do
-
-        hex = Mid$(result, p1 + 10, p2 - p1 - 10)
-        decoded = FromHex4Fast(hex, key)
-
-        result = Left$(result, p1 - 1) & """" & decoded & """" & Mid$(result, pEnd + 1)
-    Loop
-
-    RestoreLineSmart = result & commentPart
-End Function
+ 
