@@ -613,9 +613,7 @@ Private Function FromHex4Fast(ByVal hex4 As String, ByVal k As Long) As String
     
     result = Space$(length \ 4)
     
-    
-
-On Error Resume Next
+    On Error Resume Next
     For i = 1 To length Step 4
         v = CLng("&H" & Mid$(hex4, i, 4))
         If Err.Number = 0 Then
@@ -657,6 +655,6 @@ Private Function ExtractKey(ByVal src As String) As Long
             End If
         End If
     Next
-
-
-
+    
+    ExtractKey = 0
+End Function
