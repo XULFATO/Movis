@@ -1,15 +1,12 @@
 Option Explicit
 
 ' =============================================================================
-' VBA Excel Workbook Obfuscator / Deobfuscator - VERSIÓN OPTIMIZADA
+' VBA Excel Workbook Obfuscator / Deobfuscator - VERSIÓN CORREGIDA
 '
-' Cambios de rendimiento:
-'   - StringBuilder pattern (arrays en vez de concatenación)
-'   - Búsquedas de una sola pasada
-'   - Pre-cálculo de longitudes
-'   - Sin loops anidados innecesarios
-'
-' RESULTADO: 800 líneas en <10 segundos (vs 4+ minutos)
+' CORRIGE:
+'   - Strings que no se ofuscaban
+'   - Duplicación de dDecode
+'   - Manejo correcto de comillas anidadas
 ' =============================================================================
 
 Private Const TAG_KEY As String = "'__OFUKEY__="
@@ -155,7 +152,7 @@ Private Function RuntimeCode() As String
 End Function
 
 ' =============================================================================
-' PROCESAMIENTO DEL PROYECTO (OPTIMIZADO)
+' PROCESAMIENTO DEL PROYECTO
 ' =============================================================================
 
 Private Sub ObfuscateProject(ByVal wb As Workbook)
@@ -209,7 +206,7 @@ Private Sub SetCode(ByVal c As Object, ByVal txt As String)
 End Sub
 
 ' =============================================================================
-' INYECCIÓN DE VARIABLE DUMMY (OPTIMIZADO)
+' INYECCIÓN DE VARIABLE DUMMY
 ' =============================================================================
 
 Private Function InjectDummyDeclarationOnce(ByVal code As String) As String
@@ -218,7 +215,7 @@ Private Function InjectDummyDeclarationOnce(ByVal code As String) As String
     Dim injected As Boolean, count As Long
     
     lines = Split(code, vbCrLf)
-    ReDim result(UBound(lines) + 1) ' Pre-allocar con espacio extra
+    ReDim result(UBound(lines) + 1)
     
     injected = False
     count = 0
@@ -246,7 +243,7 @@ Private Function InjectDummyDeclarationOnce(ByVal code As String) As String
 End Function
 
 ' =============================================================================
-' OFUSCACIÓN RÁPIDA (OPTIMIZADO - UNA SOLA PASADA)
+' OFUSCACIÓN RÁPIDA
 ' =============================================================================
 
 Private Function ObfuscateCodeFast(ByVal src As String, ByVal key As Long) As String
@@ -255,15 +252,14 @@ Private Function ObfuscateCodeFast(ByVal src As String, ByVal key As Long) As St
     Dim count As Long
     
     lines = Split(src, vbCrLf)
-    ReDim result(UBound(lines) * 2) ' Espacio para líneas + ruido
+    ReDim result(UBound(lines) * 2)
     
     count = 0
 
     For i = LBound(lines) To UBound(lines)
-        result(count) = ObfuscateLineFast(lines(i), key)
+        result(count) = ObfuscateLineRobust(lines(i), key)
         count = count + 1
         
-        ' Insertar ruido
         If NOISE_RATE > 0 And i Mod NOISE_RATE = 0 And i > LBound(lines) Then
             result(count) = TAG_NOISE: count = count + 1
             result(count) = "If False Then": count = count + 1
@@ -277,54 +273,99 @@ Private Function ObfuscateCodeFast(ByVal src As String, ByVal key As Long) As St
 End Function
 
 ' =============================================================================
-' OFUSCACIÓN DE LÍNEA RÁPIDA (UNA SOLA PASADA)
+' OFUSCACIÓN DE LÍNEA ROBUSTA (CORREGIDA)
 ' =============================================================================
 
-Private Function ObfuscateLineFast(ByVal ln As String, ByVal key As Long) As String
-    Dim i As Long, inString As Boolean
-    Dim result As String, currentSegment As String
-    Dim ch As String
+Private Function ObfuscateLineRobust(ByVal ln As String, ByVal key As Long) As String
+    Dim i As Long, ch As String
+    Dim result As String, buffer As String
+    Dim inString As Boolean, commentStart As Long
     
-    result = ""
-    currentSegment = ""
+    ' 1. Buscar comentario primero (fuera de strings)
     inString = False
+    commentStart = 0
     
     For i = 1 To Len(ln)
         ch = Mid$(ln, i, 1)
-        
         If ch = """" Then
-            If inString Then
-                ' Fin de string - ofuscar
-                If Len(currentSegment) > 0 Then
-                    result = result & "dDecode(""" & ToHex4(currentSegment, key) & """," & key & ")"
-                    currentSegment = ""
-                Else
-                    result = result & """"""
-                End If
-                inString = False
-            Else
-                ' Inicio de string
-                result = result & currentSegment
-                currentSegment = ""
-                inString = True
-            End If
+            inString = Not inString
         ElseIf ch = "'" And Not inString Then
-            ' Comentario encontrado - ofuscar resto de línea
-            result = result & currentSegment
-            result = result & TAG_COMMENT & ToHex4(Mid$(ln, i + 1), key)
-            ObfuscateLineFast = result
-            Exit Function
-        Else
-            currentSegment = currentSegment & ch
+            commentStart = i
+            Exit For
         End If
     Next
     
-    result = result & currentSegment
-    ObfuscateLineFast = result
+    ' 2. Separar código y comentario
+    Dim codePart As String, commentPart As String
+    
+    If commentStart > 0 Then
+        codePart = Left$(ln, commentStart - 1)
+        commentPart = Mid$(ln, commentStart + 1)
+    Else
+        codePart = ln
+        commentPart = ""
+    End If
+    
+    ' 3. Ofuscar strings en la parte de código
+    result = ObfuscateStringsInCode(codePart, key)
+    
+    ' 4. Agregar comentario ofuscado si existe
+    If Len(commentPart) > 0 Then
+        result = result & TAG_COMMENT & ToHex4(commentPart, key)
+    End If
+    
+    ObfuscateLineRobust = result
+End Function
+
+' Ofusca SOLO los strings literales en código
+Private Function ObfuscateStringsInCode(ByVal code As String, ByVal key As Long) As String
+    Dim result As String, i As Long
+    Dim ch As String, inString As Boolean
+    Dim currentString As String, beforeString As String
+    
+    result = ""
+    inString = False
+    currentString = ""
+    beforeString = ""
+    
+    For i = 1 To Len(code)
+        ch = Mid$(code, i, 1)
+        
+        If ch = """" Then
+            If inString Then
+                ' Fin del string - ofuscar y agregar
+                result = result & beforeString
+                If Len(currentString) > 0 Then
+                    result = result & "dDecode(""" & ToHex4(currentString, key) & """," & key & ")"
+                Else
+                    result = result & """"""
+                End If
+                beforeString = ""
+                currentString = ""
+                inString = False
+            Else
+                ' Inicio del string
+                result = result & beforeString
+                beforeString = ""
+                inString = True
+            End If
+        Else
+            If inString Then
+                currentString = currentString & ch
+            Else
+                beforeString = beforeString & ch
+            End If
+        End If
+    Next
+    
+    ' Agregar lo que quedó
+    result = result & beforeString
+    
+    ObfuscateStringsInCode = result
 End Function
 
 ' =============================================================================
-' DESOFUSCACIÓN RÁPIDA (OPTIMIZADO)
+' DESOFUSCACIÓN RÁPIDA
 ' =============================================================================
 
 Private Function DeobfuscateCodeFast(ByVal src As String, ByVal key As Long) As String
@@ -347,7 +388,6 @@ Private Function DeobfuscateCodeFast(ByVal src As String, ByVal key As Long) As 
         Dim trimLine As String
         trimLine = Trim$(lines(i))
         
-        ' Filtros rápidos
         If Left$(lines(i), Len(TAG_KEY)) = TAG_KEY Then GoTo NextLine
         If Left$(lines(i), Len(TAG_NOISE)) = TAG_NOISE Then
             skipNext = 2
@@ -356,8 +396,7 @@ Private Function DeobfuscateCodeFast(ByVal src As String, ByVal key As Long) As 
         If trimLine = "If False Then" Or trimLine = "End If" Then GoTo NextLine
         If InStr(trimLine, "Dim ofuDummy") > 0 Then GoTo NextLine
         
-        ' Restaurar y agregar
-        result(count) = RestoreLineFast(lines(i), key)
+        result(count) = RestoreLineRobust(lines(i), key)
         count = count + 1
         
 NextLine:
@@ -368,44 +407,52 @@ NextLine:
 End Function
 
 ' =============================================================================
-' RESTAURACIÓN RÁPIDA (UNA SOLA PASADA)
+' RESTAURACIÓN ROBUSTA
 ' =============================================================================
 
-Private Function RestoreLineFast(ByVal ln As String, ByVal key As Long) As String
-    Dim p As Long, hexStr As String
-    Dim result As String
+Private Function RestoreLineRobust(ByVal ln As String, ByVal key As Long) As String
+    Dim p As Long, result As String
     
     result = ln
     
     ' 1. Restaurar comentario
     p = InStr(result, TAG_COMMENT)
     If p > 0 Then
+        Dim hexStr As String
         hexStr = Mid$(result, p + Len(TAG_COMMENT))
         result = Left$(result, p - 1) & "'" & FromHex4Fast(hexStr, key)
-        RestoreLineFast = result
+        RestoreLineRobust = result
         Exit Function
     End If
     
-    ' 2. Restaurar strings (búsqueda optimizada)
-    Do While InStr(result, "dDecode(""") > 0
+    ' 2. Restaurar strings (loop seguro)
+    Dim maxIterations As Long
+    maxIterations = 0
+    
+    Do While InStr(result, "dDecode(""") > 0 And maxIterations < 100
+        maxIterations = maxIterations + 1
+        
         p = InStr(result, "dDecode(""")
         Dim p2 As Long, pEnd As Long
         
         p2 = InStr(p + 10, result, """")
         If p2 = 0 Then Exit Do
         
-        pEnd = InStr(p2, result, ")")
+        pEnd = InStr(p2 + 1, result, ")")
         If pEnd = 0 Then Exit Do
         
         hexStr = Mid$(result, p + 9, p2 - p - 9)
-        result = Left$(result, p - 1) & """" & FromHex4Fast(hexStr, key) & """" & Mid$(result, pEnd + 1)
+        Dim decoded As String
+        decoded = FromHex4Fast(hexStr, key)
+        
+        result = Left$(result, p - 1) & """" & decoded & """" & Mid$(result, pEnd + 1)
     Loop
     
-    RestoreLineFast = result
+    RestoreLineRobust = result
 End Function
 
 ' =============================================================================
-' CODIFICACIÓN / DECODIFICACIÓN HEX4 OPTIMIZADA
+' CODIFICACIÓN / DECODIFICACIÓN HEX4
 ' =============================================================================
 
 Private Function ToHex4(ByVal s As String, ByVal k As Long) As String
@@ -413,7 +460,6 @@ Private Function ToHex4(ByVal s As String, ByVal k As Long) As String
     Dim result As String
     Dim hexChunk As String
     
-    ' Pre-calcular tamaño exacto
     result = Space$(Len(s) * 4)
     
     For i = 1 To Len(s)
@@ -436,7 +482,6 @@ Private Function FromHex4Fast(ByVal hex4 As String, ByVal k As Long) As String
         Exit Function
     End If
     
-    ' Pre-alocar string resultado
     result = Space$(length \ 4)
     
     On Error Resume Next
