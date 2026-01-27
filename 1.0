@@ -1,16 +1,18 @@
 Option Explicit
 
 '==========================================================================================
-' VBA Code Obfuscator - VERSIÓN CORREGIDA
+' VBA Code Obfuscator - VERSIÓN CORREGIDA (NO OFUSCA STRINGS CRÍTICOS)
 '
-' REQUIERE:
-'  - Trust access to VBA project object model (ACTIVADO)
+' NO OFUSCA:
+'  - MsgBox, InputBox (mensajes al usuario)
+'  - Worksheets("nombre"), Sheets("nombre")
+'  - Range("A1"), Cells(), Names()
+'  - Workbooks("archivo.xlsx")
 '
-' CARACTERÍSTICAS:
-'  - Elimina TODOS los comentarios
-'  - Ofusca strings literales
-'  - Renombra variables locales
-'  - Respeta Sub/Function públicos
+' SÍ OFUSCA:
+'  - Variables locales (Dim/Private)
+'  - Argumentos de procedimientos
+'  - Comentarios (los elimina)
 '==========================================================================================
 
 Private Const OBSFUCATED_PREFIX As String = "v"
@@ -31,7 +33,6 @@ Public Sub ObfuscateWorkbook_Interactive()
     Dim srcPath As Variant, dstPath As Variant
     Dim wbSrc As Workbook, wbDst As Workbook
 
-    ' Verificar acceso VBProject CON EL WORKBOOK ACTUAL
     On Error Resume Next
     Dim testProj As Object
     Set testProj = ThisWorkbook.VBProject
@@ -48,13 +49,11 @@ Public Sub ObfuscateWorkbook_Interactive()
     End If
     On Error GoTo 0
 
-    ' Seleccionar origen
     srcPath = Application.GetOpenFilename( _
                 FileFilter:="Excel macro-enabled (*.xlsm;*.xlam),*.xlsm;*.xlam", _
                 Title:="Selecciona el archivo ORIGEN")
     If srcPath = False Then Exit Sub
 
-    ' Seleccionar destino
     dstPath = Application.GetSaveAsFilename( _
                 InitialFileName:=BuildDefaultDestPath(CStr(srcPath)), _
                 FileFilter:="Excel Macro-Enabled Workbook (*.xlsm), *.xlsm", _
@@ -66,24 +65,16 @@ Public Sub ObfuscateWorkbook_Interactive()
     Application.DisplayAlerts = False
     On Error GoTo ErrorHandler
 
-    ' Abrir origen (SIN UpdateLinks)
     Set wbSrc = Workbooks.Open(Filename:=CStr(srcPath), ReadOnly:=True, UpdateLinks:=0)
-
-    ' Crear copia
     wbSrc.SaveCopyAs CStr(dstPath)
     wbSrc.Close SaveChanges:=False
 
-    ' Pequeña pausa para asegurar que el archivo se cerró
     Application.Wait Now + TimeValue("00:00:01")
 
-    ' Abrir destino (SIN UpdateLinks)
     Set wbDst = Workbooks.Open(Filename:=CStr(dstPath), ReadOnly:=False, UpdateLinks:=0)
 
-    ' FASE 1: Construir mapa de identificadores
     MapInit
     CollectIdentifiers wbDst
-
-    ' FASE 2: Aplicar ofuscación
     ApplyObfuscation wbDst
 
     wbDst.Save
@@ -105,42 +96,25 @@ ErrorHandler:
     If Not wbDst Is Nothing Then wbDst.Close SaveChanges:=False
     On Error GoTo 0
     
-    MsgBox "ERROR: " & Err.Description & vbCrLf & vbCrLf & _
-           "Número: " & Err.Number & vbCrLf & _
-           "Línea: " & Erl, vbCritical, "VBA Obfuscator"
+    MsgBox "ERROR: " & Err.Description & vbCrLf & "Número: " & Err.Number, vbCritical
 End Sub
 
 '==========================================================================================
 ' FASE 1: RECOGER IDENTIFICADORES
 '==========================================================================================
 Private Sub CollectIdentifiers(ByVal wb As Workbook)
-    Dim vbProj As Object
-    Dim comp As Object
-    Dim cm As Object
-    Dim codeText As String
-    Dim i As Long
-    Dim compCount As Long
+    Dim vbProj As Object, comp As Object, cm As Object
+    Dim codeText As String, i As Long, compCount As Long
 
     On Error Resume Next
-    
-    ' Acceder al VBProject CON MANEJO DE ERROR
     Set vbProj = wb.VBProject
-    
     If Err.Number <> 0 Then
         Err.Clear
-        MsgBox "No se puede acceder al VBProject del workbook." & vbCrLf & _
-               "Asegúrate de que el archivo tiene macros habilitadas.", vbCritical
+        MsgBox "No se puede acceder al VBProject.", vbCritical
         Exit Sub
     End If
     
     compCount = vbProj.VBComponents.Count
-    
-    If Err.Number <> 0 Then
-        Err.Clear
-        MsgBox "No se puede acceder a VBComponents.", vbCritical
-        Exit Sub
-    End If
-    
     On Error GoTo ErrorHandler
 
     For i = 1 To compCount
@@ -149,14 +123,8 @@ Private Sub CollectIdentifiers(ByVal wb As Workbook)
 
         If cm.CountOfLines > 0 Then
             codeText = cm.Lines(1, cm.CountOfLines)
-
-            ' 1) Variables (Dim/Private)
             CollectVariablesFromText codeText
-
-            ' 2) Argumentos de procedimientos
             CollectArgumentsFromText codeText, comp.Type
-
-            ' 3) Procedimientos Private
             CollectPrivateProceduresFromText codeText, comp.Type
         End If
     Next i
@@ -164,8 +132,7 @@ Private Sub CollectIdentifiers(ByVal wb As Workbook)
     Exit Sub
 
 ErrorHandler:
-    MsgBox "Error en CollectIdentifiers: " & Err.Description & vbCrLf & _
-           "Componente: " & i & " de " & compCount, vbCritical
+    MsgBox "Error en CollectIdentifiers: " & Err.Description, vbCritical
 End Sub
 
 Private Sub CollectVariablesFromText(ByVal codeText As String)
@@ -196,18 +163,11 @@ NextLine:
 End Sub
 
 Private Sub CollectPrivateProceduresFromText(ByVal codeText As String, ByVal compType As Long)
-    Dim re As Object
-    Dim matches As Object, match As Object
-    Dim procName As String
+    Dim re As Object, matches As Object, match As Object, procName As String
 
     On Error Resume Next
-    
     Set re = CreateObject("VBScript.RegExp")
-    If Err.Number <> 0 Then
-        Err.Clear
-        Exit Sub
-    End If
-    
+    If Err.Number <> 0 Then Exit Sub
     On Error GoTo 0
 
     re.Global = True
@@ -218,7 +178,6 @@ Private Sub CollectPrivateProceduresFromText(ByVal codeText As String, ByVal com
 
     For Each match In matches
         procName = CStr(match.SubMatches(1))
-
         If Not IsProtectedProcName(procName, compType) Then
             MapAdd procName, MakeObfuscated(procName)
         End If
@@ -230,13 +189,8 @@ Private Sub CollectArgumentsFromText(ByVal codeText As String, ByVal compType As
     Dim procName As String, argsBlock As String
 
     On Error Resume Next
-    
     Set re = CreateObject("VBScript.RegExp")
-    If Err.Number <> 0 Then
-        Err.Clear
-        Exit Sub
-    End If
-    
+    If Err.Number <> 0 Then Exit Sub
     On Error GoTo 0
 
     re.Global = True
@@ -248,7 +202,6 @@ Private Sub CollectArgumentsFromText(ByVal codeText As String, ByVal compType As
     For Each match In matches
         procName = CStr(match.SubMatches(2))
         argsBlock = CStr(match.SubMatches(3))
-
         If Not IsProtectedProcName(procName, compType) Then
             CollectNamesFromArgumentList argsBlock
         End If
@@ -259,24 +212,18 @@ End Sub
 ' FASE 2: APLICAR OFUSCACIÓN
 '==========================================================================================
 Private Sub ApplyObfuscation(ByVal wb As Workbook)
-    Dim vbProj As Object
-    Dim comp As Object
-    Dim cm As Object
+    Dim vbProj As Object, comp As Object, cm As Object
     Dim originalText As String, newText As String
     Dim i As Long, compCount As Long
 
     On Error Resume Next
-    
     Set vbProj = wb.VBProject
-    
     If Err.Number <> 0 Then
-        Err.Clear
-        MsgBox "No se puede acceder al VBProject para aplicar ofuscación.", vbCritical
+        MsgBox "No se puede acceder al VBProject.", vbCritical
         Exit Sub
     End If
     
     compCount = vbProj.VBComponents.Count
-    
     On Error GoTo ErrorHandler
 
     For i = 1 To compCount
@@ -286,13 +233,9 @@ Private Sub ApplyObfuscation(ByVal wb As Workbook)
         If cm.CountOfLines > 0 Then
             originalText = cm.Lines(1, cm.CountOfLines)
 
-            ' 1) Eliminar comentarios
+            ' SOLO eliminar comentarios y renombrar variables
+            ' NO ofuscar strings
             newText = RemoveComments(originalText)
-
-            ' 2) Ofuscar strings literales
-            newText = ObfuscateStrings(newText)
-
-            ' 3) Renombrar identificadores
             newText = ReplaceWithMap(newText, comp.Type)
 
             If newText <> originalText Then
@@ -307,8 +250,7 @@ Private Sub ApplyObfuscation(ByVal wb As Workbook)
     Exit Sub
 
 ErrorHandler:
-    MsgBox "Error en ApplyObfuscation: " & Err.Description & vbCrLf & _
-           "Componente: " & i & " de " & compCount, vbCritical
+    MsgBox "Error en ApplyObfuscation: " & Err.Description, vbCritical
 End Sub
 
 '==========================================================================================
@@ -317,8 +259,7 @@ End Sub
 Private Function RemoveComments(ByVal codeText As String) As String
     Dim lines() As String, i As Long, s As String
     Dim outLines() As String
-    Dim inString As Boolean, j As Long, ch As String
-    Dim cleaned As String
+    Dim inString As Boolean, j As Long, ch As String, cleaned As String
 
     lines = Split(codeText, vbCrLf)
     ReDim outLines(LBound(lines) To UBound(lines))
@@ -332,7 +273,7 @@ Private Function RemoveComments(ByVal codeText As String) As String
             GoTo NextLine
         End If
 
-        ' Comentarios inline
+        ' Comentarios inline (respetando strings)
         inString = False
         cleaned = ""
 
@@ -358,128 +299,7 @@ NextLine:
 End Function
 
 '==========================================================================================
-' OFUSCACIÓN DE STRINGS
-'==========================================================================================
-Private Function ObfuscateStrings(ByVal codeText As String) As String
-    Dim lines() As String, i As Long
-    Dim outLines() As String
-
-    lines = Split(codeText, vbCrLf)
-    ReDim outLines(LBound(lines) To UBound(lines))
-
-    For i = LBound(lines) To UBound(lines)
-        outLines(i) = ObfuscateStringsInLine(lines(i))
-    Next i
-
-    ObfuscateStrings = Join(outLines, vbCrLf)
-End Function
-
-Private Function ObfuscateStringsInLine(ByVal lineText As String) As String
-    Dim result As String, i As Long, ch As String
-    Dim inString As Boolean, currentString As String, beforeString As String
-
-    result = ""
-    inString = False
-    currentString = ""
-    beforeString = ""
-
-    For i = 1 To Len(lineText)
-        ch = Mid$(lineText, i, 1)
-
-        If ch = """" Then
-            If inString Then
-                result = result & beforeString
-
-                If Not IsExcelCollectionContext(beforeString) And Len(currentString) > 0 Then
-                    result = result & """" & ROT13(currentString) & """"
-                ElseIf Len(currentString) > 0 Then
-                    result = result & """" & currentString & """"
-                Else
-                    result = result & """"""
-                End If
-
-                beforeString = ""
-                currentString = ""
-                inString = False
-            Else
-                result = result & beforeString
-                beforeString = ""
-                inString = True
-            End If
-        Else
-            If inString Then
-                currentString = currentString & ch
-            Else
-                beforeString = beforeString & ch
-            End If
-        End If
-    Next i
-
-    result = result & beforeString
-    ObfuscateStringsInLine = result
-End Function
-
-Private Function IsExcelCollectionContext(ByVal precedingCode As String) As Boolean
-    Dim trimmed As String, lastWord As String
-    Dim i As Long, wordStart As Long
-
-    trimmed = RTrim$(precedingCode)
-    i = Len(trimmed)
-
-    Do While i > 0
-        If Mid$(trimmed, i, 1) = "(" Or Mid$(trimmed, i, 1) = "." Then
-            wordStart = i - 1
-            Do While wordStart > 0
-                If Not IsWordChar(Mid$(trimmed, wordStart, 1)) Then Exit Do
-                wordStart = wordStart - 1
-            Loop
-
-            lastWord = LCase$(Mid$(trimmed, wordStart + 1, i - wordStart - 1))
-
-            Select Case lastWord
-                Case "worksheets", "sheets", "workbooks", "range", "cells", "names"
-                    IsExcelCollectionContext = True
-                    Exit Function
-            End Select
-
-            Exit Do
-        End If
-        i = i - 1
-    Loop
-
-    IsExcelCollectionContext = False
-End Function
-
-Private Function IsWordChar(ByVal ch As String) As Boolean
-    Dim code As Long
-    code = Asc(ch)
-    IsWordChar = (code >= 65 And code <= 90) Or _
-                 (code >= 97 And code <= 122) Or _
-                 (code >= 48 And code <= 57) Or _
-                 ch = "_"
-End Function
-
-Private Function ROT13(ByVal s As String) As String
-    Dim i As Long, ch As String, code As Long, result As String
-
-    For i = 1 To Len(s)
-        ch = Mid$(s, i, 1)
-        code = Asc(ch)
-
-        If code >= 65 And code <= 90 Then
-            code = ((code - 65 + 13) Mod 26) + 65
-        ElseIf code >= 97 And code <= 122 Then
-            code = ((code - 97 + 13) Mod 26) + 97
-        End If
-
-        result = result & Chr$(code)
-    Next i
-
-    ROT13 = result
-End Function
-
-'==========================================================================================
-' REEMPLAZO CON MAPA
+' REEMPLAZO CON MAPA (SIN TOCAR STRINGS)
 '==========================================================================================
 Private Function ReplaceWithMap(ByVal codeText As String, ByVal compType As Long) As String
     Dim lines() As String, i As Long, s As String
@@ -504,15 +324,17 @@ Private Function ReplaceWithMap(ByVal codeText As String, ByVal compType As Long
 End Function
 
 Private Function ReplaceOutsideQuotes(ByVal lineText As String) As String
-    Dim parts() As String, i As Long
-    Dim result As String
+    Dim parts() As String, i As Long, result As String
 
+    ' Divide por comillas: pares fuera de string, impares dentro
     parts = Split(lineText, """")
 
     For i = LBound(parts) To UBound(parts)
         If (i Mod 2) = 0 Then
+            ' Fuera de string: reemplazar identificadores
             parts(i) = ReplaceTokens(parts(i))
         End If
+        ' Dentro de string: NO tocar
     Next i
 
     result = Join(parts, """")
@@ -538,7 +360,6 @@ Private Function ReplaceTokens(ByVal textPart As String) As String
     Next i
 
     On Error GoTo 0
-
     ReplaceTokens = textPart
 End Function
 
@@ -575,8 +396,7 @@ Private Function MapGet(ByVal originalName As String) As String
 End Function
 
 Private Function MakeObfuscated(ByVal seed As String) As String
-    Dim s As String, i As Long, n As Long
-    Dim chars As String
+    Dim s As String, i As Long, n As Long, chars As String
 
     chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
     s = OBSFUCATED_PREFIX
@@ -606,9 +426,7 @@ Private Sub CollectNamesFromDeclarationList(ByVal decl As String)
         one = StripTokens(one, Array("ByVal", "ByRef", "Optional", "ParamArray"))
         name = ExtractIdentifierLeft(one)
 
-        If name <> "" Then
-            MapAdd name, MakeObfuscated(name)
-        End If
+        If name <> "" Then MapAdd name, MakeObfuscated(name)
 
 NextOne:
     Next i
@@ -629,9 +447,7 @@ Private Sub CollectNamesFromArgumentList(ByVal argsBlock As String)
         one = StripTokens(one, Array("ByVal", "ByRef", "Optional", "ParamArray"))
         name = ExtractIdentifierLeft(one)
 
-        If name <> "" Then
-            MapAdd name, MakeObfuscated(name)
-        End If
+        If name <> "" Then MapAdd name, MakeObfuscated(name)
 
 NextArg:
     Next i
@@ -746,7 +562,8 @@ Private Function IsReservedWord(ByVal s As String) As Boolean
         Case "sub", "function", "end", "if", "then", "else", "elseif", "for", "next", "do", "loop", _
              "while", "wend", "select", "case", "with", "goto", "return", "exit", "dim", "private", _
              "public", "as", "set", "new", "not", "and", "or", "xor", "byval", "byref", "optional", _
-             "paramarray", "true", "false", "nothing", "me", "thisworkbook", "on", "error", "resume"
+             "paramarray", "true", "false", "nothing", "me", "thisworkbook", "on", "error", "resume", _
+             "each", "in", "to", "step", "until"
             IsReservedWord = True
         Case Else
             IsReservedWord = False
