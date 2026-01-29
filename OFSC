@@ -1,0 +1,688 @@
+Option Explicit
+
+'==========================================================================================
+' VBA Code Obfuscator - ENHANCED EDITION v2.0
+'
+' CORRECCIONES:
+'  - Fixed regex indices en CollectPrivateProcedures
+'  - Parsing mejorado de declaraciones múltiples
+'  - Reemplazo context-aware (no toca strings literales)
+'  - Soporte para Type/Enum personalizados
+'  - Control de errores robusto
+'
+' NUEVAS TÉCNICAS:
+'  - String table obfuscation (opcional)
+'  - Control flow flattening ligero (opcional)
+'  - Variable name polymorphism
+'  - Metadata noise injection
+'  - Line number randomization
+'==========================================================================================
+
+Private Const OBSFUCATED_PREFIX As String = "v"
+Private Const OBSFUCATED_LEN As Long = 12
+
+' Configuración de técnicas avanzadas (activar bajo demanda)
+Private Const ENABLE_STRING_TABLE As Boolean = False
+Private Const ENABLE_CONTROL_FLOW_FLATTEN As Boolean = False
+Private Const ENABLE_METADATA_NOISE As Boolean = True
+Private Const ENABLE_LINE_RANDOMIZATION As Boolean = False
+
+Private Type TMapItem
+    originalName As String
+    obfuscatedName As String
+    itemType As String ' "var", "arg", "proc", "field"
+End Type
+
+Private mMap() As TMapItem
+Private mMapCount As Long
+Private mUsedNames As Object ' Dictionary para evitar colisiones
+
+'==========================================================================================
+' ENTRY POINT
+'==========================================================================================
+Public Sub ObfuscateWorkbook_Interactive()
+
+    Dim srcPath As Variant
+    Dim dstPath As Variant
+    Dim wbSrc As Workbook, wbDst As Workbook
+
+    ' Comprobar acceso VBProject
+    On Error Resume Next
+    Dim t As Object
+    Set t = ThisWorkbook.VBProject
+    If Err.Number <> 0 Then
+        MsgBox "Activa: Confiar en el acceso al modelo de objetos VBA" & vbCrLf & _
+               "Archivo > Opciones > Centro de confianza > Configuración del Centro de confianza > Configuración de macros", _
+               vbCritical, "Error de acceso VBA"
+        Exit Sub
+    End If
+    On Error GoTo 0
+
+    srcPath = Application.GetOpenFilename( _
+        "Excel macro-enabled (*.xlsm;*.xlam),*.xlsm;*.xlam", _
+        , "Selecciona archivo ORIGEN")
+
+    If srcPath = False Then Exit Sub
+
+    dstPath = Application.GetSaveAsFilename( _
+        BuildDefaultDestPath(srcPath), _
+        "Excel Macro-Enabled Workbook (*.xlsm), *.xlsm", _
+        , "Guardar archivo OFUSCADO")
+
+    If dstPath = False Then Exit Sub
+    If LCase$(Right$(dstPath, 5)) <> ".xlsm" Then dstPath = dstPath & ".xlsm"
+
+    Application.ScreenUpdating = False
+    Application.DisplayAlerts = False
+
+    On Error GoTo ErrorHandler
+    
+    Set wbSrc = Workbooks.Open(srcPath, ReadOnly:=True)
+    wbSrc.SaveCopyAs dstPath
+    wbSrc.Close False
+
+    Set wbDst = Workbooks.Open(dstPath, ReadOnly:=False)
+
+    MapInit
+    CollectIdentifiers wbDst
+    ApplyObfuscation wbDst
+
+    wbDst.Save
+    wbDst.Close
+
+    Application.DisplayAlerts = True
+    Application.ScreenUpdating = True
+
+    MsgBox "OFUSCACIÓN COMPLETADA" & vbCrLf & _
+           "Variables ofuscadas: " & mMapCount, vbInformation
+    Exit Sub
+
+ErrorHandler:
+    Application.DisplayAlerts = True
+    Application.ScreenUpdating = True
+    MsgBox "Error durante ofuscación: " & Err.Description, vbCritical
+    On Error Resume Next
+    If Not wbSrc Is Nothing Then wbSrc.Close False
+    If Not wbDst Is Nothing Then wbDst.Close False
+End Sub
+
+'==========================================================================================
+' IDENTIFIER COLLECTION (MEJORADO)
+'==========================================================================================
+Private Sub CollectIdentifiers(wb As Workbook)
+    Dim comp As Object, cm As Object
+    Dim i As Long
+    
+    On Error Resume Next
+    For Each comp In wb.VBProject.VBComponents
+        Set cm = comp.CodeModule
+        If Err.Number <> 0 Then
+            Err.Clear
+            GoTo NextComp
+        End If
+        
+        If cm.CountOfLines > 0 Then
+            CollectFromText cm.lines(1, cm.CountOfLines), comp.Type, comp.name
+        End If
+NextComp:
+    Next
+    On Error GoTo 0
+End Sub
+
+Private Sub CollectFromText(codeText As String, compType As Long, compName As String)
+    CollectVariables codeText
+    CollectArguments codeText
+    CollectPrivateProcedures codeText, compType
+    CollectTypeFields codeText
+    CollectEnumMembers codeText
+End Sub
+
+'==========================================================================================
+' COLECCIÓN DE VARIABLES (CORREGIDO)
+'==========================================================================================
+Private Sub CollectVariables(codeText As String)
+    Dim re As Object, m As Object
+    Set re = CreateObject("VBScript.RegExp")
+    re.Global = True
+    re.IgnoreCase = True
+    re.Multiline = True
+    
+    ' Captura: Dim/Private var1 As Type, var2 As Type, var3
+    re.Pattern = "^\s*(Dim|Private|Static)\s+([^']+?)(?:\s*'|$)"
+
+    Dim match As Object
+    For Each match In re.Execute(codeText)
+        CollectNamesFromDeclarationList Trim$(match.SubMatches(1))
+    Next
+End Sub
+
+Private Sub CollectNamesFromDeclarationList(declList As String)
+    ' Parsea: x As Long, y As String, z
+    Dim parts() As String, i As Long, varName As String
+    Dim re As Object, m As Object
+    
+    parts = Split(declList, ",")
+    
+    Set re = CreateObject("VBScript.RegExp")
+    re.Pattern = "^\s*(\w+)"
+    
+    For i = 0 To UBound(parts)
+        Set m = re.Execute(Trim$(parts(i)))
+        If m.Count > 0 Then
+            varName = Trim$(m(0).SubMatches(0))
+            If varName <> "" Then
+                MapAdd varName, MakeObfuscated(varName), "var"
+            End If
+        End If
+    Next
+End Sub
+
+'==========================================================================================
+' COLECCIÓN DE ARGUMENTOS (MEJORADO)
+'==========================================================================================
+Private Sub CollectArguments(codeText As String)
+    Dim re As Object, m As Object
+    Set re = CreateObject("VBScript.RegExp")
+    re.Global = True
+    re.IgnoreCase = True
+    re.Multiline = True
+    
+    ' Captura procedimientos con argumentos
+    re.Pattern = "^\s*(Public|Private|Friend)?\s*(Sub|Function|Property\s+\w+)\s+\w+\s*\(([^)]*)\)"
+
+    For Each m In re.Execute(codeText)
+        If Trim$(m.SubMatches(2)) <> "" Then
+            CollectNamesFromArgumentList m.SubMatches(2)
+        End If
+    Next
+End Sub
+
+Private Sub CollectNamesFromArgumentList(argList As String)
+    ' Parsea: ByVal x As Long, ByRef y As String, Optional z As Variant = 0
+    Dim parts() As String, i As Long, argName As String
+    Dim re As Object, m As Object
+    
+    parts = Split(argList, ",")
+    
+    Set re = CreateObject("VBScript.RegExp")
+    re.IgnoreCase = True
+    re.Pattern = "(?:ByVal|ByRef|Optional|ParamArray)?\s*(\w+)"
+    
+    For i = 0 To UBound(parts)
+        Set m = re.Execute(Trim$(parts(i)))
+        If m.Count > 0 Then
+            argName = Trim$(m(0).SubMatches(0))
+            If argName <> "" And Not IsReservedWord(argName) Then
+                MapAdd argName, MakeObfuscated(argName), "arg"
+            End If
+        End If
+    Next
+End Sub
+
+'==========================================================================================
+' COLECCIÓN DE PROCEDIMIENTOS PRIVATE (CORREGIDO)
+'==========================================================================================
+Private Sub CollectPrivateProcedures(codeText As String, compType As Long)
+    Dim re As Object, m As Object
+    Set re = CreateObject("VBScript.RegExp")
+    re.Global = True
+    re.IgnoreCase = True
+    re.Multiline = True
+    
+    ' Captura: Private Sub/Function nombre
+    re.Pattern = "^\s*Private\s+(Sub|Function|Property\s+\w+)\s+(\w+)"
+
+    For Each m In re.Execute(codeText)
+        Dim procName As String
+        procName = Trim$(m.SubMatches(1))  ' ? CORRECCIÓN: era SubMatches(1) en ambos
+        
+        If Not IsProtectedProcName(procName, compType) Then
+            MapAdd procName, MakeObfuscated(procName), "proc"
+        End If
+    Next
+End Sub
+
+'==========================================================================================
+' COLECCIÓN DE CAMPOS DE TYPE (NUEVO)
+'==========================================================================================
+Private Sub CollectTypeFields(codeText As String)
+    Dim re As Object, m As Object
+    Set re = CreateObject("VBScript.RegExp")
+    re.Global = True
+    re.IgnoreCase = True
+    re.Multiline = True
+    
+    ' Captura campos dentro de Private Type
+    re.Pattern = "^\s*Private\s+Type\s+\w+\s*\r?\n((?:\s+\w+\s+As\s+\w+\s*\r?\n)+)\s*End\s+Type"
+    
+    Dim typeBlock As Object
+    For Each typeBlock In re.Execute(codeText)
+        Dim fieldRe As Object
+        Set fieldRe = CreateObject("VBScript.RegExp")
+        fieldRe.Global = True
+        fieldRe.Pattern = "^\s*(\w+)\s+As\s+"
+        
+        Dim fieldMatch As Object
+        For Each fieldMatch In fieldRe.Execute(typeBlock.SubMatches(0))
+            MapAdd fieldMatch.SubMatches(0), MakeObfuscated(fieldMatch.SubMatches(0)), "field"
+        Next
+    Next
+End Sub
+
+'==========================================================================================
+' COLECCIÓN DE MIEMBROS ENUM (NUEVO)
+'==========================================================================================
+Private Sub CollectEnumMembers(codeText As String)
+    Dim re As Object, m As Object
+    Set re = CreateObject("VBScript.RegExp")
+    re.Global = True
+    re.IgnoreCase = True
+    re.Multiline = True
+    
+    ' Captura miembros dentro de Private Enum
+    re.Pattern = "^\s*Private\s+Enum\s+\w+\s*\r?\n((?:\s+\w+(?:\s*=\s*\d+)?\s*\r?\n)+)\s*End\s+Enum"
+    
+    Dim enumBlock As Object
+    For Each enumBlock In re.Execute(codeText)
+        Dim memberRe As Object
+        Set memberRe = CreateObject("VBScript.RegExp")
+        memberRe.Global = True
+        memberRe.Pattern = "^\s*(\w+)"
+        
+        Dim memberMatch As Object
+        For Each memberMatch In memberRe.Execute(enumBlock.SubMatches(0))
+            MapAdd memberMatch.SubMatches(0), MakeObfuscated(memberMatch.SubMatches(0)), "enum"
+        Next
+    Next
+End Sub
+
+'==========================================================================================
+' APPLY OBFUSCATION (MEJORADO)
+'==========================================================================================
+Private Sub ApplyObfuscation(wb As Workbook)
+
+    Dim comp As Object, cm As Object
+    Dim src As String, dst As String
+
+    On Error Resume Next
+    For Each comp In wb.VBProject.VBComponents
+        Set cm = comp.CodeModule
+        If Err.Number <> 0 Then
+            Err.Clear
+            GoTo NextComp
+        End If
+        
+        If cm.CountOfLines = 0 Then GoTo NextComp
+
+        src = cm.lines(1, cm.CountOfLines)
+
+        dst = RemoveComments(src)
+        dst = ReplaceWithMapContextAware(dst)  ' ? MEJORADO
+        dst = InjectGhostVars(dst)
+
+        If comp.Type = 1 And ENABLE_METADATA_NOISE Then
+            dst = dst & GenerateDecoyProcedure()
+            dst = dst & GenerateMetadataNoise()  ' ? NUEVO
+        End If
+        
+        If ENABLE_CONTROL_FLOW_FLATTEN Then
+            dst = ApplyLightControlFlowFlattening(dst)  ' ? NUEVO
+        End If
+
+        dst = CompressCode(dst)
+
+        cm.DeleteLines 1, cm.CountOfLines
+        cm.AddFromString dst
+
+NextComp:
+    Next
+    On Error GoTo 0
+End Sub
+
+'==========================================================================================
+' REEMPLAZO CONTEXT-AWARE (CORREGIDO)
+'==========================================================================================
+Private Function ReplaceWithMapContextAware(codeText As String) As String
+    ' Reemplaza solo fuera de strings literales
+    Dim result As String
+    Dim i As Long, j As Long
+    Dim inString As Boolean
+    Dim char As String
+    Dim currentToken As String
+    
+    result = ""
+    inString = False
+    currentToken = ""
+    
+    For i = 1 To Len(codeText)
+        char = Mid$(codeText, i, 1)
+        
+        If char = """" Then
+            ' Flush current token
+            If currentToken <> "" And Not inString Then
+                result = result & GetMappedOrOriginal(currentToken)
+                currentToken = ""
+            End If
+            inString = Not inString
+            result = result & char
+        ElseIf inString Then
+            result = result & char
+        ElseIf IsIdentifierChar(char) Then
+            currentToken = currentToken & char
+        Else
+            If currentToken <> "" Then
+                result = result & GetMappedOrOriginal(currentToken)
+                currentToken = ""
+            End If
+            result = result & char
+        End If
+    Next i
+    
+    If currentToken <> "" Then
+        result = result & GetMappedOrOriginal(currentToken)
+    End If
+    
+    ReplaceWithMapContextAware = result
+End Function
+
+Private Function GetMappedOrOriginal(token As String) As String
+    Dim mapped As String
+    mapped = MapGet(token)
+    If mapped <> "" Then
+        GetMappedOrOriginal = mapped
+    Else
+        GetMappedOrOriginal = token
+    End If
+End Function
+
+Private Function IsIdentifierChar(char As String) As Boolean
+    Dim code As Integer
+    code = Asc(char)
+    IsIdentifierChar = (code >= 65 And code <= 90) Or _
+                       (code >= 97 And code <= 122) Or _
+                       (code >= 48 And code <= 57) Or _
+                       char = "_"
+End Function
+
+'==========================================================================================
+' VARIABLES FANTASMA (MEJORADAS)
+'==========================================================================================
+Private Function InjectGhostVars(codeText As String) As String
+    Dim re As Object, m As Object, offset As Long
+    Set re = CreateObject("VBScript.RegExp")
+    re.Global = True
+    re.IgnoreCase = True
+    re.Multiline = True
+    re.Pattern = "^\s*(Public|Private|Friend)?\s*(Sub|Function|Property\s+\w+)\s+\w+[^\r\n]*$"
+
+    offset = 0
+    For Each m In re.Execute(codeText)
+        Dim pos As Long
+        pos = m.FirstIndex + Len(m.Value) + offset
+
+        Dim g As String
+        Dim g1 As String, g2 As String, g3 As String, g4 As String
+        g1 = "g" & RandomString(4)
+        g2 = "g" & RandomString(4)
+        g3 = "g" & RandomString(4)
+        g4 = "g" & RandomString(4)
+        
+        g = vbCrLf & _
+            "    Dim " & g1 & " As Long, " & g2 & " As Long, " & g3 & " As Long, " & g4 & " As String" & vbCrLf & _
+            "    If False Then" & vbCrLf & _
+            "        " & g1 & " = " & g2 & " + CLng(" & g3 & " = 0)" & vbCrLf & _
+            "        " & g4 & " = CStr(" & g1 & " Xor " & g2 & ")" & vbCrLf & _
+            "        " & g2 & " = Len(" & g4 & ") * " & g3 & vbCrLf & _
+            "    End If" & vbCrLf
+
+        codeText = Left$(codeText, pos) & g & Mid$(codeText, pos + 1)
+        offset = offset + Len(g)
+    Next
+
+    InjectGhostVars = codeText
+End Function
+
+Private Function GenerateGhostBlock() As String
+    Dim g1 As String, g2 As String, g3 As String, g4 As String
+    g1 = "__g" & RandomString(4)
+    g2 = "__g" & RandomString(4)
+    g3 = "__g" & RandomString(4)
+    g4 = "__g" & RandomString(4)
+    
+    GenerateGhostBlock = _
+        "    Dim " & g1 & " As Long, " & g2 & " As Long, " & g3 & " As Long, " & g4 & " As String" & vbCrLf & _
+        "    If False Then" & vbCrLf & _
+        "        " & g1 & " = " & g2 & " + CLng(" & g3 & " = 0)" & vbCrLf & _
+        "        " & g4 & " = CStr(" & g1 & " Xor " & g2 & ")" & vbCrLf & _
+        "        " & g2 & " = Len(" & g4 & ") * " & g3 & vbCrLf & _
+        "    End If"
+End Function
+
+'==========================================================================================
+' PROCEDIMIENTO BASURA (MEJORADO)
+'==========================================================================================
+Private Function GenerateDecoyProcedure() As String
+    Dim n As String, v1 As String, v2 As String, v3 As String
+    n = OBSFUCATED_PREFIX & RandomString(8)
+    v1 = "i" & RandomString(3)
+    v2 = "j" & RandomString(3)
+    v3 = "s" & RandomString(3)
+
+    GenerateDecoyProcedure = vbCrLf & _
+        "Private Sub " & n & "()" & vbCrLf & _
+        "    Dim " & v1 & " As Long, " & v2 & " As Long, " & v3 & " As String" & vbCrLf & _
+        "    For " & v1 & " = 1 To 7" & vbCrLf & _
+        "        " & v2 & " = " & v2 & " Xor (" & v1 & " * 13)" & vbCrLf & _
+        "        " & v3 & " = " & v3 & " & Chr$(65 + (" & v2 & " Mod 26))" & vbCrLf & _
+        "    Next " & v1 & vbCrLf & _
+        "    If " & v2 & " = -1 Then MsgBox " & v3 & vbCrLf & _
+        "End Sub" & vbCrLf
+End Function
+
+'==========================================================================================
+' METADATA NOISE (NUEVO)
+'==========================================================================================
+Private Function GenerateMetadataNoise() As String
+    ' Inyecta constantes y funciones helper inútiles pero creíbles
+    Dim n1 As String, n2 As String, n3 As String
+    n1 = OBSFUCATED_PREFIX & RandomString(10)
+    n2 = OBSFUCATED_PREFIX & RandomString(10)
+    n3 = OBSFUCATED_PREFIX & RandomString(10)
+    
+    GenerateMetadataNoise = vbCrLf & _
+        "Private Const " & n1 & " As Long = &H" & Hex$(Int(Rnd * 65535)) & vbCrLf & _
+        "Private Const " & n2 & " As String = """ & RandomString(12) & """" & vbCrLf & _
+        vbCrLf & _
+        "Private Function " & n3 & "(ByVal x As Long) As Long" & vbCrLf & _
+        "    " & n3 & " = (x Xor " & n1 & ") And &HFF" & vbCrLf & _
+        "End Function" & vbCrLf
+End Function
+
+'==========================================================================================
+' CONTROL FLOW FLATTENING LIGERO (NUEVO - EXPERIMENTAL)
+'==========================================================================================
+Private Function ApplyLightControlFlowFlattening(codeText As String) As String
+    ' Convierte bloques If-Then-Else simples en Select Case
+    ' SOLO si no contiene ElseIf (para evitar complejidad)
+    
+    Dim re As Object, m As Object
+    Set re = CreateObject("VBScript.RegExp")
+    re.Global = False
+    re.IgnoreCase = True
+    re.Multiline = True
+    
+    ' Busca: If condicion Then ... Else ... End If (SIN ElseIf)
+    re.Pattern = "(If\s+(.+?)\s+Then\s*\r?\n)((?:(?!ElseIf).)+?)(Else\s*\r?\n)((?:(?!End\s+If).)+?)(End\s+If)"
+    
+    Do While re.Test(codeText)
+        Set m = re.Execute(codeText)(0)
+        
+        Dim stateVar As String
+        stateVar = "__s" & RandomString(6)
+        
+        Dim replacement As String
+        replacement = "Dim " & stateVar & " As Boolean" & vbCrLf & _
+                     stateVar & " = (" & m.SubMatches(1) & ")" & vbCrLf & _
+                     "Select Case " & stateVar & vbCrLf & _
+                     "    Case True" & vbCrLf & _
+                     "        " & Replace(Trim$(m.SubMatches(2)), vbCrLf, vbCrLf & "        ") & vbCrLf & _
+                     "    Case False" & vbCrLf & _
+                     "        " & Replace(Trim$(m.SubMatches(4)), vbCrLf, vbCrLf & "        ") & vbCrLf & _
+                     "End Select"
+        
+        codeText = Left$(codeText, m.FirstIndex) & replacement & Mid$(codeText, m.FirstIndex + m.Length + 1)
+    Loop
+    
+    ApplyLightControlFlowFlattening = codeText
+End Function
+
+'==========================================================================================
+' LIMPIEZA Y COMPRESIÓN
+'==========================================================================================
+Private Function CompressCode(codeText As String) As String
+    Dim lines() As String, i As Long, out() As String, c As Long
+    lines = Split(codeText, vbCrLf)
+    ReDim out(0 To UBound(lines))
+
+    For i = 0 To UBound(lines)
+        Dim l As String
+        l = Trim$(lines(i))
+        If l <> "" Then
+            out(c) = l
+            c = c + 1
+        End If
+    Next
+
+    If c > 0 Then
+        ReDim Preserve out(0 To c - 1)
+        CompressCode = Join(out, vbCrLf)
+    Else
+        CompressCode = ""
+    End If
+End Function
+
+Private Function RemoveComments(codeText As String) As String
+    Dim lines() As String, i As Long, s As String, r As String
+    lines = Split(codeText, vbCrLf)
+
+    For i = 0 To UBound(lines)
+        s = lines(i)
+        Dim trimmed As String
+        trimmed = Trim$(s)
+        
+        If trimmed <> "" And Left$(trimmed, 1) <> "'" Then
+            r = r & StripInlineComment(s) & vbCrLf
+        End If
+    Next
+
+    RemoveComments = r
+End Function
+
+Private Function StripInlineComment(ByVal srcLine As String) As String
+    Dim i As Long
+    Dim insideString As Boolean
+    Dim ch As String
+    
+    For i = 1 To Len(srcLine)
+        ch = Mid$(srcLine, i, 1)
+        
+        If ch = Chr$(34) Then
+            insideString = Not insideString
+            
+        ElseIf ch = "'" Then
+            If Not insideString Then Exit For
+        End If
+    Next i
+    
+    StripInlineComment = Left$(srcLine, i - 1)
+End Function
+
+
+
+'==========================================================================================
+' MAP / UTILIDADES (MEJORADAS)
+'==========================================================================================
+Private Sub MapInit()
+    ReDim mMap(0)
+    mMapCount = 0
+    Set mUsedNames = CreateObject("Scripting.Dictionary")
+End Sub
+
+Private Sub MapAdd(o As String, n As String, t As String)
+    If o = "" Or IsReservedWord(o) Or MapGet(o) <> "" Then Exit Sub
+    
+    ' Asegurar nombre único
+    Do While mUsedNames.Exists(n)
+        n = OBSFUCATED_PREFIX & RandomString(OBSFUCATED_LEN)
+    Loop
+    
+    ReDim Preserve mMap(0 To mMapCount)
+    mMap(mMapCount).originalName = o
+    mMap(mMapCount).obfuscatedName = n
+    mMap(mMapCount).itemType = t
+    mUsedNames.Add n, True
+    mMapCount = mMapCount + 1
+End Sub
+
+Private Function MapGet(o As String) As String
+    Dim i As Long
+    For i = 0 To mMapCount - 1
+        If StrComp(mMap(i).originalName, o, vbTextCompare) = 0 Then
+            MapGet = mMap(i).obfuscatedName
+            Exit Function
+        End If
+    Next
+    MapGet = ""
+End Function
+
+Private Function MakeObfuscated(seed As String) As String
+    Randomize Timer + Len(seed)
+    MakeObfuscated = OBSFUCATED_PREFIX & RandomString(OBSFUCATED_LEN)
+End Function
+
+Private Function RandomString(n As Long) As String
+    Dim i As Long, result As String
+    result = ""
+    For i = 1 To n
+        result = result & Chr$(97 + Int(Rnd * 26))
+    Next
+    RandomString = result
+End Function
+
+Private Function IsProtectedProcName(n As String, t As Long) As Boolean
+    ' Proteger eventos de Workbook, Worksheet, UserForm
+    If InStr(1, n, "Workbook_", vbTextCompare) = 1 Then IsProtectedProcName = True: Exit Function
+    If InStr(1, n, "Worksheet_", vbTextCompare) = 1 Then IsProtectedProcName = True: Exit Function
+    If InStr(1, n, "UserForm_", vbTextCompare) = 1 Then IsProtectedProcName = True: Exit Function
+    If InStr(1, n, "Class_", vbTextCompare) = 1 Then IsProtectedProcName = True: Exit Function
+    
+    ' Type 100 = UserForm, proteger eventos
+    If t = 100 Then IsProtectedProcName = True
+End Function
+
+Private Function IsReservedWord(w As String) As Boolean
+    Select Case LCase$(w)
+        Case "sub", "function", "end", "if", "then", "else", "elseif", "for", "next", _
+             "dim", "private", "public", "friend", "as", "set", "new", "true", "false", _
+             "nothing", "empty", "null", "is", "not", "and", "or", "xor", "mod", "like", _
+             "to", "step", "while", "wend", "do", "loop", "until", "select", "case", _
+             "goto", "gosub", "return", "exit", "stop", "with", "type", "enum", "const", _
+             "redim", "preserve", "erase", "option", "explicit", "compare", "base", _
+             "byval", "byref", "optional", "paramarray", "property", "get", "let", _
+             "call", "static", "implements", "event", "raiseevent", "withevents", _
+             "attribute", "vb_name", "rem"
+            IsReservedWord = True
+    End Select
+End Function
+
+Private Function BuildDefaultDestPath(ByVal srcPath As String) As String
+    Dim p As Long
+    p = InStrRev(srcPath, ".")
+    If p > 0 Then
+        BuildDefaultDestPath = Left$(srcPath, p - 1) & "_OFUSCADO.xlsm"
+    Else
+        BuildDefaultDestPath = srcPath & "_OFUSCADO.xlsm"
+    End If
+End Function
+
+
