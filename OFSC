@@ -1,215 +1,395 @@
 Option Explicit
 
 ' ==========================================================================================
-' CONFIGURACIÓN DE PROTECCIÓN
+' CONFIGURACIÓN DE SEGURIDAD
 ' ==========================================================================================
-Private Const MACROS_BOTONES As String = "operacion1,macro2" ' <--- AÑADE TUS MACROS AQUÍ
+' Escribe aquí los nombres EXACTOS de las macros que asignaste a tus botones.
+' Sepáralos por comas. El código NO tocará estos nombres para que los botones sigan funcionando.
+Private Const MACROS_BOTONES As String = "operacion1,BotonCalculo,MacroImprimir" 
+
+' Longitud de la parte aleatoria del nombre (ej: MBH_x8s7f6)
 Private Const OBS_LEN As Long = 8
 
-Private mMap() As TMapItem
-Private mMapCount As Long
-Private mUsedNames As Object
-Private mDiasVida As Long
-Private mUsarCaducidad As Boolean
-
+' Estructuras de datos internas
 Private Type TMapItem
     orig As String
     obf As String
+    esSub As Boolean
 End Type
 
+Private mMap() As TMapItem
+Private mMapCount As Long
+Private mUsedNames As Object ' Scripting.Dictionary
+Private mFechaExpiracion As Date
+Private mUsarCaducidad As Boolean
+
 ' ==========================================================================================
-' PUNTO DE ENTRADA PRINCIPAL (INTERACTIVO)
+' 1. PUNTO DE ENTRADA PRINCIPAL (EJECUTA ESTA MACRO)
 ' ==========================================================================================
-Public Sub Ofuscador_Interactivo_Pro()
+Public Sub Ofuscador_Maestro_V3()
     Dim srcPath As Variant, dstPath As Variant
     Dim wbSrc As Workbook, wbDst As Workbook
-    Dim fExpiracion As String
-    Dim rta As VbMsgBoxResult
+    Dim respuesta As Long
     
-    ' 1. Preguntar por Caducidad
-    rta = MsgBox("¿Deseas incluir sistema de caducidad (Auto-Kill)?", vbYesNo + vbQuestion, "Configuración")
-    If rta = vbYes Then
+    ' --- CONFIGURACIÓN INTERACTIVA DEL AUTO-KILL ---
+    respuesta = MsgBox("¿Deseas activar la AUTO-DESTRUCCIÓN (Caducidad)?", vbYesNo + vbQuestion, "Seguridad")
+    
+    If respuesta = vbYes Then
         mUsarCaducidad = True
-        Dim inputDias As String
-        inputDias = InputBox("Introduce los días de validez (ej. 30):", "Días de vida", "30")
-        If Not IsNumeric(inputDias) Or inputDias = "" Then Exit Sub
-        mDiasVida = CLng(inputDias)
-        fExpiracion = DateAdd("d", mDiasVida, Date)
+        Dim tipoTiempo As String
+        Dim cantidad As String
+        
+        tipoTiempo = InputBox("Elige la unidad de tiempo:" & vbCrLf & "M = Minutos" & vbCrLf & "H = Horas" & vbCrLf & "D = Días", "Unidad de Tiempo", "D")
+        tipoTiempo = UCase(Trim(tipoTiempo))
+        
+        If InStr("MHD", tipoTiempo) = 0 Or Len(tipoTiempo) <> 1 Then
+            MsgBox "Unidad no válida. Cancelando.", vbCritical
+            Exit Sub
+        End If
+        
+        cantidad = InputBox("Introduce la cantidad:", "Duración", "30")
+        If Not IsNumeric(cantidad) Then Exit Sub
+        
+        ' Calcular fecha exacta de muerte
+        Select Case tipoTiempo
+            Case "M": mFechaExpiracion = DateAdd("n", CLng(cantidad), Now) ' n = minutos en VBA
+            Case "H": mFechaExpiracion = DateAdd("h", CLng(cantidad), Now)
+            Case "D": mFechaExpiracion = DateAdd("d", CLng(cantidad), Now)
+        End Select
     Else
         mUsarCaducidad = False
     End If
 
-    ' 2. Selección de archivos
+    ' --- SELECCIÓN DE ARCHIVOS ---
     srcPath = Application.GetOpenFilename("Excel con Macros (*.xlsm),*.xlsm")
     If srcPath = False Then Exit Sub
     
-    dstPath = Application.GetSaveAsFilename("OFUSCADO_" & Format(Date, "dd_mm") & ".xlsm", "Excel (*.xlsm),*.xlsm")
+    dstPath = Application.GetSaveAsFilename("PROTEGIDO_" & Format(Now, "hhmmss") & ".xlsm", "Excel (*.xlsm),*.xlsm")
     If dstPath = False Then Exit Sub
 
     Application.ScreenUpdating = False
+    Application.EnableEvents = False
     
-    ' 3. Clonar y procesar
+    ' Clonar archivo
+    On Error GoTo ErrHandler
     Set wbSrc = Workbooks.Open(srcPath, ReadOnly:=True)
     wbSrc.SaveCopyAs dstPath
     wbSrc.Close False
+    
     Set wbDst = Workbooks.Open(dstPath)
 
+    ' --- INICIO DEL PROCESO ---
     InitMapper
+    
+    ' 1. Mapear Módulos (Standard modules only)
     MapearModulos wbDst
-    RecolectarInternos wbDst
-    TransformarCodigo wbDst, fExpiracion
+    
+    ' 2. Mapear Variables y Subs
+    RecolectarIdentificadores wbDst
+    
+    ' 3. Ejecutar Cambios Físicos
+    AplicarTransformacion wbDst
     
     wbDst.Save
     wbDst.Close
     
+    Application.EnableEvents = True
     Application.ScreenUpdating = True
-    MsgBox "PROCESO FINALIZADO" & vbCrLf & _
-           IIf(mUsarCaducidad, "Expira el: " & fExpiracion, "Sin caducidad."), vbInformation
-End Sub
-
-' ==========================================================================================
-' MOTOR DE TRANSFORMACIÓN
-' ==========================================================================================
-Private Sub TransformarCodigo(wb As Workbook, fExp As String)
-    Dim comp As Object, cm As Object, i As Long, line As String, final As String
     
-    ' Renombrar Módulos físicamente
-    For Each comp In wb.VBProject.VBComponents
-        Dim n As String: n = MapGet(comp.Name)
-        If n <> "" Then comp.Name = n
-    Next
+    Dim msgFinal As String
+    msgFinal = "PROCESO COMPLETADO CON ÉXITO."
+    If mUsarCaducidad Then
+        msgFinal = msgFinal & vbCrLf & "El archivo dejará de funcionar el: " & Format(mFechaExpiracion, "dd/mm/yyyy HH:mm:ss")
+    End If
+    MsgBox msgFinal, vbInformation
+    Exit Sub
 
-    ' Procesar texto dentro de cada componente
-    For Each comp In wb.VBProject.VBComponents
-        Set cm = comp.CodeModule
-        final = ""
-        If cm.CountOfLines > 0 Then
-            For i = 1 To cm.CountOfLines
-                line = cm.lines(i, 1)
-                
-                ' Limpieza y ofuscación de Strings
-                If InStr(line, "'") > 0 Then line = Split(line, "'")(0)
-                line = EncryptMsgBox(line)
-                line = AplicarMapeo(line)
-                
-                If Trim(line) <> "" Then final = final & line & vbCrLf
-            Next
-            
-            cm.DeleteLines 1, cm.CountOfLines
-            cm.AddFromString final & GetDecryptFunc()
-            
-            ' Inyectar Auto-Kill solo si se activó y en ThisWorkbook (Type 100)
-            If mUsarCaducidad And comp.Type = 100 Then
-                cm.AddFromString GetKillCode(fExp)
-            End If
-        End If
-    Next
+ErrHandler:
+    Application.EnableEvents = True
+    Application.ScreenUpdating = True
+    MsgBox "Ocurrió un error: " & Err.Description, vbCritical
+    If Not wbDst Is Nothing Then wbDst.Close False
 End Sub
 
 ' ==========================================================================================
-' SISTEMA DE AUTO-DESTRUCCIÓN
-' ==========================================================================================
-Private Function GetKillCode(fecha As String) As String
-    GetKillCode = vbCrLf & "Private Sub Workbook_Open()" & vbCrLf & _
-                  "    If Date > CDate(""" & fecha & """) Then" & vbCrLf & _
-                  "        MsgBox DX(""4Dz79z7Ez7Fz7Ez27z6Dz6Fz6Az6Fz6Ez68z6Fz67z27z68z61z67z7Bz67z61z67z6Fz""), 16" & vbCrLf & _
-                  "        ThisWorkbook.Saved = True" & vbCrLf & _
-                  "        ThisWorkbook.Close False" & vbCrLf & _
-                  "    End If" & vbCrLf & _
-                  "End Sub" & vbCrLf
-End Function
-
-' ==========================================================================================
-' HELPERS Y UTILIDADES
+' 2. MOTOR DE ANÁLISIS Y MAPEO
 ' ==========================================================================================
 Private Sub MapearModulos(wb As Workbook)
     Dim comp As Object
     For Each comp In wb.VBProject.VBComponents
-        If comp.Type = 1 Then MapAdd comp.Name
+        ' Type 1 = Módulo Estándar (.bas). No renombramos Hojas ni ThisWorkbook para evitar roturas.
+        If comp.Type = 1 Then
+            AgregarAlMapa comp.Name, False
+        End If
     Next
 End Sub
 
-Private Sub RecolectarInternos(wb As Workbook)
-    Dim comp As Object, code As String, re As Object, m As Object
+Private Sub RecolectarIdentificadores(wb As Workbook)
+    Dim comp As Object, code As String
+    Dim re As Object, matches As Object, m As Object
+    
     Set re = CreateObject("VBScript.RegExp")
-    re.Global = True: re.IgnoreCase = True: re.Multiline = True
+    re.Global = True
+    re.IgnoreCase = True
+    re.Multiline = True
     
     For Each comp In wb.VBProject.VBComponents
         If comp.CodeModule.CountOfLines > 0 Then
             code = comp.CodeModule.lines(1, comp.CodeModule.CountOfLines)
-            re.Pattern = "(?:Sub|Function|Dim)\s+([a-zA-Z0-9_]{3,})"
-            For Each m In re.Execute(code)
-                MapAdd m.SubMatches(0)
+            
+            ' Captura: Sub NombreSub( o Function NombreFunc(
+            re.Pattern = "(?:Sub|Function)\s+([a-zA-Z0-9_]+)\s*\("
+            Set matches = re.Execute(code)
+            For Each m In matches
+                AgregarAlMapa m.SubMatches(0), True
+            Next
+            
+            ' Captura: Dim NombreVar
+            re.Pattern = "(?:Dim|Public|Private)\s+([a-zA-Z0-9_]{3,})\s"
+            Set matches = re.Execute(code)
+            For Each m In matches
+                AgregarAlMapa m.SubMatches(0), False
             Next
         End If
     Next
 End Sub
 
-Private Sub MapAdd(o As String)
-    If IsProtected(o) Or MapGet(o) <> "" Then Exit Sub
-    Dim p() As String, i As Long, pref As String: p = Split(o, "_")
-    For i = 0 To UBound(p): If Len(p(i)) > 0 Then pref = pref & UCase(Left(p(i), 1)): Next
-    If pref = "" Then pref = "V"
+' CORRECCIÓN APLICADA AQUÍ: Bucle For Next separado correctamente
+Private Sub AgregarAlMapa(nombreOriginal As String, esProcedimiento As Boolean)
+    ' 1. Si ya existe o está protegido, salir
+    If EsPalabraReservada(nombreOriginal) Or MapGet(nombreOriginal) <> "" Then Exit Sub
     
+    ' 2. Generar Prefijo basado en iniciales (Modulo_Ventas -> MV)
+    Dim partes() As String
+    Dim i As Long
+    Dim prefijo As String
+    
+    partes = Split(nombreOriginal, "_")
+    prefijo = ""
+    
+    ' -- CORRECCIÓN: Bucle limpio y estructurado --
+    For i = 0 To UBound(partes)
+        If Len(partes(i)) > 0 Then
+            prefijo = prefijo & UCase(Left$(partes(i), 1))
+        End If
+    Next i
+    
+    If prefijo = "" Then prefijo = "V" ' Prefijo por defecto si falla
+    
+    ' 3. Generar nombre aleatorio único
+    Dim nombreNuevo As String
+    Do
+        nombreNuevo = prefijo & "_" & GenerarStringAleatorio(OBS_LEN)
+    Loop While mUsedNames.Exists(nombreNuevo)
+    
+    ' 4. Guardar en matriz
     ReDim Preserve mMap(mMapCount)
-    mMap(mMapCount).orig = o
-    mMap(mMapCount).obf = pref & "_" & RandomStr(OBS_LEN)
+    mMap(mMapCount).orig = nombreOriginal
+    mMap(mMapCount).obf = nombreNuevo
+    mMap(mMapCount).esSub = esProcedimiento
+    
+    mUsedNames.Add nombreNuevo, True
     mMapCount = mMapCount + 1
 End Sub
 
-Private Function AplicarMapeo(ByVal t As String) As String
-    Dim i As Long, res As String: res = t
-    For i = 0 To mMapCount - 1
-        If InStr(1, res, mMap(i).orig) > 0 Then
-            If InStr(1, res, "Sub " & mMap(i).orig) > 0 Then
-                res = Replace(res, mMap(i).orig, mMap(i).obf) & " ' <--- [" & mMap(i).orig & "]"
-            Else
-                res = Replace(res, mMap(i).orig, mMap(i).obf)
+' ==========================================================================================
+' 3. MOTOR DE TRANSFORMACIÓN (REEMPLAZO INTELIGENTE)
+' ==========================================================================================
+Private Sub AplicarTransformacion(wb As Workbook)
+    Dim comp As Object, cm As Object
+    Dim i As Long, codigoCompleto As String, linea As String, nuevoCodigo As String
+    Dim nombreModuloNuevo As String
+    
+    ' PASO A: Renombrar Módulos primero
+    For Each comp In wb.VBProject.VBComponents
+        nombreModuloNuevo = MapGet(comp.Name)
+        If nombreModuloNuevo <> "" Then
+            ' Solo renombramos si es un módulo estándar para no romper referencias a hojas
+            If comp.Type = 1 Then comp.Name = nombreModuloNuevo
+        End If
+    Next
+    
+    ' PASO B: Procesar Código
+    For Each comp In wb.VBProject.VBComponents
+        Set cm = comp.CodeModule
+        If cm.CountOfLines > 0 Then
+            nuevoCodigo = ""
+            
+            ' Leemos línea a línea para procesar
+            For i = 1 To cm.CountOfLines
+                linea = cm.lines(i, 1)
+                
+                ' 1. Quitar comentarios existentes
+                If InStr(linea, "'") > 0 Then linea = Split(linea, "'")(0)
+                
+                If Trim(linea) <> "" Then
+                    ' 2. Encriptar Textos (MsgBox)
+                    linea = EncriptarStrings(linea)
+                    
+                    ' 3. Reemplazar Variables y Subs
+                    linea = ReemplazarTokens(linea)
+                    
+                    nuevoCodigo = nuevoCodigo & linea & vbCrLf
+                End If
+            Next i
+            
+            ' Borrar todo y poner lo nuevo
+            cm.DeleteLines 1, cm.CountOfLines
+            cm.AddFromString nuevoCodigo
+            
+            ' 4. Inyectar Función Decodificadora para los MsgBox
+            cm.AddFromString GetDecoderFunction()
+            
+            ' 5. Inyectar Auto-Kill si corresponde (Solo en ThisWorkbook)
+            If mUsarCaducidad And comp.Type = 100 Then
+                cm.AddFromString GetAutoKillCode(mFechaExpiracion)
             End If
         End If
     Next
-    AplicarMapeo = res
-End Function
-
-Private Function EncryptMsgBox(ByVal t As String) As String
-    Dim re As Object, matches As Object, m As Object
-    Set re = CreateObject("VBScript.RegExp")
-    re.Pattern = """([^""]{3,})"""
-    re.Global = True: Set matches = re.Execute(t)
-    Dim res As String, pos As Long: pos = 1
-    For Each m In matches
-        res = res & Mid(t, pos, m.FirstIndex - pos + 1)
-        res = res & "DX(""" & ToHex(m.SubMatches(0)) & """)"
-        pos = m.FirstIndex + m.Length + 1
-    Next
-    EncryptMsgBox = IIf(res = "", t, res & Mid(t, pos))
-End Function
-
-Private Function ToHex(s As String) As String
-    Dim i As Long: For i = 1 To Len(s): ToHex = ToHex & Hex(Asc(Mid(s, i, 1)) + 5) & "z": Next
-End Function
-
-Private Function GetDecryptFunc() As String
-    GetDecryptFunc = vbCrLf & "Private Function DX(s As String) As String" & vbCrLf & _
-                     "Dim v, i, r: v = Split(s, ""z"")" & vbCrLf & _
-                     "For i = 0 To UBound(v): If v(i) <> """" Then r = r & Chr(WorksheetFunction.Hex2Dec(v(i)) - 5)" & vbCrLf & _
-                     "Next: DX = r: End Function" & vbCrLf
-End Function
-
-Private Function IsProtected(w As String) As Boolean
-    Dim v: For Each v In Split("Sub,Function,End,If,Dim,As,String,Long,Double,Boolean,Set,New," & MACROS_BOTONES, ",")
-        If LCase(Trim(w)) = LCase(Trim(v)) Then IsProtected = True: Exit Function
-    Next
-End Function
-
-Private Function MapGet(o As String) As String
-    Dim i As Long: For i = 0 To mMapCount - 1: If mMap(i).orig = o Then MapGet = mMap(i).obf: Exit Function: Next
-End Function
-
-Private Sub InitMapper()
-    mMapCount = 0: ReDim mMap(0): Set mUsedNames = CreateObject("Scripting.Dictionary")
 End Sub
 
-Private Function RandomStr(l As Long) As String
-    Dim i As Long: For i = 1 To l: RandomStr = RandomStr & Chr(97 + Int(Rnd * 26)): Next
+' CORRECCIÓN: Usamos RegExp para reemplazar palabras completas (\b) y evitar romper palabras parciales
+Private Function ReemplazarTokens(ByVal texto As String) As String
+    Dim i As Long
+    Dim re As Object
+    Set re = CreateObject("VBScript.RegExp")
+    re.Global = True
+    re.IgnoreCase = True
+    
+    For i = 0 To mMapCount - 1
+        ' Busca la palabra exacta (\b = word boundary)
+        re.Pattern = "\b" & mMap(i).orig & "\b"
+        
+        If re.Test(texto) Then
+            ' Si es una definición de SUB/FUNCTION, añadimos comentario traza
+            If mMap(i).esSub And (InStr(1, texto, "Sub " & mMap(i).orig, vbTextCompare) > 0 Or InStr(1, texto, "Function " & mMap(i).orig, vbTextCompare) > 0) Then
+                texto = re.Replace(texto, mMap(i).obf) & " ' <--- [Original: " & mMap(i).orig & "]"
+            Else
+                texto = re.Replace(texto, mMap(i).obf)
+            End If
+        End If
+    Next i
+    ReemplazarTokens = texto
+End Function
+
+' ==========================================================================================
+' 4. SISTEMA DE AUTO-KILL (CÓDIGO INYECTADO)
+' ==========================================================================================
+Private Function GetAutoKillCode(fechaLimite As Date) As String
+    ' Convertimos la fecha a String formato USA para evitar líos regionales en el código inyectado
+    Dim fechaStr As String
+    fechaStr = Format(fechaLimite, "mm/dd/yyyy HH:mm:ss")
+    
+    GetAutoKillCode = vbCrLf & "' [SEGURIDAD ACTIVA]" & vbCrLf & _
+                      "Private Sub Workbook_Open()" & vbCrLf & _
+                      "    If Now > CDate(""" & fechaStr & """) Then" & vbCrLf & _
+                      "        MsgBox ""ERROR CRITICO: La licencia de uso ha expirado."", vbCritical, ""Seguridad""" & vbCrLf & _
+                      "        ThisWorkbook.Saved = True" & vbCrLf & _
+                      "        ThisWorkbook.Close SaveChanges:=False" & vbCrLf & _
+                      "    End If" & vbCrLf & _
+                      "End Sub" & vbCrLf
+End Function
+
+' ==========================================================================================
+' 5. ENCRIPTACIÓN DE TEXTOS (MSGBOX)
+' ==========================================================================================
+Private Function EncriptarStrings(ByVal texto As String) As String
+    Dim re As Object, matches As Object, m As Object
+    Set re = CreateObject("VBScript.RegExp")
+    ' Captura todo lo que está entre comillas dobles con longitud > 2
+    re.Pattern = """([^""]{3,})"""
+    re.Global = True
+    
+    If Not re.Test(texto) Then
+        EncriptarStrings = texto
+        Exit Function
+    End If
+    
+    Set matches = re.Execute(texto)
+    Dim resultado As String
+    Dim cursor As Long
+    cursor = 1
+    resultado = ""
+    
+    For Each m In matches
+        ' Añadir texto anterior al match
+        resultado = resultado & Mid(texto, cursor, m.FirstIndex - cursor + 1)
+        ' Añadir versión encriptada: Decrypt("código")
+        resultado = resultado & "Decrypt(""" & TextoAHex(m.SubMatches(0)) & """)"
+        ' Mover cursor
+        cursor = m.FirstIndex + m.Length + 1
+    Next m
+    
+    ' Añadir resto de la línea
+    resultado = resultado & Mid(texto, cursor)
+    EncriptarStrings = resultado
+End Function
+
+Private Function TextoAHex(s As String) As String
+    Dim i As Long, r As String
+    For i = 1 To Len(s)
+        ' Sumamos 9 al ASCII para ofuscar un poco más y separamos con 'z'
+        r = r & Hex(Asc(Mid(s, i, 1)) + 9) & "z"
+    Next
+    TextoAHex = r
+End Function
+
+Private Function GetDecoderFunction() As String
+    ' Esta función se escribe en CADA módulo del archivo destino
+    GetDecoderFunction = vbCrLf & "Private Function Decrypt(ByVal s As String) As String" & vbCrLf & _
+                         "    Dim v() As String, i As Long, r As String" & vbCrLf & _
+                         "    v = Split(s, ""z"")" & vbCrLf & _
+                         "    For i = 0 To UBound(v)" & vbCrLf & _
+                         "        If v(i) <> """" Then r = r & Chr(CLng(""&H"" & v(i)) - 9)" & vbCrLf & _
+                         "    Next i" & vbCrLf & _
+                         "    Decrypt = r" & vbCrLf & _
+                         "End Function" & vbCrLf
+End Function
+
+' ==========================================================================================
+' 6. UTILIDADES VARIAS
+' ==========================================================================================
+Private Sub InitMapper()
+    mMapCount = 0
+    ReDim mMap(0)
+    Set mUsedNames = CreateObject("Scripting.Dictionary")
+End Sub
+
+Private Function MapGet(nombreOriginal As String) As String
+    Dim i As Long
+    For i = 0 To mMapCount - 1
+        If StrComp(mMap(i).orig, nombreOriginal, vbTextCompare) = 0 Then
+            MapGet = mMap(i).obf
+            Exit Function
+        End If
+    Next
+    MapGet = ""
+End Function
+
+Private Function EsPalabraReservada(palabra As String) As Boolean
+    Dim lista As String
+    ' Lista ampliada de palabras reservadas y objetos comunes para no romper nada
+    lista = "Sub,Function,End,If,Then,Else,ElseIf,Dim,Private,Public,Static,As,String,Long,Integer,Double,Boolean,Variant,Object,Set,New,Nothing,True,False,Empty,Null,For,Next,Do,Loop,While,Wend,Select,Case,To,Step,ByVal,ByRef,Optional,ParamArray,Call,Const,Type,Enum,With,RaiseEvent,Event,Implements,GoTo,On,Error,Resume,Option,Explicit,MsgBox,InputBox,Debug,Print,Cells,Range,Sheets,Worksheets,Workbooks,ThisWorkbook,ActiveSheet,ActiveWorkbook,Application,VbMsgBoxResult,VbCritical,VbInformation,VbQuestion,Date,Now,Format,Left,Right,Mid,Len,Split,UCase,LCase,Trim,Chr,Asc,Hex,CLng,CStr,CDate,DateAdd,IsNumeric,InStr,Replace," & MACROS_BOTONES
+    
+    Dim items() As String
+    items = Split(lista, ",")
+    
+    Dim i As Long
+    For i = 0 To UBound(items)
+        If StrComp(Trim(palabra), Trim(items(i)), vbTextCompare) = 0 Then
+            EsPalabraReservada = True
+            Exit Function
+        End If
+    Next
+End Function
+
+Private Function GenerarStringAleatorio(longitud As Long) As String
+    Dim i As Long, r As String
+    r = ""
+    Randomize
+    For i = 1 To longitud
+        ' Genera letras minúsculas (97-122)
+        r = r & Chr(97 + Int(Rnd * 26))
+    Next
+    GenerarStringAleatorio = r
 End Function
