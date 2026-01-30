@@ -1,214 +1,448 @@
 Option Explicit
 
-' ==========================================================================================
-' CONFIGURACIÓN TÉCNICA AVANZADA
-' ==========================================================================================
-Private Const CLAVE_ADMIN As String = "^+K"
-Private Const MOD_SISTEMA As String = "App_Internal_Core"
-Private Const PREFIJO_OFUSCADO As String = "var_sys_"
+' ==================================================================================
+' MOTOR DE OFUSCACIÓN Y AUDITORÍA - VERSIÓN ENTERPRISE
+' ==================================================================================
+' Características:
+' - Mapeo inteligente con lista blanca
+' - Compactación sin pérdida de funcionalidad
+' - Auditoría silenciosa mediante CustomDocumentProperties
+' - Fix crítico de OnAction con gestión de errores
+' - Stealth: nombres de sistema para evitar EDR
+' ==================================================================================
 
-Private Const LISTA_BLANCA As String = "DX_Decrypter,Incrementar_Log_Boton,Mostrar_Panel_Secreto," & _
-                                      "Workbook_Open,ThisWorkbook,Auto_Open,App_Internal_Core"
+Private Const ADMIN_KEY As String = "^+K"
+Private Const SYS_MODULE As String = "System_Core_Manager"
+Private Const VAR_PREFIX As String = "sys_var_"
+Private Const WHITELIST As String = "Workbook_Open,ThisWorkbook,Auto_Open,Auto_Close," & _
+                                    "System_Core_Manager,Register_Event_Log,Show_Audit_Panel"
 
-Private Type TMapping: Original As String: Nuevo As String: End Type
-Private m_Map() As TMapping: Private m_Count As Long
+Private Type MappingEntry
+    OriginalName As String
+    ObfuscatedName As String
+End Type
 
-' ==========================================================================================
-' MOTOR PRINCIPAL: FLUJO SIN ERRORES
-' ==========================================================================================
-Public Sub Sistema_Proteccion_V23_MasterPro()
-    Dim src As Variant, dst As Variant, wbS As Workbook, wbD As Workbook
+Private m_Mappings() As MappingEntry
+Private m_MappingCount As Long
+
+' ==================================================================================
+' PUNTO DE ENTRADA PRINCIPAL
+' ==================================================================================
+Public Sub Execute_Protection_Engine()
+    Dim srcPath As Variant, dstPath As Variant
+    Dim wbSource As Workbook, wbDestination As Workbook
+    Dim startTime As Double
     
-    src = Application.GetOpenFilename("Excel con Macros (*.xlsm),*.xlsm"): If src = False Then Exit Sub
-    dst = Application.GetSaveAsFilename("PROYECTO_FINAL_V23.xlsm", "Excel (*.xlsm),*.xlsm"): If dst = False Then Exit Sub
-
-    ' Optimización profesional
-    Application.ScreenUpdating = False: Application.DisplayAlerts = False: Application.EnableEvents = False
+    On Error GoTo ErrorHandler
     
-    On Error GoTo Errores
-
-    Set wbS = Workbooks.Open(src, ReadOnly:=True)
-    wbS.SaveCopyAs dst: wbS.Close False
-    Set wbD = Workbooks.Open(dst)
-
-    m_Count = 0: ReDim m_Map(0)
+    ' Selección de archivos
+    srcPath = Application.GetOpenFilename("Excel Macro-Enabled (*.xlsm),*.xlsm", , "Seleccionar archivo origen")
+    If srcPath = False Then Exit Sub
     
-    ' --- PROCESO TÉCNICO ---
-    InyectarKernel wbD                ' 1. Auditoría
-    MapeoAgresivo wbD                 ' 2. Diccionario
-    OfuscacionStealth wbD             ' 3. Limpieza y Ofuscado
-    VincularBotonesForzado wbD        ' 4. REASIGNACIÓN MAESTRA (FIX)
-    ' ------------------------
+    dstPath = Application.GetSaveAsFilename(FileFilter:="Excel Macro-Enabled (*.xlsm),*.xlsm", _
+                                           Title:="Guardar archivo protegido como")
+    If dstPath = False Then Exit Sub
     
-    wbD.Save: wbD.Close
-    Application.ScreenUpdating = True: Application.EnableEvents = True
-    MsgBox "PROTECCIÓN V23 MASTER PRO COMPLETADA", 64
+    ' Inicio del proceso
+    startTime = Timer
+    Application.ScreenUpdating = False
+    Application.DisplayAlerts = False
+    Application.EnableEvents = False
+    
+    ' Abrir origen y crear destino
+    Set wbSource = Workbooks.Open(srcPath, ReadOnly:=True, UpdateLinks:=0)
+    wbSource.SaveCopyAs dstPath
+    wbSource.Close SaveChanges:=False
+    
+    Set wbDestination = Workbooks.Open(dstPath, UpdateLinks:=0)
+    
+    ' Inicializar sistema de mapeo
+    m_MappingCount = 0
+    ReDim m_Mappings(0 To 0)
+    
+    ' PROCESO SECUENCIAL
+    Step1_InjectAuditKernel wbDestination
+    DoEvents
+    
+    Step2_BuildMappingDictionary wbDestination
+    DoEvents
+    
+    Step3_ObfuscateCode wbDestination
+    DoEvents
+    
+    Step4_FixButtonAssignments wbDestination
+    DoEvents
+    
+    ' Finalización
+    wbDestination.Save
+    wbDestination.Close SaveChanges:=False
+    
+    Application.ScreenUpdating = True
+    Application.DisplayAlerts = True
+    Application.EnableEvents = True
+    
+    MsgBox "✅ PROCESO COMPLETADO" & vbCrLf & vbCrLf & _
+           "Tiempo: " & Format(Timer - startTime, "0.00") & "s" & vbCrLf & _
+           "Elementos ofuscados: " & m_MappingCount & vbCrLf & vbCrLf & _
+           "Atajo de auditoría: Ctrl+Shift+K", vbInformation, "Sistema de Protección"
+    
     Exit Sub
 
-Errores:
-    Application.ScreenUpdating = True: Application.EnableEvents = True
-    MsgBox "ERROR CRÍTICO: " & Err.Description, 16
+ErrorHandler:
+    Application.ScreenUpdating = True
+    Application.DisplayAlerts = True
+    Application.EnableEvents = True
+    MsgBox "❌ ERROR: " & Err.Description & vbCrLf & "Línea: " & Erl, vbCritical
 End Sub
 
-' ==========================================================================================
-' REASIGNACIÓN DE BOTONES (VERSIÓN FIX DEFINITIVA)
-' ==========================================================================================
-Private Sub VincularBotonesForzado(wb As Workbook)
-    Dim ws As Worksheet, shp As Shape, sAcc As String, sSub As String, sNew As String
-    Dim libroActual As String: libroActual = wb.Name
+' ==================================================================================
+' PASO 1: INYECCIÓN DEL KERNEL DE AUDITORÍA
+' ==================================================================================
+Private Sub Step1_InjectAuditKernel(wb As Workbook)
+    Dim modKernel As Object
+    Dim cm As Object
     
     On Error Resume Next
-    For Each ws In wb.Worksheets
-        For Each shp In ws.Shapes
-            sAcc = ""
-            sAcc = shp.OnAction
-            
-            If sAcc <> "" Then
-                ' 1. Extraer nombre de la macro pura (eliminando rutas de disco y nombres de libro antiguos)
-                If InStr(sAcc, "!") > 0 Then
-                    sSub = Mid(sAcc, InStrRev(sAcc, "!") + 1)
-                Else
-                    sSub = sAcc
-                End If
-                
-                ' 2. Limpieza total de caracteres especiales que mete Excel
-                sSub = Replace(sSub, "'", "")
-                sSub = Replace(sSub, libroActual, "") ' Por si ya tenía el nombre
-                sSub = Trim(sSub)
-                
-                ' 3. Buscar el nombre ofuscado en el diccionario
-                sNew = ObtenerNuevoNombre(sSub)
-                If sNew = "" Then sNew = sSub
-                
-                ' 4. VINCULACIÓN ABSOLUTA: Forzamos el nombre del libro destino
-                ' Importante: La comilla simple es vital para nombres con espacios
-                shp.OnAction = "'" & libroActual & "'!" & sNew
-                
-                ' Debug técnico por si falla:
-                ' Debug.Print "Vinculado: " & shp.Name & " -> " & sNew
-            End If
-        Next shp
-    Next ws
+    wb.VBProject.VBComponents.Remove wb.VBProject.VBComponents(SYS_MODULE)
     On Error GoTo 0
-End Sub
-
-' ==========================================================================================
-' KERNEL Y AUDITORÍA
-' ==========================================================================================
-Private Sub InyectarKernel(wb As Workbook)
-    Dim comp As Object, cm As Object
-    On Error Resume Next: wb.VBProject.VBComponents.Remove wb.VBProject.VBComponents(MOD_SISTEMA): On Error GoTo 0
     
-    Set comp = wb.VBProject.VBComponents.Add(1): comp.Name = MOD_SISTEMA
-    Set cm = comp.CodeModule
+    ' Crear módulo de sistema
+    Set modKernel = wb.VBProject.VBComponents.Add(1) ' 1 = vbext_ct_StdModule
+    modKernel.Name = SYS_MODULE
+    Set cm = modKernel.CodeModule
     
-    cm.InsertLines 1, "Public Sub Incrementar_Log_Boton(ByVal n As String)"
-    cm.InsertLines 2, "    On Error Resume Next: Dim p As Object: Set p = ThisWorkbook.CustomDocumentProperties(n)"
-    cm.InsertLines 3, "    If p Is Nothing Then: ThisWorkbook.CustomDocumentProperties.Add Name:=n, LinkToContent:=False, Type:=1, Value:=1"
-    cm.InsertLines 4, "    Else: p.Value = p.Value + 1: End If"
-    cm.InsertLines 5, "End Sub"
+    ' Función de registro de eventos
+    With cm
+        .InsertLines 1, "Option Explicit"
+        .InsertLines 2, ""
+        .InsertLines 3, "' Registro de eventos en propiedades personalizadas"
+        .InsertLines 4, "Public Sub Register_Event_Log(ByVal eventName As String)"
+        .InsertLines 5, "    On Error Resume Next"
+        .InsertLines 6, "    Dim prop As Object"
+        .InsertLines 7, "    Set prop = ThisWorkbook.CustomDocumentProperties(eventName)"
+        .InsertLines 8, "    If prop Is Nothing Then"
+        .InsertLines 9, "        ThisWorkbook.CustomDocumentProperties.Add _"
+        .InsertLines 10, "            Name:=eventName, _"
+        .InsertLines 11, "            LinkToContent:=False, _"
+        .InsertLines 12, "            Type:=msoPropertyTypeNumber, _"
+        .InsertLines 13, "            Value:=1"
+        .InsertLines 14, "    Else"
+        .InsertLines 15, "        prop.Value = prop.Value + 1"
+        .InsertLines 16, "    End If"
+        .InsertLines 17, "End Sub"
+        .InsertLines 18, ""
+        
+        ' Panel de auditoría
+        .InsertLines 19, "' Mostrar panel de auditoría"
+        .InsertLines 20, "Public Sub Show_Audit_Panel()"
+        .InsertLines 21, "    Dim prop As Object"
+        .InsertLines 22, "    Dim report As String"
+        .InsertLines 23, "    report = ""📊 REPORTE DE AUDITORÍA"" & vbCrLf & String(50, ""="") & vbCrLf & vbCrLf"
+        .InsertLines 24, "    On Error Resume Next"
+        .InsertLines 25, "    For Each prop In ThisWorkbook.CustomDocumentProperties"
+        .InsertLines 26, "        report = report & prop.Name & "": "" & prop.Value & "" ejecuciones"" & vbCrLf"
+        .InsertLines 27, "    Next prop"
+        .InsertLines 28, "    On Error GoTo 0"
+        .InsertLines 29, "    MsgBox report, vbInformation, ""Auditoría del Sistema"""
+        .InsertLines 30, "End Sub"
+    End With
     
-    cm.InsertLines 7, "Public Sub Mostrar_Panel_Secreto()"
-    cm.InsertLines 8, "    Dim p As Object, m As String: m = ""📊 REPORTE DE USO"" & vbCrLf & String(20,""-"") & vbCrLf"
-    cm.InsertLines 9, "    On Error Resume Next"
-    cm.InsertLines 10, "    For Each p In ThisWorkbook.CustomDocumentProperties"
-    cm.InsertLines 11, "        m = m & p.Name & "": "" & p.Value & vbCrLf: Next p"
-    cm.InsertLines 12, "    MsgBox m, 64, ""Auditoría Pro"": End Sub"
-
+    ' Configurar ThisWorkbook
     Set cm = wb.VBProject.VBComponents("ThisWorkbook").CodeModule
     cm.DeleteLines 1, cm.CountOfLines
-    cm.InsertLines 1, "Private Sub Workbook_Open()"
-    cm.InsertLines 2, "    On Error Resume Next: Application.OnKey """ & CLAVE_ADMIN & """, ""Mostrar_Panel_Secreto"""
-    cm.InsertLines 3, "    Dim a As Object: Set a = ThisWorkbook.CustomDocumentProperties(""SISTEMA_APERTURAS"")"
-    cm.InsertLines 4, "    If a Is Nothing Then: ThisWorkbook.CustomDocumentProperties.Add ""SISTEMA_APERTURAS"", False, 1, 1"
-    cm.InsertLines 5, "    Else: a.Value = a.Value + 1: End If"
-    cm.InsertLines 6, "End Sub"
+    
+    With cm
+        .InsertLines 1, "Option Explicit"
+        .InsertLines 2, ""
+        .InsertLines 3, "Private Sub Workbook_Open()"
+        .InsertLines 4, "    On Error Resume Next"
+        .InsertLines 5, "    Application.OnKey """ & ADMIN_KEY & """, ""Show_Audit_Panel"""
+        .InsertLines 6, "    Dim bootProp As Object"
+        .InsertLines 7, "    Set bootProp = ThisWorkbook.CustomDocumentProperties(""System_Boot_Count"")"
+        .InsertLines 8, "    If bootProp Is Nothing Then"
+        .InsertLines 9, "        ThisWorkbook.CustomDocumentProperties.Add _"
+        .InsertLines 10, "            Name:=""System_Boot_Count"", _"
+        .InsertLines 11, "            LinkToContent:=False, _"
+        .InsertLines 12, "            Type:=msoPropertyTypeNumber, _"
+        .InsertLines 13, "            Value:=1"
+        .InsertLines 14, "    Else"
+        .InsertLines 15, "        bootProp.Value = bootProp.Value + 1"
+        .InsertLines 16, "    End If"
+        .InsertLines 17, "End Sub"
+    End With
 End Sub
 
-' ==========================================================================================
-' OFUSCACIÓN Y LIMPIEZA
-' ==========================================================================================
-Private Sub OfuscacionStealth(wb As Workbook)
-    Dim comp As Object, cm As Object, i As Long, lin As String, res As String, sSub As String
+' ==================================================================================
+' PASO 2: CONSTRUCCIÓN DEL DICCIONARIO DE MAPEO
+' ==================================================================================
+Private Sub Step2_BuildMappingDictionary(wb As Workbook)
+    Dim comp As Object
+    Dim regEx As Object
+    Dim matches As Object
+    Dim match As Object
+    Dim allCode As String
+    Dim i As Long
     
-    On Error Resume Next
-    For Each comp In wb.VBProject.VBComponents: Dim nN As String: nN = ObtenerNuevoNombre(comp.Name)
-        If nN <> "" Then comp.Name = nN
-    Next comp: On Error GoTo 0
-
+    Set regEx = CreateObject("VBScript.RegExp")
+    regEx.Global = True
+    regEx.IgnoreCase = True
+    
     For Each comp In wb.VBProject.VBComponents
-        Set cm = comp.CodeModule
-        If comp.Name <> MOD_SISTEMA And cm.CountOfLines > 0 Then
-            res = ""
-            For i = 1 To cm.CountOfLines
-                lin = cm.Lines(i, 1)
-                If InStr(lin, "'") > 0 Then lin = Split(lin, "'")(0)
-                lin = Replace(lin, vbTab, " "): Do While InStr(lin, "  ") > 0: lin = Replace(lin, "  ", " "): Loop
-                lin = Trim(lin)
-                
-                If lin <> "" Then
-                    If (InStr(1, lin, "Sub ", 1) > 0 Or InStr(1, lin, "Function ", 1) > 0) And Not InStr(lin, "End ") > 0 Then
-                        sSub = ExtraerNombreSub(lin)
-                        If sSub <> "" And Not EsSistema(sSub) Then
-                            res = res & lin & vbCrLf & "Call Incrementar_Log_Boton(""" & sSub & """)" & vbCrLf
-                            GoTo ProxLine
-                        End If
-                    End If
-                    lin = AplicarMapeo(lin)
-                    res = res & lin & vbCrLf
+        ' Mapear nombre del módulo
+        If comp.Name <> SYS_MODULE And comp.Name <> "ThisWorkbook" Then
+            If Not IsProtectedName(comp.Name) Then
+                AddToMapping comp.Name
+            End If
+        End If
+        
+        ' Analizar código del módulo
+        If comp.CodeModule.CountOfLines > 0 Then
+            allCode = comp.CodeModule.Lines(1, comp.CodeModule.CountOfLines)
+            
+            ' Buscar Sub y Function
+            regEx.Pattern = "(?:Sub|Function)\s+([a-zA-Z_][a-zA-Z0-9_]{2,})\s*\("
+            Set matches = regEx.Execute(allCode)
+            For Each match In matches
+                If Not IsProtectedName(match.SubMatches(0)) Then
+                    AddToMapping match.SubMatches(0)
                 End If
-ProxLine:
-                If i Mod 100 = 0 Then DoEvents
-            Next i
-            cm.DeleteLines 1, cm.CountOfLines: cm.AddFromString res
+            Next match
+            
+            ' Buscar variables Dim
+            regEx.Pattern = "Dim\s+([a-zA-Z_][a-zA-Z0-9_]{2,})\s+As"
+            Set matches = regEx.Execute(allCode)
+            For Each match In matches
+                If Not IsProtectedName(match.SubMatches(0)) Then
+                    AddToMapping match.SubMatches(0)
+                End If
+            Next match
         End If
     Next comp
 End Sub
 
-' ==========================================================================================
-' SOPORTE DICCIONARIO
-' ==========================================================================================
-Private Sub MapeoAgresivo(wb As Workbook)
-    Dim c As Object, re As Object, m, mc: Set re = CreateObject("VBScript.RegExp"): re.Global = True: re.IgnoreCase = True
-    For Each c In wb.VBProject.VBComponents
-        If c.Name <> MOD_SISTEMA And c.Name <> "ThisWorkbook" Then RegistrarMap c.Name
-        If c.CodeModule.CountOfLines > 0 Then
-            re.Pattern = "(?:Sub|Function)\s+([a-zA-Z0-9_]{3,})\s*\(": Set mc = re.Execute(c.CodeModule.Lines(1, c.CodeModule.CountOfLines))
-            For Each m In mc: RegistrarMap m.SubMatches(0): Next m
-            re.Pattern = "Dim\s+([a-zA-Z0-9_]{3,})\s+As": Set mc = re.Execute(c.CodeModule.Lines(1, c.CodeModule.CountOfLines))
-            For Each m In mc: RegistrarMap m.SubMatches(0): Next m
+' ==================================================================================
+' PASO 3: OFUSCACIÓN DEL CÓDIGO
+' ==================================================================================
+Private Sub Step3_ObfuscateCode(wb As Workbook)
+    Dim comp As Object
+    Dim cm As Object
+    Dim i As Long
+    Dim originalLine As String
+    Dim cleanedLine As String
+    Dim newCode As String
+    Dim subName As String
+    Dim inMultiLineComment As Boolean
+    
+    For Each comp In wb.VBProject.VBComponents
+        If comp.Name = SYS_MODULE Or comp.Name = "ThisWorkbook" Then
+            GoTo NextComponent
         End If
-    Next c
+        
+        Set cm = comp.CodeModule
+        If cm.CountOfLines = 0 Then GoTo NextComponent
+        
+        newCode = ""
+        inMultiLineComment = False
+        
+        For i = 1 To cm.CountOfLines
+            originalLine = cm.Lines(i, 1)
+            
+            ' Eliminar comentarios de línea completa
+            If Trim(originalLine) = "" Or Left(Trim(originalLine), 1) = "'" Then
+                GoTo NextLine
+            End If
+            
+            ' Eliminar comentarios inline
+            If InStr(originalLine, "'") > 0 Then
+                cleanedLine = Left(originalLine, InStr(originalLine, "'") - 1)
+            Else
+                cleanedLine = originalLine
+            End If
+            
+            ' Compactación: eliminar tabuladores y espacios múltiples
+            cleanedLine = Replace(cleanedLine, vbTab, " ")
+            Do While InStr(cleanedLine, "  ") > 0
+                cleanedLine = Replace(cleanedLine, "  ", " ")
+            Loop
+            cleanedLine = Trim(cleanedLine)
+            
+            If cleanedLine = "" Then GoTo NextLine
+            
+            ' Inyectar auditoría al inicio de Sub/Function
+            If (InStr(1, cleanedLine, "Sub ", vbTextCompare) > 0 Or _
+                InStr(1, cleanedLine, "Function ", vbTextCompare) > 0) And _
+               InStr(1, cleanedLine, "End ", vbTextCompare) = 0 Then
+                
+                subName = ExtractProcedureName(cleanedLine)
+                If subName <> "" And Not IsProtectedName(subName) Then
+                    cleanedLine = ApplyMapping(cleanedLine)
+                    newCode = newCode & cleanedLine & vbCrLf
+                    newCode = newCode & "Call Register_Event_Log(""" & subName & """)" & vbCrLf
+                    GoTo NextLine
+                End If
+            End If
+            
+            ' Aplicar mapeo de ofuscación
+            cleanedLine = ApplyMapping(cleanedLine)
+            newCode = newCode & cleanedLine & vbCrLf
+            
+NextLine:
+            If i Mod 50 = 0 Then DoEvents
+        Next i
+        
+        ' Reemplazar código
+        cm.DeleteLines 1, cm.CountOfLines
+        If Len(newCode) > 0 Then
+            cm.AddFromString newCode
+        End If
+        
+NextComponent:
+    Next comp
 End Sub
 
-Private Sub RegistrarMap(n As String)
-    If EsSistema(n) Or ObtenerNuevoNombre(n) <> "" Then Exit Sub
-    ReDim Preserve m_Map(m_Count): m_Map(m_Count).Original = n
-    m_Map(m_Count).Nuevo = PREFIJO_OFUSCADO & RandomStr(6): m_Count = m_Count + 1
+' ==================================================================================
+' PASO 4: FIX CRÍTICO DE ONACTION
+' ==================================================================================
+Private Sub Step4_FixButtonAssignments(wb As Workbook)
+    Dim ws As Worksheet
+    Dim shp As Shape
+    Dim originalAction As String
+    Dim macroName As String
+    Dim newMacroName As String
+    Dim fixedCount As Long
+    
+    fixedCount = 0
+    
+    For Each ws In wb.Worksheets
+        For Each shp In ws.Shapes
+            On Error Resume Next
+            originalAction = shp.OnAction
+            On Error GoTo 0
+            
+            If originalAction <> "" Then
+                ' Extraer nombre de macro
+                If InStr(originalAction, "!") > 0 Then
+                    macroName = Trim(Mid(originalAction, InStr(originalAction, "!") + 1))
+                Else
+                    macroName = originalAction
+                End If
+                
+                ' Limpiar comillas
+                macroName = Replace(macroName, "'", "")
+                macroName = Trim(macroName)
+                
+                ' Obtener nombre ofuscado
+                newMacroName = GetMappedName(macroName)
+                If newMacroName = "" Then newMacroName = macroName
+                
+                ' Reasignar OnAction con formato correcto
+                On Error Resume Next
+                shp.OnAction = "'" & wb.Name & "'!" & newMacroName
+                If Err.Number = 0 Then fixedCount = fixedCount + 1
+                On Error GoTo 0
+            End If
+        Next shp
+    Next ws
+    
+    Debug.Print "Botones actualizados: " & fixedCount
 End Sub
 
-Private Function ObtenerNuevoNombre(ByVal o As String) As String
-    Dim i As Long: For i = 0 To m_Count - 1: If LCase(m_Map(i).Original) = LCase(o) Then ObtenerNuevoNombre = m_Map(i).Nuevo: Exit Function
+' ==================================================================================
+' FUNCIONES DE SOPORTE
+' ==================================================================================
+
+Private Sub AddToMapping(originalName As String)
+    Dim i As Long
+    
+    ' Verificar si ya existe
+    For i = 0 To m_MappingCount - 1
+        If StrComp(m_Mappings(i).OriginalName, originalName, vbTextCompare) = 0 Then
+            Exit Sub
+        End If
+    Next i
+    
+    ' Agregar nuevo mapeo
+    ReDim Preserve m_Mappings(0 To m_MappingCount)
+    m_Mappings(m_MappingCount).OriginalName = originalName
+    m_Mappings(m_MappingCount).ObfuscatedName = VAR_PREFIX & GenerateRandomString(8)
+    m_MappingCount = m_MappingCount + 1
+End Sub
+
+Private Function GetMappedName(originalName As String) As String
+    Dim i As Long
+    For i = 0 To m_MappingCount - 1
+        If StrComp(m_Mappings(i).OriginalName, originalName, vbTextCompare) = 0 Then
+            GetMappedName = m_Mappings(i).ObfuscatedName
+            Exit Function
+        End If
+    Next i
+    GetMappedName = ""
+End Function
+
+Private Function ApplyMapping(codeLine As String) As String
+    Dim i As Long
+    Dim regEx As Object
+    
+    Set regEx = CreateObject("VBScript.RegExp")
+    regEx.Global = True
+    regEx.IgnoreCase = True
+    
+    ApplyMapping = codeLine
+    
+    For i = 0 To m_MappingCount - 1
+        regEx.Pattern = "\b" & m_Mappings(i).OriginalName & "\b"
+        ApplyMapping = regEx.Replace(ApplyMapping, m_Mappings(i).ObfuscatedName)
     Next i
 End Function
 
-Private Function AplicarMapeo(ByVal t As String) As String
-    Dim i As Long, re As Object: Set re = CreateObject("VBScript.RegExp"): re.Global = True: re.IgnoreCase = True
-    For i = 0 To m_Count - 1: re.Pattern = "\b" & m_Map(i).Original & "\b": t = re.Replace(t, m_Map(i).Nuevo): Next i
-    AplicarMapeo = t
+Private Function IsProtectedName(checkName As String) As Boolean
+    Dim protectedList() As String
+    Dim item As Variant
+    
+    protectedList = Split(WHITELIST, ",")
+    
+    For Each item In protectedList
+        If StrComp(Trim(item), checkName, vbTextCompare) = 0 Then
+            IsProtectedName = True
+            Exit Function
+        End If
+    Next item
+    
+    IsProtectedName = False
 End Function
 
-Private Function RandomStr(l As Long) As String
-    Dim i As Long: For i = 1 To l: RandomStr = RandomStr & Chr(97 + Int(Rnd * 26)): Next i
+Private Function ExtractProcedureName(codeLine As String) As String
+    Dim startPos As Long
+    Dim endPos As Long
+    
+    On Error Resume Next
+    
+    If InStr(1, codeLine, "Sub ", vbTextCompare) > 0 Then
+        startPos = InStr(1, codeLine, "Sub ", vbTextCompare) + 4
+    ElseIf InStr(1, codeLine, "Function ", vbTextCompare) > 0 Then
+        startPos = InStr(1, codeLine, "Function ", vbTextCompare) + 9
+    Else
+        ExtractProcedureName = ""
+        Exit Function
+    End If
+    
+    endPos = InStr(startPos, codeLine, "(")
+    If endPos = 0 Then endPos = InStr(startPos, codeLine, " ")
+    If endPos = 0 Then endPos = Len(codeLine) + 1
+    
+    ExtractProcedureName = Trim(Mid(codeLine, startPos, endPos - startPos))
 End Function
 
-Private Function EsSistema(n As String) As Boolean
-    Dim a, i: a = Split(LISTA_BLANCA, ","): For i = 0 To UBound(a): If LCase(Trim(n)) = LCase(Trim(a(i))) Then EsSistema = True: Exit Function
+Private Function GenerateRandomString(length As Long) As String
+    Dim i As Long
+    Dim result As String
+    
+    Randomize
+    result = ""
+    
+    For i = 1 To length
+        result = result & Chr(97 + Int(Rnd * 26)) ' a-z
     Next i
-End Function
-
-Private Function ExtraerNombreSub(t As String) As String
-    On Error Resume Next: Dim p1 As Long, p2 As Long: p1 = InStr(1, t, "Sub ", 1): If p1 = 0 Then p1 = InStr(1, t, "Function ", 1) + 9 Else p1 = p1 + 4
-    p2 = InStr(p1, t, "("): If p2 = 0 Then p2 = InStr(p1, t, " ")
-    If p2 = 0 Then p2 = Len(t) + 1: ExtraerNombreSub = Trim(Mid(t, p1, p2 - p1))
+    
+    GenerateRandomString = result
 End Function
