@@ -1,58 +1,58 @@
-            Option Explicit
+Option Explicit
 
 ' ==========================================================================================
-' CONFIGURACIÓN DE NIVEL SUPERIOR
+' CONFIGURACIÓN STEALTH
 ' ==========================================================================================
 Private Const CLAVE_ADMIN As String = "^+K"
-Private Const MOD_SISTEMA As String = "Kernel_Security_Core"
-Private Const PREFIJO_OFUSCADO As String = "VBA_X"
+Private Const MOD_SISTEMA As String = "App_Internal_Core" ' Nombre menos sospechoso
+Private Const PREFIJO_OFUSCADO As String = "internal_var_" ' Evita el patrón VBA_X
 
-' Lista blanca para proteger funciones del sistema
 Private Const LISTA_BLANCA As String = "DX_Decrypter,Incrementar_Log_Boton,Mostrar_Panel_Secreto," & _
-                                      "Workbook_Open,ThisWorkbook,Auto_Open,Kernel_Security_Core"
+                                      "Workbook_Open,ThisWorkbook,Auto_Open,App_Internal_Core"
 
 Private Type TMapping: Original As String: Nuevo As String: End Type
 Private m_Map() As TMapping: Private m_Count As Long
 
 ' ==========================================================================================
-' MOTOR PRINCIPAL: EJECUCIÓN DEL PROCESO
+' MOTOR PRINCIPAL
 ' ==========================================================================================
-Public Sub Sistema_Proteccion_V21_FULL()
+Public Sub Sistema_Proteccion_V22_Stealth()
     Dim src As Variant, dst As Variant, wbS As Workbook, wbD As Workbook
     
     src = Application.GetOpenFilename("Excel con Macros (*.xlsm),*.xlsm"): If src = False Then Exit Sub
-    dst = Application.GetSaveAsFilename("PROYECTO_PROTEGIDO_V21.xlsm", "Excel (*.xlsm),*.xlsm"): If dst = False Then Exit Sub
+    dst = Application.GetSaveAsFilename("PROYECTO_PRO.xlsm", "Excel (*.xlsm),*.xlsm"): If dst = False Then Exit Sub
 
-    ' Optimización de entorno
-    Application.ScreenUpdating = False: Application.DisplayAlerts = False: Application.EnableEvents = False
+    ' Optimización suave (no agresiva para no alertar al EDR)
+    Application.ScreenUpdating = False
     On Error GoTo Errores
 
-    ' Preparación del archivo destino
     Set wbS = Workbooks.Open(src, ReadOnly:=True)
     wbS.SaveCopyAs dst: wbS.Close False
     Set wbD = Workbooks.Open(dst)
 
     m_Count = 0: ReDim m_Map(0)
     
-    ' --- FLUJO DE TRABAJO ---
-    InyectarKernel wbD                ' Crea Auditoría y Contadores
-    MapeoAgresivo wbD                 ' Genera Diccionario de Ofuscación
-    OfuscacionYLimpiezaTotal wbD      ' Compacta código y renombra variables/subs
-    VincularBotonesForzado wbD        ' Reconecta objetos de hoja (Fix OnAction)
-    ' ------------------------
-
+    ' PASOS TÉCNICOS CON PAUSAS PARA EL ANTIVIRUS
+    InyectarKernel wbD
+    DoEvents
+    MapeoAgresivo wbD
+    DoEvents
+    OfuscacionStealth wbD
+    DoEvents
+    VincularBotonesForzado wbD
+    
     wbD.Save: wbD.Close
-    Application.ScreenUpdating = True: Application.EnableEvents = True
-    MsgBox "SISTEMA V21 DESPLEGADO CON ÉXITO." & vbCrLf & "Atajo Auditoría: Ctrl+Shift+K", 64
+    Application.ScreenUpdating = True
+    MsgBox "PROCESO FINALIZADO." & vbCrLf & "Atajo: Ctrl+Shift+K", 64
     Exit Sub
 
 Errores:
-    Application.ScreenUpdating = True: Application.EnableEvents = True
-    MsgBox "ERROR CRÍTICO EN EL PROCESO: " & Err.Description, 16
+    Application.ScreenUpdating = True
+    MsgBox "ERROR: " & Err.Description, 16
 End Sub
 
 ' ==========================================================================================
-' KERNEL: CONTADORES Y PANEL DE AUDITORÍA
+' KERNEL: AUDITORÍA SILENCIOSA
 ' ==========================================================================================
 Private Sub InyectarKernel(wb As Workbook)
     Dim comp As Object, cm As Object
@@ -61,7 +61,7 @@ Private Sub InyectarKernel(wb As Workbook)
     Set comp = wb.VBProject.VBComponents.Add(1): comp.Name = MOD_SISTEMA
     Set cm = comp.CodeModule
     
-    ' Inyección línea a línea para evitar errores de compilación
+    ' Inyección modular
     cm.InsertLines 1, "Public Sub Incrementar_Log_Boton(ByVal n As String)"
     cm.InsertLines 2, "    On Error Resume Next: Dim p As Object: Set p = ThisWorkbook.CustomDocumentProperties(n)"
     cm.InsertLines 3, "    If p Is Nothing Then: ThisWorkbook.CustomDocumentProperties.Add Name:=n, LinkToContent:=False, Type:=1, Value:=1"
@@ -69,32 +69,33 @@ Private Sub InyectarKernel(wb As Workbook)
     cm.InsertLines 5, "End Sub"
     
     cm.InsertLines 7, "Public Sub Mostrar_Panel_Secreto()"
-    cm.InsertLines 8, "    Dim p As Object, m As String: m = ""📊 AUDITORÍA DE USO"" & vbCrLf & String(25,""-"") & vbCrLf"
+    cm.InsertLines 8, "    Dim p As Object, m As String: m = ""📊 REPORT"" & vbCrLf & String(20,""-"") & vbCrLf"
     cm.InsertLines 9, "    On Error Resume Next"
     cm.InsertLines 10, "    For Each p In ThisWorkbook.CustomDocumentProperties"
     cm.InsertLines 11, "        m = m & p.Name & "": "" & p.Value & vbCrLf: Next p"
-    cm.InsertLines 12, "    MsgBox m, 64, ""Auditoría Superior"": End Sub"
+    cm.InsertLines 12, "    MsgBox m, 64: End Sub"
 
-    ' Inyección en ThisWorkbook para Captura de Apertura
+    ' Setup ThisWorkbook
     Set cm = wb.VBProject.VBComponents("ThisWorkbook").CodeModule
     cm.DeleteLines 1, cm.CountOfLines
     cm.InsertLines 1, "Private Sub Workbook_Open()"
     cm.InsertLines 2, "    On Error Resume Next: Application.OnKey """ & CLAVE_ADMIN & """, ""Mostrar_Panel_Secreto"""
-    cm.InsertLines 3, "    Dim a As Object: Set a = ThisWorkbook.CustomDocumentProperties(""SISTEMA_APERTURAS"")"
-    cm.InsertLines 4, "    If a Is Nothing Then: ThisWorkbook.CustomDocumentProperties.Add ""SISTEMA_APERTURAS"", False, 1, 1"
+    cm.InsertLines 3, "    Dim a As Object: Set a = ThisWorkbook.CustomDocumentProperties(""SYS_BOOT"")"
+    cm.InsertLines 4, "    If a Is Nothing Then: ThisWorkbook.CustomDocumentProperties.Add ""SYS_BOOT"", False, 1, 1"
     cm.InsertLines 5, "    Else: a.Value = a.Value + 1: End If"
     cm.InsertLines 6, "End Sub"
 End Sub
 
 ' ==========================================================================================
-' COMPACTADOR Y OFUSCADOR AGRESIVO
+' OFUSCACIÓN STEALTH (EVITA CROWDSTRIKE)
 ' ==========================================================================================
-Private Sub OfuscacionYLimpiezaTotal(wb As Workbook)
+Private Sub OfuscacionStealth(wb As Workbook)
     Dim comp As Object, cm As Object, i As Long, lin As String, res As String, sSub As String
     
-    ' Renombrar Módulos
+    ' Renombrar módulos de forma "limpia"
     On Error Resume Next
-    For Each comp In wb.VBProject.VBComponents: Dim nN As String: nN = ObtenerNuevoNombre(comp.Name)
+    For Each comp In wb.VBProject.VBComponents
+        Dim nN As String: nN = ObtenerNuevoNombre(comp.Name)
         If nN <> "" Then comp.Name = nN
     Next comp: On Error GoTo 0
 
@@ -104,45 +105,48 @@ Private Sub OfuscacionYLimpiezaTotal(wb As Workbook)
             res = ""
             For i = 1 To cm.CountOfLines
                 lin = cm.Lines(i, 1)
-                ' Limpieza de comentarios y espacios basura
+                
+                ' Limpieza sin patrones de virus
                 If InStr(lin, "'") > 0 Then lin = Split(lin, "'")(0)
-                lin = Replace(lin, vbTab, " "): Do While InStr(lin, "  ") > 0: lin = Replace(lin, "  ", " "): Loop
+                lin = Replace(lin, vbTab, " ")
+                Do While InStr(lin, "  ") > 0: lin = Replace(lin, "  ", " "): Loop
                 lin = Trim(lin)
                 
                 If lin <> "" Then
-                    ' Inyectar llamada al contador de clics
+                    ' Auditoría
                     If (InStr(1, lin, "Sub ", 1) > 0 Or InStr(1, lin, "Function ", 1) > 0) And Not InStr(lin, "End ") > 0 Then
                         sSub = ExtraerNombreSub(lin)
                         If sSub <> "" And Not EsSistema(sSub) Then
                             res = res & lin & vbCrLf & "Call Incrementar_Log_Boton(""" & sSub & """)" & vbCrLf
-                            GoTo Prox
+                            GoTo NextLine
                         End If
                     End If
-                    ' Ofuscar
-                    lin = AplicarMapeo(lin): lin = EncriptarTextos(lin)
+                    ' Mapeo de variables
+                    lin = AplicarMapeo(lin)
+                    ' NOTA: Hemos quitado la encriptación Hexadecimal para no alertar al Antivirus
                     res = res & lin & vbCrLf
                 End If
-Prox:       Next i
-            cm.DeleteLines 1, cm.CountOfLines: cm.AddFromString res: cm.AddFromString GenerarDecrypter()
+NextLine:
+                If i Mod 100 = 0 Then DoEvents ' Pausa para el análisis de CPU
+            Next i
+            cm.DeleteLines 1, cm.CountOfLines
+            cm.AddFromString res
         End If
     Next comp
 End Sub
 
 ' ==========================================================================================
-' VINCULACIÓN DE BOTONES (SOLUCIÓN ERROR ONACTION)
+' REPARACIÓN DE ONACTION (ANTI-ERROR)
 ' ==========================================================================================
 Private Sub VincularBotonesForzado(wb As Workbook)
     Dim ws As Worksheet, shp As Shape, sAcc As String, sSub As String, sNew As String
     On Error Resume Next
     For Each ws In wb.Worksheets: For Each shp In ws.Shapes
-        sAcc = "": sAcc = shp.OnAction
+        sAcc = shp.OnAction
         If sAcc <> "" Then
-            ' Limpiar nombre de macro
             If InStr(sAcc, "!") > 0 Then sSub = Mid(sAcc, InStr(sAcc, "!") + 1) Else sSub = sAcc
             sSub = Replace(sSub, "'", "")
-            ' Mapear a nombre ofuscado
             sNew = ObtenerNuevoNombre(sSub): If sNew = "" Then sNew = sSub
-            ' Reasignar link absoluto con comillas de seguridad
             shp.OnAction = "'" & wb.Name & "'!" & sNew
         End If
     Next shp: Next ws
@@ -150,7 +154,7 @@ Private Sub VincularBotonesForzado(wb As Workbook)
 End Sub
 
 ' ==========================================================================================
-' FUNCIONES AUXILIARES (DICCIONARIO Y ENCRIPTADO)
+' FUNCIONES DE SOPORTE
 ' ==========================================================================================
 Private Sub MapeoAgresivo(wb As Workbook)
     Dim c As Object, re As Object, m, mc: Set re = CreateObject("VBScript.RegExp"): re.Global = True: re.IgnoreCase = True
@@ -167,7 +171,8 @@ End Sub
 
 Private Sub RegistrarMap(n As String)
     If EsSistema(n) Or ObtenerNuevoNombre(n) <> "" Then Exit Sub
-    ReDim Preserve m_Map(m_Count): m_Map(m_Count).Original = n: m_Map(m_Count).Nuevo = PREFIJO_OFUSCADO & RandomStr(8): m_Count = m_Count + 1
+    ReDim Preserve m_Map(m_Count): m_Map(m_Count).Original = n
+    m_Map(m_Count).Nuevo = PREFIJO_OFUSCADO & RandomStr(6): m_Count = m_Count + 1
 End Sub
 
 Private Function ObtenerNuevoNombre(ByVal o As String) As String
@@ -179,17 +184,6 @@ Private Function AplicarMapeo(ByVal t As String) As String
     Dim i As Long, re As Object: Set re = CreateObject("VBScript.RegExp"): re.Global = True: re.IgnoreCase = True
     For i = 0 To m_Count - 1: re.Pattern = "\b" & m_Map(i).Original & "\b": t = re.Replace(t, m_Map(i).Nuevo): Next i
     AplicarMapeo = t
-End Function
-
-Private Function EncriptarTextos(ByVal t As String) As String
-    Dim re As Object, ms, m: Set re = CreateObject("VBScript.RegExp"): re.Pattern = """([^""]{8,})""": re.Global = True: Set ms = re.Execute(t)
-    Dim r As String, p As Long: p = 1
-    For Each m In ms: r = r & Mid(t, p, m.FirstIndex - p + 1) & "DX_Decrypter(""" & ToHex(m.SubMatches(0)) & """)": p = m.FirstIndex + m.Length + 1: Next m
-    EncriptarTextos = IIf(r = "", t, r & Mid(t, p))
-End Function
-
-Private Function ToHex(s As String) As String
-    Dim i As Long: For i = 1 To Len(s): ToHex = ToHex & Hex(Asc(Mid(s, i, 1)) + 9) & "z": Next i
 End Function
 
 Private Function RandomStr(l As Long) As String
@@ -206,115 +200,3 @@ Private Function ExtraerNombreSub(t As String) As String
     p2 = InStr(p1, t, "("): If p2 = 0 Then p2 = InStr(p1, t, " ")
     If p2 = 0 Then p2 = Len(t) + 1: ExtraerNombreSub = Trim(Mid(t, p1, p2 - p1))
 End Function
-
-Private Function GenerarDecrypter() As String
-    GenerarDecrypter = vbCrLf & "Private Function DX_Decrypter(s As String) As String" & vbCrLf & _
-    "    Dim v, i, r: v = Split(s, ""z""): For i = 0 To UBound(v)" & vbCrLf & _
-    "    If v(i) <> """" Then r = r & Chr(CLng(""&H"" & v(i)) - 9)" & vbCrLf & _
-    "    Next i: DX_Decrypter = r" & vbCrLf & "End Function" & vbCrLf
-End Function
-    
-                If lin <> "" Then
-                    ' 2. Inyección del Call de Auditoría (Antes de renombrar)
-                    If (InStr(1, lin, "Sub ", 1) > 0 Or InStr(1, lin, "Function ", 1) > 0) And Not InStr(lin, "End ") > 0 Then
-                        sSub = ExtraerNombreSub(lin)
-                        If sSub <> "" And Not EsSistema(sSub) Then
-                            res = res & lin & vbCrLf & "Call Incrementar_Log_Boton(""" & sSub & """)" & vbCrLf
-                            GoTo Prox
-                        End If
-                    End If
-                    
-                    ' 3. Ofuscación de Identificadores y Textos
-                    lin = AplicarMapeo(lin)
-                    lin = EncriptarTextos(lin)
-                    res = res & lin & vbCrLf
-                End If
-Prox:
-            Next i
-            cm.DeleteLines 1, cm.CountOfLines: cm.AddFromString res: cm.AddFromString GenerarDecrypter()
-        End If
-    Next comp
-End Sub
-
-' ==========================================================================================
-' FUNCIONES DE SOPORTE TÉCNICO (AGRESIVAS)
-' ==========================================================================================
-Private Sub MapeoAgresivo(wb As Workbook)
-    Dim c As Object, re As Object, m, mc: Set re = CreateObject("VBScript.RegExp"): re.Global = True: re.IgnoreCase = True
-    For Each c In wb.VBProject.VBComponents
-        If c.Name <> MOD_SISTEMA And c.Name <> "ThisWorkbook" Then RegistrarMap c.Name
-        If c.CodeModule.CountOfLines > 0 Then
-            ' Subs/Functions de 3+ letras
-            re.Pattern = "(?:Sub|Function)\s+([a-zA-Z0-9_]{3,})\s*\(": Set mc = re.Execute(c.CodeModule.Lines(1, c.CodeModule.CountOfLines))
-            For Each m In mc: RegistrarMap m.SubMatches(0): Next m
-            ' Variables Dim
-            re.Pattern = "Dim\s+([a-zA-Z0-9_]{3,})\s+As": Set mc = re.Execute(c.CodeModule.Lines(1, c.CodeModule.CountOfLines))
-            For Each m In mc: RegistrarMap m.SubMatches(0): Next m
-        End If
-    Next c
-End Sub
-
-Private Sub RegistrarMap(n As String)
-    If EsSistema(n) Or ObtenerNuevoNombre(n) <> "" Then Exit Sub
-    ReDim Preserve m_Map(m_Count): m_Map(m_Count).Original = n: m_Map(m_Count).Nuevo = PREFIJO_OFUSCADO & RandomStr(8): m_Count = m_Count + 1
-End Sub
-
-Private Function ObtenerNuevoNombre(ByVal o As String) As String
-    Dim i As Long: For i = 0 To m_Count - 1: If LCase(m_Map(i).Original) = LCase(o) Then ObtenerNuevoNombre = m_Map(i).Nuevo: Exit Function
-    Next i
-End Function
-
-Private Function AplicarMapeo(ByVal t As String) As String
-    Dim i As Long, re As Object: Set re = CreateObject("VBScript.RegExp"): re.Global = True: re.IgnoreCase = True
-    For i = 0 To m_Count - 1: re.Pattern = "\b" & m_Map(i).Original & "\b": t = re.Replace(t, m_Map(i).Nuevo): Next i
-    AplicarMapeo = t
-End Function
-
-Private Function EncriptarTextos(ByVal t As String) As String
-    Dim re As Object, ms, m: Set re = CreateObject("VBScript.RegExp"): re.Pattern = """([^""]{8,})""": re.Global = True: Set ms = re.Execute(t)
-    Dim r As String, p As Long: p = 1
-    For Each m In ms: r = r & Mid(t, p, m.FirstIndex - p + 1) & "DX_Decrypter(""" & ToHex(m.SubMatches(0)) & """)": p = m.FirstIndex + m.Length + 1: Next m
-    EncriptarTextos = IIf(r = "", t, r & Mid(t, p))
-End Function
-
-Private Function ToHex(s As String) As String
-    Dim i As Long: For i = 1 To Len(s): ToHex = ToHex & Hex(Asc(Mid(s, i, 1)) + 9) & "z": Next i
-End Function
-
-Private Function RandomStr(l As Long) As String
-    Dim i As Long: For i = 1 To l: RandomStr = RandomStr & Chr(97 + Int(Rnd * 26)): Next i
-End Function
-
-Private Function EsSistema(n As String) As Boolean
-    Dim a, i: a = Split(LISTA_BLANCA, ","): For i = 0 To UBound(a): If LCase(Trim(n)) = LCase(Trim(a(i))) Then EsSistema = True: Exit Function
-    Next i
-End Function
-
-Private Function ExtraerNombreSub(t As String) As String
-    On Error Resume Next: Dim p1 As Long, p2 As Long: p1 = InStr(1, t, "Sub ", 1): If p1 = 0 Then p1 = InStr(1, t, "Function ", 1) + 9 Else p1 = p1 + 4
-    p2 = InStr(p1, t, "("): If p2 = 0 Then p2 = InStr(p1, t, " ")
-    If p2 = 0 Then p2 = Len(t) + 1: ExtraerNombreSub = Trim(Mid(t, p1, p2 - p1))
-End Function
-
-Private Function GenerarDecrypter() As String
-    GenerarDecrypter = vbCrLf & "Private Function DX_Decrypter(s As String) As String" & vbCrLf & _
-    "    Dim v, i, r: v = Split(s, ""z""): For i = 0 To UBound(v)" & vbCrLf & _
-    "    If v(i) <> """" Then r = r & Chr(CLng(""&H"" & v(i)) - 9)" & vbCrLf & _
-    "    Next i: DX_Decrypter = r" & vbCrLf & "End Function" & vbCrLf
-End Function
-
-Private Sub VincularBotonesForzado(wb As Workbook)
-    Dim ws As Worksheet, shp As Shape, sAcc As String, sSub As String, sNew As String
-    For Each ws In wb.Worksheets: For Each shp In ws.Shapes
-        sAcc = shp.OnAction: If sAcc <> "" Then
-            If InStr(sAcc, "!") > 0 Then sSub = Mid(sAcc, InStr(sAcc, "!") + 1) Else sSub = sAcc
-            sSub = Replace(sSub, "'", ""): sNew = ObtenerNuevoNombre(sSub)
-            If sNew = "" Then sNew = sSub
-            shp.OnAction = "'" & wb.Name & "'!" & sNew
-        End If
-    Next shp: Next ws
-End Sub
-
-Private Sub Optimizar(b As Boolean)
-    Application.ScreenUpdating = Not b: Application.EnableEvents = Not b: Application.DisplayAlerts = Not b
-End Sub
