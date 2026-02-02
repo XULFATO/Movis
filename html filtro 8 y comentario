@@ -1,233 +1,44 @@
-Option Explicit
+Sub ValidarCombinaciones(celdaInicio As Range)
 
-' =====================================================
-' CONFIGURACIÓN
-' =====================================================
-Private Const PREFIJO_VALIDACION As String = "[VALIDACION]"
-
-' =====================================================
-' AÑADE O CONCATENA COMENTARIOS DE VALIDACIÓN
-' =====================================================
-Private Sub AddOrAppendComment(ByVal celda As Range, ByVal texto As String)
-
-    Dim mensaje As String
-    mensaje = PREFIJO_VALIDACION & " " & texto
-
-    If celda.Comment Is Nothing Then
-        celda.AddComment mensaje
-    Else
-        If InStr(1, celda.Comment.Text, mensaje, vbTextCompare) = 0 Then
-            celda.Comment.Text celda.Comment.Text & vbCrLf & mensaje
+    Dim ws As Worksheet
+    Set ws = celdaInicio.Worksheet
+    
+    Dim fila As Long
+    Dim colBase As Long
+    Dim ultimaFila As Long
+    
+    colBase = celdaInicio.Column
+    fila = celdaInicio.Row
+    ultimaFila = ws.Cells(ws.Rows.Count, colBase).End(xlUp).Row
+    
+    Dim dict As Object
+    Set dict = CreateObject("Scripting.Dictionary")
+    
+    Dim clave As String
+    Dim comboActual As String
+    Dim comboGuardado As String
+    
+    For fila = celdaInicio.Row To ultimaFila
+        
+        clave = Trim(ws.Cells(fila, colBase).Value)
+        comboActual = Trim(ws.Cells(fila, colBase + 1).Value) & "|" & _
+                       Trim(ws.Cells(fila, colBase + 2).Value)
+        
+        If clave <> "" Then
+            If Not dict.Exists(clave) Then
+                ' Primera vez que aparece la clave
+                dict.Add clave, comboActual
+            Else
+                comboGuardado = dict(clave)
+                
+                If comboActual <> comboGuardado Then
+                    ' MARCAR ERROR (ejemplo: color rojo)
+                    ws.Rows(fila).Interior.Color = RGB(255, 180, 180)
+                End If
+            End If
         End If
-    End If
+    Next fila
+    
+    MsgBox "Validación terminada", vbInformation
 
 End Sub
-
-' =====================================================
-' BORRA SOLO COMENTARIOS DE VALIDACIÓN (NO LOS MANUALES)
-' =====================================================
-Private Sub LimpiarComentariosValidacion(ByVal ws As Worksheet)
-
-    Dim c As Range
-
-    For Each c In ws.UsedRange
-        If Not c.Comment Is Nothing Then
-            If Left(c.Comment.Text, Len(PREFIJO_VALIDACION)) = PREFIJO_VALIDACION Then
-                c.Comment.Delete
-            End If
-        End If
-    Next c
-
-End Sub
-
-' =====================================================
-' FUNCIÓN PRINCIPAL DE VALIDACIÓN
-' DEVUELVE:
-'   TRUE  -> TODO OK (EL SUB PADRE CONTINÚA)
-'   FALSE -> HAY ERRORES (EL SUB PADRE SALE)
-' =====================================================
-Public Function Validar_Contabilidad() As Boolean
-
-    Dim wsp As Worksheet
-    Dim i As Long, col As Variant
-    Dim uFilaMax As Long
-
-    ' === FILAS DINÁMICAS ===
-    Dim filaCabecera As Long
-    Dim filaInicio As Long
-    Dim celda As Range
-
-    ' === VALORES DE CELDA ===
-    Dim valB As String
-    Dim valD As String
-    Dim valE As String
-    Dim valF As String
-    Dim valG As String
-
-    ' === CONTROL ===
-    Dim valoresEspeciales As Variant
-    Dim v As Variant
-    Dim ok As Boolean
-
-    ' === ERRORES ===
-    Dim hayErrores As Boolean
-    Dim contadorErrores As Long
-    Dim listaErrores As String
-
-    ' =====================================================
-    ' HOJA
-    ' =====================================================
-    Set wsp = ThisWorkbook.Worksheets("CONTABILIDAD_CUENTAS")
-
-    ' =====================================================
-    ' LIMPIEZA INICIAL (SOLO VALIDACIONES)
-    ' =====================================================
-    Call LimpiarComentariosValidacion(wsp)
-    wsp.Columns("D").Interior.Color = xlNone
-    wsp.Columns("F").Interior.Color = xlNone
-
-    ' =====================================================
-    ' BUSCAR CABECERA "DB (cliente)" EN COLUMNA D
-    ' =====================================================
-    filaCabecera = 0
-    For Each celda In wsp.Range("D1:D200")
-        If InStr(1, celda.Text, "DB (cliente)", vbTextCompare) > 0 Then
-            filaCabecera = celda.Row
-            Exit For
-        End If
-    Next celda
-
-    If filaCabecera = 0 Then
-        MsgBox "No se ha encontrado la cabecera 'DB (cliente)' en la columna D.", _
-               vbCritical, "Error de estructura"
-        Validar_Contabilidad = False
-        Exit Function
-    End If
-
-    filaInicio = filaCabecera + 1
-
-    ' =====================================================
-    ' ARRAYS
-    ' =====================================================
-    valoresEspeciales = Array("121", "122", "125")
-
-    ' =====================================================
-    ' ÚLTIMA FILA
-    ' =====================================================
-    uFilaMax = wsp.Cells(wsp.Rows.Count, "B").End(xlUp).Row
-
-    hayErrores = False
-    contadorErrores = 0
-    listaErrores = ""
-
-    ' =====================================================
-    ' BUCLE PRINCIPAL (RECORRE TODO)
-    ' =====================================================
-    For i = filaInicio To uFilaMax
-
-        valB = Trim(wsp.Cells(i, 2).Text) ' B
-        valD = Trim(wsp.Cells(i, 4).Text) ' D
-        valE = Trim(wsp.Cells(i, 5).Text) ' E
-        valF = Trim(wsp.Cells(i, 6).Text) ' F
-        valG = Trim(wsp.Cells(i, 7).Text) ' G
-
-        ' =================================================
-        ' REGLA 0: D y F si son numéricos → máximo 8 posiciones
-        ' (ROJO manda y no se pisa)
-        ' =================================================
-        For Each col In Array(4, 6)
-            If Trim(wsp.Cells(i, col).Text) <> "" Then
-                If IsNumeric(wsp.Cells(i, col).Text) Then
-                    If Len(Trim(wsp.Cells(i, col).Text)) > 8 Then
-                        wsp.Cells(i, col).Interior.Color = vbRed
-                        Call AddOrAppendComment(wsp.Cells(i, col), _
-                            "Numérico > 8 posiciones (" & Trim(wsp.Cells(i, col).Text) & ")")
-                        hayErrores = True
-                        contadorErrores = contadorErrores + 1
-                        listaErrores = listaErrores & _
-                            wsp.Cells(i, col).Address(False, False) & _
-                            " → Numérico > 8 posiciones (" & Trim(wsp.Cells(i, col).Text) & ")" & vbCrLf
-                    End If
-                End If
-            End If
-        Next col
-
-        ' =================================================
-        ' REGLA 1: SI E Y G → D Y F OBLIGATORIAS (NARANJA)
-        ' (pero si ya está ROJO, no lo pisa)
-        ' =================================================
-        If valE <> "" And valG <> "" Then
-
-            If valD = "" Then
-                If wsp.Cells(i, 4).Interior.Color <> vbRed Then
-                    wsp.Cells(i, 4).Interior.Color = RGB(255, 165, 0)
-                End If
-                Call AddOrAppendComment(wsp.Cells(i, 4), _
-                    "Debe informarse: E y G están informadas")
-            End If
-
-            If valF = "" Then
-                If wsp.Cells(i, 6).Interior.Color <> vbRed Then
-                    wsp.Cells(i, 6).Interior.Color = RGB(255, 165, 0)
-                End If
-                Call AddOrAppendComment(wsp.Cells(i, 6), _
-                    "Debe informarse: E y G están informadas")
-            End If
-
-            If valD = "" Or valF = "" Then
-                hayErrores = True
-                contadorErrores = contadorErrores + 1
-                listaErrores = listaErrores & _
-                    "Fila " & i & " → E y G informadas, falta D o F" & vbCrLf
-            End If
-        End If
-
-        ' =================================================
-        ' REGLA 2: SI B = 121 / 122 / 125 → D Y F (AZUL)
-        ' (pero si ya está ROJO, no lo pisa)
-        ' =================================================
-        ok = False
-        For Each v In valoresEspeciales
-            If valB = v Then ok = True: Exit For
-        Next v
-
-        If ok Then
-            If valD = "" Then
-                If wsp.Cells(i, 4).Interior.Color <> vbRed Then
-                    wsp.Cells(i, 4).Interior.Color = RGB(173, 216, 230)
-                End If
-                Call AddOrAppendComment(wsp.Cells(i, 4), _
-                    "Debe informarse: B=" & valB)
-            End If
-
-            If valF = "" Then
-                If wsp.Cells(i, 6).Interior.Color <> vbRed Then
-                    wsp.Cells(i, 6).Interior.Color = RGB(173, 216, 230)
-                End If
-                Call AddOrAppendComment(wsp.Cells(i, 6), _
-                    "Debe informarse: B=" & valB)
-            End If
-
-            If valD = "" Or valF = "" Then
-                hayErrores = True
-                contadorErrores = contadorErrores + 1
-                listaErrores = listaErrores & _
-                    "Fila " & i & " → B=" & valB & " requiere D y F" & vbCrLf
-            End If
-        End If
-
-    Next i
-
-    ' =====================================================
-    ' RESULTADO FINAL
-    ' =====================================================
-    If hayErrores Then
-        MsgBox "SE HAN DETECTADO " & contadorErrores & " ERRORES:" & vbCrLf & vbCrLf & _
-               listaErrores & vbCrLf & "Revise los comentarios marcados.", _
-               vbCritical, "Validación"
-        Validar_Contabilidad = False
-    Else
-        Validar_Contabilidad = True
-    End If
-
-End Function
