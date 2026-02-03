@@ -1,44 +1,53 @@
-Sub Extractor_Ultra_Nitidez()
-    Dim vbc As Object, codLimpio As String, lin As String, i As Long
-    Dim r As Long, tamBloque As Integer: tamBloque = 65 ' Menos caracteres = letras más grandes
+Public Sub Reconstruir_Modulos_En_NuevoLibro()
+    Dim ws As Worksheet
+    Dim txt As String
+    Dim pos As Long, nextPos As Long
+    Dim modName As String, body As String
+    Dim wb As Workbook
+    Dim vbComp As Object
     
-    ' 1. MINIFICACIÓN (Elimina el 60% del peso)
-    For Each vbc In ThisWorkbook.VBProject.VBComponents
-        codLimpio = codLimpio & "[[MOD:" & vbc.Name & "]]"
+    Set ws = Sheets("VBA_RECONSTRUIDO")
+    txt = CStr(ws.Cells(1, 1).Value)
+    
+    If Len(txt) = 0 Then
+        MsgBox "No hay texto en VBA_RECONSTRUIDO! Ejecuta antes ReconstruirDesde_FOTO_VBA.", vbCritical
+        Exit Sub
+    End If
+    
+    Set wb = Workbooks.Add
+    
+    pos = 1
+    Do
+        pos = InStr(pos, txt, SEP_MOD, vbTextCompare)
+        If pos = 0 Then Exit Do
+        
+        pos = pos + Len(SEP_MOD)
+        nextPos = InStr(pos, txt, SEP_ENDMOD, vbTextCompare)
+        If nextPos = 0 Then Exit Do
+        
+        modName = Mid$(txt, pos, nextPos - pos)
+        pos = nextPos + Len(SEP_ENDMOD)
+        
+        ' El cuerpo va hasta el siguiente [[MOD: o fin
+        nextPos = InStr(pos, txt, SEP_MOD, vbTextCompare)
+        If nextPos = 0 Then
+            body = Mid$(txt, pos)
+        Else
+            body = Mid$(txt, pos, nextPos - pos)
+        End If
+        
+        body = Replace(body, SEP_NL, vbCrLf)
+        
+        ' Crear módulo estándar y pegar código
+        Set vbComp = wb.VBProject.VBComponents.Add(1) ' 1 = vbext_ct_StdModule
         On Error Resume Next
-        With vbc.CodeModule
-            For i = 1 To .CountOfLines
-                lin = Trim(.Lines(i, 1))
-                If lin <> "" And Left(lin, 1) <> "'" Then
-                    Do While InStr(lin, "  ") > 0: lin = Replace(lin, "  ", " "): Loop
-                    codLimpio = codLimpio & lin & "¶"
-                End If
-            Next i
-        End With
+        vbComp.Name = modName
         On Error GoTo 0
-    Next vbc
-
-    ' 2. CREACIÓN DE TABLA DE ALTA VISIBILIDAD
-    Dim ws As Worksheet: Set ws = Sheets.Add: ws.Name = "CAPTURA"
-    ws.Cells(1, 1) = "ID": ws.Cells(1, 2) = "DATA"
+        vbComp.CodeModule.AddFromString body
+        
+        If nextPos = 0 Then Exit Do
+        pos = nextPos
+    Loop
     
-    r = 2
-    For i = 1 To Len(codLimpio) Step tamBloque
-        ws.Cells(r, 1).Value = r - 1
-        ws.Cells(r, 2).Value = "'" & Mid(codLimpio, i, tamBloque)
-        r = r + 1
-    Next i
-    
-    ' 3. FORMATO "ANTIFALLOS" (Letra gigante y bordes)
-    With ws.Range("A1:B" & r)
-        .Font.Name = "Consolas"
-        .Font.Size = 16 ' IMPORTANTE: Letra grande para que el móvil no falle
-        .Borders.LineStyle = xlContinuous
-        .Borders.Weight = xlThin
-        .Columns(1).AutoFit
-        .Columns(2).ColumnWidth = 85
-    End With
-    
-    Application.DisplayFullScreen = True
-    MsgBox "Toma fotos por bloques de 20-30 filas. Asegúrate de que no haya reflejos."
+    MsgBox "He creado un libro nuevo con módulos reconstruidos.", vbInformation
 End Sub
