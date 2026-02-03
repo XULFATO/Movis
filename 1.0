@@ -5,7 +5,7 @@ ultimaFila = wsp.Cells(wsp.Rows.Count, colBase).End(xlUp).Row
 
 Dim dict As Object
 Set dict = CreateObject("Scripting.Dictionary")
-Dim clave As String
+Dim clave As Variant
 Dim comboActual As String
 Dim tempDict As Object
 
