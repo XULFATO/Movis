@@ -1,3 +1,69 @@
+Dim clave As Variant
+Dim combo As Variant
+Dim maxCount As Long
+Dim comboMayor As String
+
+' Recorrer hasta vaciar el diccionario
+Do While dict.Count > 0
+    ' Tomar la primera clave disponible
+    clave = dict.Keys()(0)
+    
+    ' Encontrar la combinación mayoritaria para esta clave
+    maxCount = 0
+    comboMayor = ""
+    
+    For Each combo In dict(clave).Keys
+        If dict(clave)(combo) > maxCount Then
+            maxCount = dict(clave)(combo)
+            comboMayor = combo
+        End If
+    Next combo
+    
+    ' Aquí tienes la clave y su combo mayoritario
+    Debug.Print "Clave: " & clave & " - Combo Mayoría: " & comboMayor & " (aparece " & maxCount & " veces)"
+    
+    ' Borrar la combinación mayoritaria del diccionario interno
+    If comboMayor <> "" Then
+        dict(clave).Remove comboMayor
+    End If
+    
+    ' Si el diccionario interno quedó vacío, borrar la clave principal
+    If dict(clave).Count = 0 Then
+        dict.Remove clave
+    End If
+Loop
+
+Debug.Print "Diccionario completamente vacío"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 Dim fila As Long, colBase As Long, ultimaFila As Long
 colBase = Celda_Inicial.Column
 fila = Celda_Inicial.Row
