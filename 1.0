@@ -1,131 +1,162 @@
-Dim clave As Variant
-Dim combo As Variant
-Dim maxCount As Long
-Dim comboMayor As String
+Option Explicit
 
-' Recorrer hasta vaciar el diccionario
-Do While dict.Count > 0
-    ' Tomar la primera clave disponible
-    clave = dict.Keys()(0)
-    
-    ' Encontrar la combinación mayoritaria para esta clave
-    maxCount = 0
-    comboMayor = ""
-    
-    For Each combo In dict(clave).Keys
-        If dict(clave)(combo) > maxCount Then
-            maxCount = dict(clave)(combo)
-            comboMayor = combo
-        End If
-    Next combo
-    
-    ' Aquí tienes la clave y su combo mayoritario
-    Debug.Print "Clave: " & clave & " - Combo Mayoría: " & comboMayor & " (aparece " & maxCount & " veces)"
-    
-    ' Borrar la combinación mayoritaria del diccionario interno
-    If comboMayor <> "" Then
-        dict(clave).Remove comboMayor
+'=========================================================
+' REDUCIR Y OFUSCAR HTML DESDE ARCHIVO
+'=========================================================
+Sub ReducirYOfuscarHTML_DesdeArchivo()
+
+    Dim filePath As Variant
+    filePath = Application.GetOpenFilename( _
+        FileFilter:="HTML (*.html;*.htm),*.html;*.htm", _
+        Title:="Selecciona el archivo HTML")
+
+    If filePath = False Then
+        MsgBox "Operación cancelada", vbInformation
+        Exit Sub
     End If
-    
-    ' Si el diccionario interno quedó vacío, borrar la clave principal
-    If dict(clave).Count = 0 Then
-        dict.Remove clave
+
+    Dim html As String
+    html = LeerArchivoTexto(filePath)
+
+    If Len(html) = 0 Then
+        MsgBox "El archivo está vacío o no se pudo leer", vbCritical
+        Exit Sub
     End If
-Loop
 
-Debug.Print "Diccionario completamente vacío"
+    Dim doReduce As VbMsgBoxResult
+    Dim doObfuscate As VbMsgBoxResult
 
+    doReduce = MsgBox( _
+        "¿Quieres REDUCIR el HTML?" & vbCrLf & _
+        "(Detectar y sustituir textos repetidos)", _
+        vbQuestion + vbYesNo, "Reducir HTML")
 
+    doObfuscate = MsgBox( _
+        "¿Quieres OFUSCAR el HTML?" & vbCrLf & _
+        "(Tokens + decoder JavaScript)", _
+        vbQuestion + vbYesNo, "Ofuscar HTML")
 
+    If doReduce = vbNo And doObfuscate = vbNo Then
+        MsgBox "No se ha realizado ninguna acción", vbInformation
+        Exit Sub
+    End If
 
+    Dim dictCount As Object
+    Set dictCount = CreateObject("Scripting.Dictionary")
 
+    Dim dictMap As Object
+    Set dictMap = CreateObject("Scripting.Dictionary")
 
+    Dim re As Object
+    Set re = CreateObject("VBScript.RegExp")
+    re.Global = True
+    re.Pattern = """([^""]{6,})"""   ' strings >= 6 caracteres
 
+    Dim matches As Object, m As Object
+    Set matches = re.Execute(html)
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-Dim fila As Long, colBase As Long, ultimaFila As Long
-colBase = Celda_Inicial.Column
-fila = Celda_Inicial.Row
-ultimaFila = wsp.Cells(wsp.Rows.Count, colBase).End(xlUp).Row
-
-Dim dict As Object
-Set dict = CreateObject("Scripting.Dictionary")
-Dim clave As Variant
-Dim comboActual As String
-Dim tempDict As Object
-
-' Primera pasada: contar todas las combinaciones para cada clave
-For fila = Celda_Inicial.Row To ultimaFila
-    clave = Trim(wsp.Cells(fila, colBase).Value)
-    comboActual = Trim(wsp.Cells(fila, colBase + 1).Value) & "|" & _
-                  Trim(wsp.Cells(fila, colBase + 2).Value)
-    
-    If Trim(clave) <> "" And Trim(comboActual) <> "|" Then
-        If Not dict.Exists(clave) Then
-            Set tempDict = CreateObject("Scripting.Dictionary")
-            dict.Add clave, tempDict
-        End If
-        
-        If dict(clave).Exists(comboActual) Then
-            dict(clave)(comboActual) = dict(clave)(comboActual) + 1
+    '-----------------------------------------------------
+    ' CONTAR REPETICIONES
+    '-----------------------------------------------------
+    For Each m In matches
+        If dictCount.Exists(m.SubMatches(0)) Then
+            dictCount(m.SubMatches(0)) = dictCount(m.SubMatches(0)) + 1
         Else
-            dict(clave).Add comboActual, 1
+            dictCount.Add m.SubMatches(0), 1
         End If
+    Next
+
+    '-----------------------------------------------------
+    ' CREAR TOKENS SOLO PARA REPETIDOS
+    '-----------------------------------------------------
+    Dim idx As Long: idx = 0
+    Dim k As Variant
+
+    If doReduce = vbYes Then
+        For Each k In dictCount.Keys
+            If dictCount(k) > 1 Then
+                dictMap.Add k, "§" & idx & "§"
+                idx = idx + 1
+            End If
+        Next
     End If
-Next fila
 
-' Determinar la combinación más frecuente para cada clave
-Dim comboMayoria As Object
-Set comboMayoria = CreateObject("Scripting.Dictionary")
-Dim maxCount As Long
-Dim combo As Variant
-
-For Each clave In dict.Keys
-    maxCount = 0
-    For Each combo In dict(clave).Keys
-        If dict(clave)(combo) > maxCount Then
-            maxCount = dict(clave)(combo)
-            comboMayoria(clave) = combo
-        End If
-    Next combo
-Next clave
-
-' Segunda pasada: marcar las diferencias
-For fila = Celda_Inicial.Row To ultimaFila
-    clave = Trim(wsp.Cells(fila, colBase).Value)
-    comboActual = Trim(wsp.Cells(fila, colBase + 1).Value) & "|" & _
-                  Trim(wsp.Cells(fila, colBase + 2).Value)
-    
-    If Trim(clave) <> "" And comboMayoria.Exists(clave) Then
-        If comboActual <> comboMayoria(clave) Then
-            ' MARCAR ERROR (ejemplo: color rojo)
-            wsp.Cells.FormatConditions.Delete
-            wsp.Cells(fila, colBase).Interior.Color = RGB(173, 216, 230)
-            wsp.Cells(fila, colBase + 1).Interior.Color = RGB(173, 216, 230)
-            wsp.Cells(fila, colBase + 2).Interior.Color = RGB(173, 216, 230)
-            Call AddOrAppendComment(wsp.Cells(fila, colBase), _
-                "AVISO - Valor diferente al resto con mismo enlace contable")
-        End If
+    '-----------------------------------------------------
+    ' REEMPLAZAR EN HTML
+    '-----------------------------------------------------
+    If dictMap.Count > 0 Then
+        For Each k In dictMap.Keys
+            html = Replace(html, """" & k & """", """" & dictMap(k) & """")
+        Next
     End If
-Next fila
+
+    '-----------------------------------------------------
+    ' INSERTAR DECODER JS SI SE SOLICITA
+    '-----------------------------------------------------
+    If doObfuscate = vbYes And dictMap.Count > 0 Then
+        Dim js As String
+        js = "<script>" & vbCrLf & _
+             "const _D={" & vbCrLf
+
+        For Each k In dictMap.Keys
+            js = js & _
+                 """" & dictMap(k) & """:""" & _
+                 EscapeJS(k) & """," & vbCrLf
+        Next
+
+        js = Left(js, Len(js) - 3) & vbCrLf & _
+             "};" & vbCrLf & _
+             "document.body.innerHTML=" & _
+             "document.body.innerHTML.replace(/§\d+§/g,m=>_D[m]);" & _
+             vbCrLf & "</script>" & vbCrLf
+
+        html = js & html
+    End If
+
+    '-----------------------------------------------------
+    ' GUARDAR ARCHIVO NUEVO
+    '-----------------------------------------------------
+    Dim outPath As String
+    outPath = Replace(filePath, ".html", "_ofuscado.html")
+    outPath = Replace(outPath, ".htm", "_ofuscado.htm")
+
+    GuardarArchivoTexto outPath, html
+
+    MsgBox "Proceso terminado correctamente." & vbCrLf & _
+           "Archivo generado:" & vbCrLf & outPath, vbInformation
+
+End Sub
+
+'=========================================================
+' LECTURA DE ARCHIVO TEXTO
+'=========================================================
+Function LeerArchivoTexto(path As String) As String
+    Dim f As Integer
+    f = FreeFile
+    Open path For Binary As #f
+    LeerArchivoTexto = Space$(LOF(f))
+    Get #f, , LeerArchivoTexto
+    Close #f
+End Function
+
+'=========================================================
+' GUARDAR ARCHIVO TEXTO
+'=========================================================
+Sub GuardarArchivoTexto(path As String, txt As String)
+    Dim f As Integer
+    f = FreeFile
+    Open path For Output As #f
+    Print #f, txt
+    Close #f
+End Sub
+
+'=========================================================
+' ESCAPAR STRINGS PARA JAVASCRIPT
+'=========================================================
+Function EscapeJS(s As String) As String
+    s = Replace(s, "\", "\\")
+    s = Replace(s, """", "\""")
+    s = Replace(s, vbCrLf, "\n")
+    s = Replace(s, vbLf, "\n")
+    EscapeJS = s
+End Function
