@@ -1,7 +1,7 @@
 Option Explicit
 
 '=========================================================
-' REDUCIR Y OFUSCAR HTML DESDE ARCHIVO
+' REDUCIR Y OFUSCAR HTML DESDE ARCHIVO (VERSIÓN ESTABLE)
 '=========================================================
 Sub ReducirYOfuscarHTML_DesdeArchivo()
 
@@ -16,7 +16,7 @@ Sub ReducirYOfuscarHTML_DesdeArchivo()
     End If
 
     Dim html As String
-    html = LeerArchivoTexto(filePath)
+    html = LeerArchivoTexto(CStr(filePath))
 
     If Len(html) = 0 Then
         MsgBox "El archivo está vacío o no se pudo leer", vbCritical
@@ -64,7 +64,7 @@ Sub ReducirYOfuscarHTML_DesdeArchivo()
         Else
             dictCount.Add m.SubMatches(0), 1
         End If
-    Next
+    Next m
 
     '-----------------------------------------------------
     ' CREAR TOKENS SOLO PARA REPETIDOS
@@ -78,7 +78,7 @@ Sub ReducirYOfuscarHTML_DesdeArchivo()
                 dictMap.Add k, "§" & idx & "§"
                 idx = idx + 1
             End If
-        Next
+        Next k
     End If
 
     '-----------------------------------------------------
@@ -87,7 +87,7 @@ Sub ReducirYOfuscarHTML_DesdeArchivo()
     If dictMap.Count > 0 Then
         For Each k In dictMap.Keys
             html = Replace(html, """" & k & """", """" & dictMap(k) & """")
-        Next
+        Next k
     End If
 
     '-----------------------------------------------------
@@ -102,7 +102,7 @@ Sub ReducirYOfuscarHTML_DesdeArchivo()
             js = js & _
                  """" & dictMap(k) & """:""" & _
                  EscapeJS(k) & """," & vbCrLf
-        Next
+        Next k
 
         js = Left(js, Len(js) - 3) & vbCrLf & _
              "};" & vbCrLf & _
@@ -117,7 +117,7 @@ Sub ReducirYOfuscarHTML_DesdeArchivo()
     ' GUARDAR ARCHIVO NUEVO
     '-----------------------------------------------------
     Dim outPath As String
-    outPath = Replace(filePath, ".html", "_ofuscado.html")
+    outPath = Replace(CStr(filePath), ".html", "_ofuscado.html")
     outPath = Replace(outPath, ".htm", "_ofuscado.htm")
 
     GuardarArchivoTexto outPath, html
@@ -128,9 +128,9 @@ Sub ReducirYOfuscarHTML_DesdeArchivo()
 End Sub
 
 '=========================================================
-' LECTURA DE ARCHIVO TEXTO
+' LECTURA DE ARCHIVO TEXTO (ByVal FIX)
 '=========================================================
-Function LeerArchivoTexto(path As String) As String
+Function LeerArchivoTexto(ByVal path As String) As String
     Dim f As Integer
     f = FreeFile
     Open path For Binary As #f
@@ -140,9 +140,9 @@ Function LeerArchivoTexto(path As String) As String
 End Function
 
 '=========================================================
-' GUARDAR ARCHIVO TEXTO
+' GUARDAR ARCHIVO TEXTO (ByVal FIX)
 '=========================================================
-Sub GuardarArchivoTexto(path As String, txt As String)
+Sub GuardarArchivoTexto(ByVal path As String, ByVal txt As String)
     Dim f As Integer
     f = FreeFile
     Open path For Output As #f
@@ -153,7 +153,7 @@ End Sub
 '=========================================================
 ' ESCAPAR STRINGS PARA JAVASCRIPT
 '=========================================================
-Function EscapeJS(s As String) As String
+Function EscapeJS(ByVal s As String) As String
     s = Replace(s, "\", "\\")
     s = Replace(s, """", "\""")
     s = Replace(s, vbCrLf, "\n")
