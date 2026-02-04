@@ -1,153 +1,188 @@
+```vba
 Option Explicit
 
 '=========================================================
-' REDUCIR Y OFUSCAR HTML DESDE ARCHIVO (VERSIÓN ESTABLE)
+' REDUCIR Y OFUSCAR HTML DESDE ARCHIVO
 '=========================================================
 Sub ReducirYOfuscarHTML_DesdeArchivo()
-
+    
     Dim filePath As Variant
     filePath = Application.GetOpenFilename( _
         FileFilter:="HTML (*.html;*.htm),*.html;*.htm", _
         Title:="Selecciona el archivo HTML")
-
-    If filePath = False Then
-        MsgBox "Operación cancelada", vbInformation
-        Exit Sub
+    
+    If VarType(filePath) = vbBoolean Then
+        If filePath = False Then
+            MsgBox "Operación cancelada", vbInformation
+            Exit Sub
+        End If
     End If
-
+    
     Dim html As String
     html = LeerArchivoTexto(CStr(filePath))
-
+    
     If Len(html) = 0 Then
         MsgBox "El archivo está vacío o no se pudo leer", vbCritical
         Exit Sub
     End If
-
+    
     Dim doReduce As VbMsgBoxResult
     Dim doObfuscate As VbMsgBoxResult
-
+    
     doReduce = MsgBox( _
         "¿Quieres REDUCIR el HTML?" & vbCrLf & _
         "(Detectar y sustituir textos repetidos)", _
         vbQuestion + vbYesNo, "Reducir HTML")
-
+    
     doObfuscate = MsgBox( _
         "¿Quieres OFUSCAR el HTML?" & vbCrLf & _
         "(Tokens + decoder JavaScript)", _
         vbQuestion + vbYesNo, "Ofuscar HTML")
-
+    
     If doReduce = vbNo And doObfuscate = vbNo Then
         MsgBox "No se ha realizado ninguna acción", vbInformation
         Exit Sub
     End If
-
+    
     Dim dictCount As Object
     Set dictCount = CreateObject("Scripting.Dictionary")
-
+    
     Dim dictMap As Object
     Set dictMap = CreateObject("Scripting.Dictionary")
-
+    
     Dim re As Object
     Set re = CreateObject("VBScript.RegExp")
     re.Global = True
-    re.Pattern = """([^""]{6,})"""   ' strings >= 6 caracteres
-
+    re.IgnoreCase = False
+    re.Pattern = """([^""]{6,})"""
+    
     Dim matches As Object, m As Object
     Set matches = re.Execute(html)
-
-    '-----------------------------------------------------
-    ' CONTAR REPETICIONES
-    '-----------------------------------------------------
+    
     For Each m In matches
-        If dictCount.Exists(m.SubMatches(0)) Then
-            dictCount(m.SubMatches(0)) = dictCount(m.SubMatches(0)) + 1
+        Dim strValue As String
+        strValue = CStr(m.SubMatches(0))
+        If dictCount.Exists(strValue) Then
+            dictCount(strValue) = dictCount(strValue) + 1
         Else
-            dictCount.Add m.SubMatches(0), 1
+            dictCount.Add strValue, 1
         End If
     Next m
-
-    '-----------------------------------------------------
-    ' CREAR TOKENS SOLO PARA REPETIDOS
-    '-----------------------------------------------------
+    
     Dim idx As Long: idx = 0
     Dim k As Variant
-
+    
     If doReduce = vbYes Then
         For Each k In dictCount.Keys
             If dictCount(k) > 1 Then
-                dictMap.Add k, "§" & idx & "§"
+                dictMap.Add CStr(k), "§" & idx & "§"
                 idx = idx + 1
             End If
         Next k
     End If
-
-    '-----------------------------------------------------
-    ' REEMPLAZAR EN HTML
-    '-----------------------------------------------------
+    
     If dictMap.Count > 0 Then
+        Dim sortedKeys() As String
+        ReDim sortedKeys(0 To dictMap.Count - 1)
+        
+        Dim i As Long: i = 0
         For Each k In dictMap.Keys
-            html = Replace(html, """" & k & """", """" & dictMap(k) & """")
+            sortedKeys(i) = CStr(k)
+            i = i + 1
         Next k
+        
+        QuickSortByLength sortedKeys, 0, UBound(sortedKeys)
+        
+        For i = 0 To UBound(sortedKeys)
+            html = Replace(html, """" & sortedKeys(i) & """", """" & dictMap(sortedKeys(i)) & """")
+        Next i
     End If
-
-    '-----------------------------------------------------
-    ' INSERTAR DECODER JS SI SE SOLICITA
-    '-----------------------------------------------------
+    
     If doObfuscate = vbYes And dictMap.Count > 0 Then
         Dim js As String
         js = "<script>" & vbCrLf & _
-             "const _D={" & vbCrLf
-
+             "(function(){" & vbCrLf & _
+             "const D={" & vbCrLf
+        
         For Each k In dictMap.Keys
-            js = js & _
-                 """" & dictMap(k) & """:""" & _
-                 EscapeJS(k) & """," & vbCrLf
+            js = js & """" & dictMap(k) & """:""" & EscapeJS(CStr(k)) & """," & vbCrLf
         Next k
-
+        
         js = Left(js, Len(js) - 3) & vbCrLf & _
              "};" & vbCrLf & _
-             "document.body.innerHTML=" & _
-             "document.body.innerHTML.replace(/§\d+§/g,m=>_D[m]);" & _
-             vbCrLf & "</script>" & vbCrLf
-
-        html = js & html
+             "function decode(s){return s.replace(/§\\d+§/g,function(m){return D[m]||m;});}" & vbCrLf & _
+             "document.querySelectorAll('*').forEach(function(el){" & vbCrLf & _
+             "for(var i=0;i<el.attributes.length;i++){" & vbCrLf & _
+             "var a=el.attributes[i];" & vbCrLf & _
+             "if(a.value.indexOf('§')>-1)a.value=decode(a.value);" & vbCrLf & _
+             "}" & vbCrLf & _
+             "if(el.childNodes.length===1&&el.childNodes[0].nodeType===3){" & vbCrLf & _
+             "el.textContent=decode(el.textContent);" & vbCrLf & _
+             "}" & vbCrLf & _
+             "});" & vbCrLf & _
+             "})();" & vbCrLf & _
+             "</script>" & vbCrLf
+        
+        Dim headPos As Long
+        headPos = InStr(1, html, "</head>", vbTextCompare)
+        If headPos > 0 Then
+            html = Left(html, headPos - 1) & js & Mid(html, headPos)
+        Else
+            html = js & html
+        End If
     End If
-
-    '-----------------------------------------------------
-    ' GUARDAR ARCHIVO NUEVO
-    '-----------------------------------------------------
+    
     Dim outPath As String
-    outPath = Replace(CStr(filePath), ".html", "_ofuscado.html")
-    outPath = Replace(outPath, ".htm", "_ofuscado.htm")
-
+    outPath = CStr(filePath)
+    If InStr(outPath, ".html") > 0 Then
+        outPath = Replace(outPath, ".html", "_ofuscado.html", , 1)
+    ElseIf InStr(outPath, ".htm") > 0 Then
+        outPath = Replace(outPath, ".htm", "_ofuscado.htm", , 1)
+    Else
+        outPath = outPath & "_ofuscado.html"
+    End If
+    
     GuardarArchivoTexto outPath, html
-
+    
     MsgBox "Proceso terminado correctamente." & vbCrLf & _
            "Archivo generado:" & vbCrLf & outPath, vbInformation
-
+    
 End Sub
 
 '=========================================================
-' LECTURA DE ARCHIVO TEXTO (ByVal FIX)
+' LECTURA DE ARCHIVO TEXTO
 '=========================================================
 Function LeerArchivoTexto(ByVal path As String) As String
+    On Error GoTo ErrorHandler
     Dim f As Integer
     f = FreeFile
     Open path For Binary As #f
-    LeerArchivoTexto = Space$(LOF(f))
-    Get #f, , LeerArchivoTexto
+    If LOF(f) > 0 Then
+        LeerArchivoTexto = Space$(LOF(f))
+        Get #f, , LeerArchivoTexto
+    Else
+        LeerArchivoTexto = ""
+    End If
     Close #f
+    Exit Function
+ErrorHandler:
+    LeerArchivoTexto = ""
+    If f > 0 Then Close #f
 End Function
 
 '=========================================================
-' GUARDAR ARCHIVO TEXTO (ByVal FIX)
+' GUARDAR ARCHIVO TEXTO
 '=========================================================
 Sub GuardarArchivoTexto(ByVal path As String, ByVal txt As String)
+    On Error GoTo ErrorHandler
     Dim f As Integer
     f = FreeFile
     Open path For Output As #f
     Print #f, txt
     Close #f
+    Exit Sub
+ErrorHandler:
+    If f > 0 Then Close #f
 End Sub
 
 '=========================================================
@@ -156,7 +191,46 @@ End Sub
 Function EscapeJS(ByVal s As String) As String
     s = Replace(s, "\", "\\")
     s = Replace(s, """", "\""")
+    s = Replace(s, "'", "\'")
     s = Replace(s, vbCrLf, "\n")
+    s = Replace(s, vbCr, "\r")
     s = Replace(s, vbLf, "\n")
+    s = Replace(s, vbTab, "\t")
     EscapeJS = s
 End Function
+
+'=========================================================
+' QUICKSORT POR LONGITUD (DESCENDENTE)
+'=========================================================
+Sub QuickSortByLength(ByRef arr() As String, ByVal low As Long, ByVal high As Long)
+    If low < high Then
+        Dim pi As Long
+        pi = PartitionByLength(arr, low, high)
+        QuickSortByLength arr, low, pi - 1
+        QuickSortByLength arr, pi + 1, high
+    End If
+End Sub
+
+Function PartitionByLength(ByRef arr() As String, ByVal low As Long, ByVal high As Long) As Long
+    Dim pivot As Long
+    pivot = Len(arr(high))
+    Dim i As Long
+    i = low - 1
+    Dim j As Long
+    For j = low To high - 1
+        If Len(arr(j)) >= pivot Then
+            i = i + 1
+            SwapStrings arr, i, j
+        End If
+    Next j
+    SwapStrings arr, i + 1, high
+    PartitionByLength = i + 1
+End Function
+
+Sub SwapStrings(ByRef arr() As String, ByVal i As Long, ByVal j As Long)
+    Dim temp As String
+    temp = arr(i)
+    arr(i) = arr(j)
+    arr(j) = temp
+End Sub
+```
