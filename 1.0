@@ -41,6 +41,11 @@ Sub OptimizarHTML()
     Dim dataSection As String
     dataSection = Mid(htmlContent, dataStart + 14, dataEnd - dataStart - 14)
     
+    ' DEBUG: Guardar sección original
+    Dim debugPath As String
+    debugPath = Replace(filePath, ".html", "_DEBUG_original.txt")
+    GuardarArchivoUTF8 debugPath, dataSection
+    
     ' Crear diccionario de textos largos
     CrearDiccionario dataSection, dict
     
@@ -52,8 +57,12 @@ Sub OptimizarHTML()
     ' Generar JavaScript del diccionario
     dictJS = GenerarDiccionarioJS(dict)
     
-    ' Comprimir DATA
-    compressed = ComprimirData(dataSection, dict)
+    ' Comprimir DATA - CRÍTICO: NO TOCAR LAS COMILLAS
+    compressed = ComprimirDataSeguro(dataSection, dict)
+    
+    ' DEBUG: Guardar sección comprimida
+    debugPath = Replace(filePath, ".html", "_DEBUG_comprimido.txt")
+    GuardarArchivoUTF8 debugPath, compressed
     
     ' Construir nuevo HTML
     Dim beforeData As String, afterData As String
@@ -61,7 +70,7 @@ Sub OptimizarHTML()
     afterData = Mid(htmlContent, dataEnd + 2)
     
     Dim newHTML As String
-    newHTML = beforeData & dictJS & "const DATA = [" & vbCrLf & compressed & vbCrLf & "];" & afterData
+    newHTML = beforeData & dictJS & "const DATA = [" & compressed & "];" & afterData
     
     ' Modificar funciones JavaScript
     newHTML = ModificarFuncionRowMatches(newHTML)
@@ -84,7 +93,8 @@ Sub OptimizarHTML()
            "Nuevo: " & Format(tamNuevo / 1024, "#,##0.0") & " KB" & vbCrLf & _
            "Ahorro: " & Format(ahorro, "0.0") & "%" & vbCrLf & _
            "Textos comprimidos: " & dict.Count & vbCrLf & vbCrLf & _
-           "Archivo: " & newPath, vbInformation, "Proceso completado"
+           "Archivo: " & newPath & vbCrLf & vbCrLf & _
+           "DEBUG: Revisa archivos *_DEBUG_*.txt", vbInformation, "Proceso completado"
            
     Set fso = Nothing
     Set dict = Nothing
@@ -113,7 +123,7 @@ Sub GuardarArchivoUTF8(ByVal rutaArchivo As String, ByVal contenido As String)
         .Charset = "UTF-8"
         .Open
         .WriteText contenido
-        .SaveToFile rutaArchivo, 2 ' 2 = sobrescribir
+        .SaveToFile rutaArchivo, 2
         .Close
     End With
     
@@ -122,33 +132,31 @@ End Sub
 
 Sub CrearDiccionario(ByVal dataText As String, ByRef dict As Object)
     Dim lineas As Variant, i As Long
-    Dim linea As String, inicio As Long, fin As Long
-    Dim fila As String, campos As Variant, j As Long
+    Dim linea As String, campos As Variant, j As Long
     
-    ' Dividir por saltos de línea
     lineas = Split(dataText, vbLf)
     
     For i = 0 To UBound(lineas)
         linea = Trim(Replace(lineas(i), vbCr, ""))
         
-        ' Buscar filas tipo ["...","...","..."],
-        If InStr(linea, "[""") > 0 Then
-            inicio = InStr(linea, "[""")
-            fin = InStr(inicio, linea, "],")
-            If fin = 0 Then fin = InStr(inicio, linea, "]")
+        ' Buscar líneas con datos: ["...","..."]
+        If InStr(linea, "[""") > 0 And InStr(linea, """]") > 0 Then
             
-            If fin > inicio Then
-                fila = Mid(linea, inicio + 2, fin - inicio - 2)
-                fila = Replace(fila, """],", "")
-                fila = Replace(fila, """]", "")
-                
-                campos = Split(fila, """,""")
+            ' Extraer solo el contenido entre [" y "]
+            Dim contenido As String
+            Dim posIni As Long, posFin As Long
+            posIni = InStr(linea, "[""") + 2
+            posFin = InStr(posIni, linea, """]")
+            
+            If posFin > posIni Then
+                contenido = Mid(linea, posIni, posFin - posIni)
+                campos = Split(contenido, """,""")
                 
                 For j = 0 To UBound(campos)
                     Dim valor As String
-                    valor = Trim(campos(j))
+                    valor = campos(j)
                     
-                    ' Solo comprimir textos > 20 caracteres que no estén ya
+                    ' Solo comprimir textos > 20 caracteres
                     If Len(valor) > 20 And Not dict.exists(valor) Then
                         Dim clave As String
                         clave = GenerarClave(valor, dict)
@@ -160,21 +168,42 @@ Sub CrearDiccionario(ByVal dataText As String, ByRef dict As Object)
     Next i
 End Sub
 
+Function ComprimirDataSeguro(ByVal dataText As String, ByRef dict As Object) As String
+    Dim resultado As String
+    resultado = dataText
+    
+    Dim k As Variant
+    For Each k In dict.Keys
+        Dim textoOriginal As String, textoNuevo As String
+        textoOriginal = CStr(k)
+        textoNuevo = dict(k)
+        
+        ' Reemplazar SOLO cuando está entre comillas ""
+        resultado = Replace(resultado, textoOriginal, textoNuevo)
+    Next k
+    
+    ComprimirDataSeguro = resultado
+End Function
+
 Function GenerarDiccionarioJS(ByRef dict As Object) As String
     Dim resultado As String
     Dim k As Variant
+    Dim contador As Long
     
-    resultado = "// Diccionario de compresión" & vbCrLf
+    resultado = "// Diccionario de compresión (" & dict.Count & " entradas)" & vbCrLf
     resultado = resultado & "const DICT = {" & vbCrLf
     
+    contador = 0
     For Each k In dict.Keys
-        resultado = resultado & "  """ & dict(k) & """: """ & EscapeJS(CStr(k)) & """," & vbCrLf
+        contador = contador + 1
+        resultado = resultado & "  """ & dict(k) & """: """ & EscapeJS(CStr(k)) & """"
+        
+        ' No agregar coma en el último elemento
+        If contador < dict.Count Then
+            resultado = resultado & ","
+        End If
+        resultado = resultado & vbCrLf
     Next k
-    
-    ' Eliminar última coma
-    If Right(resultado, 3) = "," & vbCrLf Then
-        resultado = Left(resultado, Len(resultado) - 3) & vbCrLf
-    End If
     
     resultado = resultado & "};" & vbCrLf & vbCrLf
     
@@ -197,16 +226,15 @@ Function GenerarClave(ByVal texto As String, ByRef dict As Object) As String
         For i = 0 To UBound(palabras)
             If Len(palabras(i)) > 0 Then
                 base = base & UCase(Left(palabras(i), 1))
-                If Len(base) >= 3 Then Exit For
+                If Len(base) >= 4 Then Exit For
             End If
         Next i
     Else
-        base = UCase(Left(texto, 3))
+        base = UCase(Left(texto, 4))
     End If
     
     If base = "" Then base = "KEY"
     
-    ' Verificar si ya existe
     counter = 0
     Dim claveTemp As String
     claveTemp = base
@@ -231,24 +259,10 @@ Function ClaveYaExiste(ByVal clave As String, ByRef dict As Object) As Boolean
     Next k
 End Function
 
-Function ComprimirData(ByVal dataText As String, ByRef dict As Object) As String
-    Dim resultado As String
-    resultado = dataText
-    
-    Dim k As Variant
-    For Each k In dict.Keys
-        ' Reemplazar texto completo por clave
-        resultado = Replace(resultado, CStr(k), dict(k))
-    Next k
-    
-    ComprimirData = resultado
-End Function
-
 Function EscapeJS(ByVal texto As Variant) As String
     Dim txt As String
     txt = CStr(texto)
     
-    ' Escapar solo comillas y barras invertidas
     txt = Replace(txt, "\", "\\")
     txt = Replace(txt, """", "\""")
     
