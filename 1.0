@@ -1,37 +1,239 @@
-Sub ComprimirDatos()
-    Dim dict As Object, ws As Worksheet
-    Dim lastRow As Long, i As Long, col As Long
-    Dim cell As String, key As String
+Sub OptimizarHTML()
+    Dim fso As Object, ts As Object
+    Dim filePath As String, htmlContent As String
+    Dim dict As Object, dictJS As String
+    Dim compressed As String, dataStart As Long, dataEnd As Long
+    Dim respReducir As VbMsgBoxResult, respOfuscar As VbMsgBoxResult
     
+    ' Seleccionar archivo HTML
+    With Application.FileDialog(msoFileDialogFilePicker)
+        .Title = "Selecciona el archivo HTML"
+        .Filters.Clear
+        .Filters.Add "HTML", "*.html"
+        If .Show = 0 Then Exit Sub
+        filePath = .SelectedItems(1)
+    End With
+    
+    ' Preguntas
+    respReducir = MsgBox("¿Reducir tamaño del HTML?" & vbCrLf & vbCrLf & _
+                         "Comprimirá textos largos repetidos", _
+                         vbYesNo + vbQuestion, "Optimización")
+    If respReducir = vbNo Then Exit Sub
+    
+    respOfuscar = MsgBox("¿Ofuscar datos de la tabla?" & vbCrLf & vbCrLf & _
+                         "Codificará valores en Base64", _
+                         vbYesNo + vbQuestion, "Ofuscación")
+    
+    ' Leer HTML
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    Set ts = fso.OpenTextFile(filePath, 1, False, -1)
+    htmlContent = ts.ReadAll
+    ts.Close
+    
+    ' Extraer DATA
+    dataStart = InStr(htmlContent, "const DATA = [")
+    If dataStart = 0 Then
+        MsgBox "No se encontró 'const DATA = [' en el HTML", vbCritical
+        Exit Sub
+    End If
+    dataEnd = InStr(dataStart, htmlContent, "];")
+    
+    ' Analizar y comprimir
     Set dict = CreateObject("Scripting.Dictionary")
-    Set ws = ActiveSheet
-    lastRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
+    Dim dataSection As String, lines As Variant, i As Long
+    dataSection = Mid(htmlContent, dataStart + 14, dataEnd - dataStart - 14)
+    lines = Split(dataSection, vbLf)
     
-    ' Generar diccionario automático
-    For col = 1 To 7 ' Columnas A-G
-        For i = 2 To lastRow
-            cell = ws.Cells(i, col).Value
-            If Len(cell) > 10 And Not dict.exists(cell) Then
-                key = Left(cell, 2) & Right(cell, 2) ' Primeras+últimas 2
-                dict(cell) = key
+    ' Crear diccionario
+    For i = 0 To UBound(lines)
+        Dim line As String, valores As Variant, j As Long
+        line = Trim(Replace(Replace(lines(i), "[", ""), "],", ""))
+        If line = "" Then GoTo NextLine
+        
+        valores = Split(line, """,""")
+        For j = 0 To UBound(valores)
+            Dim val As String
+            val = Replace(Replace(valores(j), """", ""), "[", "")
+            val = Replace(val, "]", "")
+            
+            If Len(val) > 15 And Not dict.exists(val) Then
+                Dim key As String
+                key = GenerarClave(val, dict)
+                dict(val) = key
             End If
-        Next
-    Next
+        Next j
+NextLine:
+    Next i
     
-    ' Reemplazar en hoja
-    For col = 1 To 7
-        For i = 2 To lastRow
-            cell = ws.Cells(i, col).Value
-            If dict.exists(cell) Then
-                ws.Cells(i, col).Value = dict(cell)
-            End If
-        Next
-    Next
+    ' Generar JavaScript del diccionario
+    dictJS = "const DICT = {" & vbCrLf
+    Dim k As Variant
+    For Each k In dict.Keys
+        dictJS = dictJS & "  """ & dict(k) & """: """ & EscapeJS(k) & """," & vbCrLf
+    Next k
+    dictJS = dictJS & "};" & vbCrLf & vbCrLf
     
-    ' Imprimir diccionario para JavaScript
-    Debug.Print "const DICT = {"
-    For Each cell In dict.Keys
-        Debug.Print "  """ & dict(cell) & """: """ & cell & ""","
-    Next
-    Debug.Print "};"
+    ' Función expand
+    dictJS = dictJS & "function expand(row) {" & vbCrLf & _
+             "  return row.map(cell => DICT[cell] || cell);" & vbCrLf & _
+             "}" & vbCrLf & vbCrLf
+    
+    ' Comprimir DATA
+    compressed = ComprimirData(dataSection, dict, respOfuscar = vbYes)
+    
+    ' Modificar funciones JavaScript
+    Dim newJS As String
+    newJS = ModificarFunciones(htmlContent, respOfuscar = vbYes)
+    
+    ' Reemplazar en HTML
+    Dim newHTML As String
+    newHTML = Left(htmlContent, dataStart - 1) & _
+              dictJS & "const DATA = [" & vbCrLf & _
+              compressed & vbCrLf & "];" & _
+              Mid(htmlContent, dataEnd + 2)
+    
+    newHTML = Replace(newHTML, "function rowMatches(row, ignoreCol=-1) {", _
+              ModificarRowMatches(respOfuscar = vbYes))
+    
+    newHTML = Replace(newHTML, "for (const row of matched.slice(0,limit)) {", _
+              ModificarRenderTable(respOfuscar = vbYes))
+    
+    newHTML = Replace(newHTML, "for (const row of DATA) {" & vbCrLf & "    if (!rowMatches(row,col)) continue;" & vbCrLf & "    const v = String(row[col]);", _
+              ModificarUpdateDatalist(respOfuscar = vbYes))
+    
+    ' Guardar
+    Dim newPath As String
+    newPath = Replace(filePath, ".html", "_optimizado.html")
+    Set ts = fso.CreateTextFile(newPath, True, False)
+    ts.Write newHTML
+    ts.Close
+    
+    ' Informe
+    Dim tamOriginal As Long, tamNuevo As Long, ahorro As Double
+    tamOriginal = Len(htmlContent)
+    tamNuevo = Len(newHTML)
+    ahorro = (1 - (tamNuevo / tamOriginal)) * 100
+    
+    MsgBox "✓ Optimización completada" & vbCrLf & vbCrLf & _
+           "Original: " & Format(tamOriginal / 1024, "#,##0.0") & " KB" & vbCrLf & _
+           "Nuevo: " & Format(tamNuevo / 1024, "#,##0.0") & " KB" & vbCrLf & _
+           "Ahorro: " & Format(ahorro, "0.0") & "%" & vbCrLf & vbCrLf & _
+           "Archivo: " & newPath, vbInformation
 End Sub
+
+Function GenerarClave(texto As String, dict As Object) As String
+    Dim base As String, counter As Long
+    base = UCase(Left(texto, 1) & Mid(texto, InStr(texto, " ") + 1, 1))
+    
+    If base = "" Or Len(base) < 2 Then base = UCase(Left(texto, 2))
+    
+    counter = 0
+    Do While ExisteClave(base & IIf(counter = 0, "", counter), dict)
+        counter = counter + 1
+    Loop
+    
+    GenerarClave = base & IIf(counter = 0, "", counter)
+End Function
+
+Function ExisteClave(key As String, dict As Object) As Boolean
+    Dim k As Variant
+    For Each k In dict.Keys
+        If dict(k) = key Then
+            ExisteClave = True
+            Exit Function
+        End If
+    Next k
+    ExisteClave = False
+End Function
+
+Function ComprimirData(dataText As String, dict As Object, ofuscar As Boolean) As String
+    Dim lines As Variant, i As Long, result As String
+    lines = Split(dataText, vbLf)
+    
+    For i = 0 To UBound(lines)
+        Dim line As String, newLine As String
+        line = Trim(lines(i))
+        If line = "" Then GoTo NextLine2
+        
+        newLine = line
+        Dim k As Variant
+        For Each k In dict.Keys
+            newLine = Replace(newLine, """" & k & """", """" & dict(k) & """")
+        Next k
+        
+        If ofuscar Then
+            newLine = OfuscarLinea(newLine)
+        End If
+        
+        result = result & newLine & vbCrLf
+NextLine2:
+    Next i
+    
+    ComprimirData = result
+End Function
+
+Function OfuscarLinea(line As String) As String
+    ' Codifica en Base64 simple (solo para ofuscación visual)
+    Dim valores As String, encoded As String
+    valores = Replace(Replace(line, "[", ""), "],", "")
+    encoded = EncodeBase64Simple(valores)
+    OfuscarLinea = "[""" & encoded & """],"
+End Function
+
+Function EncodeBase64Simple(text As String) As String
+    ' Simulación simple de Base64 para ofuscación
+    Dim i As Long, result As String
+    For i = 1 To Len(text)
+        result = result & Right("0" & Hex(Asc(Mid(text, i, 1))), 2)
+    Next i
+    EncodeBase64Simple = result
+End Function
+
+Function ModificarRowMatches(ofuscar As Boolean) As String
+    If ofuscar Then
+        ModificarRowMatches = "function rowMatches(row, ignoreCol=-1) {" & vbCrLf & _
+                             "  const exp = decode(row[0]).split('],[').map(r=>r.split(',').map(c=>expand([c.replace(/[""'\[\]]/g,'')])[0]));" & vbCrLf & _
+                             "  row = exp[0] || expand(row);" & vbCrLf
+    Else
+        ModificarRowMatches = "function rowMatches(row, ignoreCol=-1) {" & vbCrLf & _
+                             "  const exp = expand(row);" & vbCrLf
+    End If
+    ModificarRowMatches = ModificarRowMatches & _
+                         "  for (let i=0;i<7;i++) {" & vbCrLf & _
+                         "    if (i===ignoreCol) continue;" & vbCrLf & _
+                         "    const f = FILTERS[i];" & vbCrLf & _
+                         "    if (!f) continue;" & vbCrLf & _
+                         "    const cell = String(exp[i]).toLowerCase();"
+End Function
+
+Function ModificarRenderTable(ofuscar As Boolean) As String
+    If ofuscar Then
+        ModificarRenderTable = "for (const row of matched.slice(0,limit)) {" & vbCrLf & _
+                              "    const exp = row[0].length > 50 ? decode(row[0]).split('],[').map(r=>r.split(',').map(c=>c.replace(/[""\[\]]/g,'')))[0] : expand(row);" & vbCrLf
+    Else
+        ModificarRenderTable = "for (const row of matched.slice(0,limit)) {" & vbCrLf & _
+                              "    const exp = expand(row);" & vbCrLf
+    End If
+End Function
+
+Function ModificarUpdateDatalist(ofuscar As Boolean) As String
+    If ofuscar Then
+        ModificarUpdateDatalist = "for (const row of DATA) {" & vbCrLf & _
+                                 "    if (!rowMatches(row,col)) continue;" & vbCrLf & _
+                                 "    const exp = row[0].length > 50 ? decode(row[0]).split(','): expand(row);" & vbCrLf & _
+                                 "    const v = String(exp[col]);"
+    Else
+        ModificarUpdateDatalist = "for (const row of DATA) {" & vbCrLf & _
+                                 "    if (!rowMatches(row,col)) continue;" & vbCrLf & _
+                                 "    const v = String(expand(row)[col]);"
+    End If
+End Function
+
+Function EscapeJS(text As String) As String
+    EscapeJS = Replace(Replace(text, "\", "\\"), """", "\""")
+End Function
+
+Function ModificarFunciones(html As String, ofuscar As Boolean) As String
+    ' Esta función está simplificada, el reemplazo se hace directamente en el código principal
+    ModificarFunciones = html
+End Function
