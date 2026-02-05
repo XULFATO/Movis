@@ -2,8 +2,10 @@ Sub OptimizarHTML()
     Dim fso As Object
     Dim filePath As String, htmlContent As String
     Dim dict As Object, dictJS As String
-    Dim compressed As String, dataStart As Long, dataEnd As Long
+    Dim dataStart As Long, dataEnd As Long
     Dim respReducir As VbMsgBoxResult
+    
+    On Error GoTo ErrorHandler
     
     ' Seleccionar archivo HTML
     With Application.FileDialog(msoFileDialogFilePicker)
@@ -21,7 +23,6 @@ Sub OptimizarHTML()
     If respReducir = vbNo Then Exit Sub
     
     ' Leer HTML en UTF-8
-    Set fso = CreateObject("Scripting.FileSystemObject")
     htmlContent = LeerArchivoUTF8(filePath)
     
     ' Extraer DATA
@@ -30,59 +31,53 @@ Sub OptimizarHTML()
         MsgBox "No se encontró 'const DATA = [' en el HTML", vbCritical
         Exit Sub
     End If
+    
     dataEnd = InStr(dataStart, htmlContent, "];")
     If dataEnd = 0 Then
         MsgBox "No se encontró el cierre de DATA '];'", vbCritical
         Exit Sub
     End If
     
-    ' Analizar y comprimir
+    ' Crear diccionario
     Set dict = CreateObject("Scripting.Dictionary")
-    Dim dataSection As String
-    dataSection = Mid(htmlContent, dataStart + 14, dataEnd - dataStart - 14)
     
-    ' DEBUG: Guardar sección original
-    Dim debugPath As String
-    debugPath = Replace(filePath, ".html", "_DEBUG_original.txt")
-    GuardarArchivoUTF8 debugPath, dataSection
+    ' Extraer DATA completo
+    Dim dataCompleto As String
+    dataCompleto = Mid(htmlContent, dataStart, dataEnd - dataStart + 2)
     
-    ' Crear diccionario de textos largos
-    CrearDiccionario dataSection, dict
+    ' Analizar y crear diccionario
+    AnalizarYCrearDiccionario htmlContent, dataStart, dataEnd, dict
     
     If dict.Count = 0 Then
-        MsgBox "No se encontraron textos largos para comprimir", vbInformation
+        MsgBox "No se encontraron textos para comprimir (longitud > 20)", vbInformation
         Exit Sub
     End If
     
-    ' Generar JavaScript del diccionario
-    dictJS = GenerarDiccionarioJS(dict)
-    
-    ' Comprimir DATA - CRÍTICO: NO TOCAR LAS COMILLAS
-    compressed = ComprimirDataSeguro(dataSection, dict)
-    
-    ' DEBUG: Guardar sección comprimida
-    debugPath = Replace(filePath, ".html", "_DEBUG_comprimido.txt")
-    GuardarArchivoUTF8 debugPath, compressed
-    
-    ' Construir nuevo HTML
+    ' Generar nuevo HTML
     Dim beforeData As String, afterData As String
     beforeData = Left(htmlContent, dataStart - 1)
     afterData = Mid(htmlContent, dataEnd + 2)
     
+    ' Generar diccionario JS
+    dictJS = GenerarDiccionarioJS(dict)
+    
+    ' Comprimir DATA
+    Dim dataComprimido As String
+    dataComprimido = ComprimirData(dataCompleto, dict)
+    
+    ' Construir HTML final
     Dim newHTML As String
-    newHTML = beforeData & dictJS & "const DATA = [" & compressed & "];" & afterData
+    newHTML = beforeData & dictJS & dataComprimido & afterData
     
-    ' Modificar funciones JavaScript
-    newHTML = ModificarFuncionRowMatches(newHTML)
-    newHTML = ModificarFuncionRenderTable(newHTML)
-    newHTML = ModificarFuncionUpdateDatalist(newHTML)
+    ' Modificar funciones JS
+    newHTML = ModificarFunciones(newHTML)
     
-    ' Guardar archivo optimizado en UTF-8
+    ' Guardar
     Dim newPath As String
     newPath = Replace(filePath, ".html", "_optimizado.html")
     GuardarArchivoUTF8 newPath, newHTML
     
-    ' Informe final
+    ' Informe
     Dim tamOriginal As Long, tamNuevo As Long, ahorro As Double
     tamOriginal = Len(htmlContent)
     tamNuevo = Len(newHTML)
@@ -93,21 +88,158 @@ Sub OptimizarHTML()
            "Nuevo: " & Format(tamNuevo / 1024, "#,##0.0") & " KB" & vbCrLf & _
            "Ahorro: " & Format(ahorro, "0.0") & "%" & vbCrLf & _
            "Textos comprimidos: " & dict.Count & vbCrLf & vbCrLf & _
-           "Archivo: " & newPath & vbCrLf & vbCrLf & _
-           "DEBUG: Revisa archivos *_DEBUG_*.txt", vbInformation, "Proceso completado"
-           
-    Set fso = Nothing
-    Set dict = Nothing
+           "Archivo: " & newPath, vbInformation
+    
+    Exit Sub
+    
+ErrorHandler:
+    MsgBox "Error: " & Err.Description & vbCrLf & "Línea: " & Erl, vbCritical
 End Sub
 
-Function LeerArchivoUTF8(ByVal rutaArchivo As String) As String
+Sub AnalizarYCrearDiccionario(ByVal html As String, ByVal inicio As Long, ByVal fin As Long, ByRef dict As Object)
+    Dim dataText As String, pos As Long, char As String
+    Dim dentroComillas As Boolean, textoActual As String
+    Dim i As Long
+    
+    dataText = Mid(html, inicio + 14, fin - inicio - 14)
+    
+    dentroComillas = False
+    textoActual = ""
+    
+    For i = 1 To Len(dataText)
+        char = Mid(dataText, i, 1)
+        
+        If char = """" Then
+            If dentroComillas Then
+                ' Fin de un texto
+                If Len(textoActual) > 20 And Not dict.exists(textoActual) Then
+                    dict.Add textoActual, GenerarClave(textoActual, dict)
+                End If
+                textoActual = ""
+            End If
+            dentroComillas = Not dentroComillas
+        ElseIf dentroComillas Then
+            textoActual = textoActual & char
+        End If
+    Next i
+End Sub
+
+Function GenerarClave(ByVal texto As String, ByRef dict As Object) As String
+    Dim base As String, palabras As Variant, i As Long, contador As Long
+    
+    ' Generar clave de iniciales
+    If InStr(texto, " ") > 0 Then
+        palabras = Split(texto, " ")
+        base = ""
+        For i = 0 To UBound(palabras)
+            If Len(palabras(i)) > 0 Then
+                base = base & UCase(Left(palabras(i), 1))
+                If Len(base) >= 5 Then Exit For
+            End If
+        Next i
+    Else
+        base = UCase(Left(texto, 5))
+    End If
+    
+    If base = "" Then base = "K"
+    
+    ' Asegurar unicidad
+    contador = 0
+    Dim claveTemp As String
+    claveTemp = base
+    
+    Do While ExisteClave(claveTemp, dict)
+        contador = contador + 1
+        claveTemp = base & contador
+    Loop
+    
+    GenerarClave = claveTemp
+End Function
+
+Function ExisteClave(ByVal clave As String, ByRef dict As Object) As Boolean
+    Dim k As Variant
+    For Each k In dict.Keys
+        If dict(k) = clave Then
+            ExisteClave = True
+            Exit Function
+        End If
+    Next k
+    ExisteClave = False
+End Function
+
+Function ComprimirData(ByVal dataOriginal As String, ByRef dict As Object) As String
+    Dim resultado As String
+    resultado = dataOriginal
+    
+    Dim k As Variant
+    For Each k In dict.Keys
+        resultado = Replace(resultado, CStr(k), dict(k))
+    Next k
+    
+    ComprimirData = resultado
+End Function
+
+Function GenerarDiccionarioJS(ByRef dict As Object) As String
+    Dim resultado As String, k As Variant, contador As Long
+    
+    resultado = "const DICT = {" & vbCrLf
+    
+    contador = 0
+    For Each k In dict.Keys
+        contador = contador + 1
+        resultado = resultado & "  """ & dict(k) & """: """ & EscapeJS(CStr(k)) & """"
+        If contador < dict.Count Then resultado = resultado & ","
+        resultado = resultado & vbCrLf
+    Next k
+    
+    resultado = resultado & "};" & vbCrLf & vbCrLf
+    resultado = resultado & "function expand(row) { return row.map(c => DICT[c] || c); }" & vbCrLf & vbCrLf
+    
+    GenerarDiccionarioJS = resultado
+End Function
+
+Function ModificarFunciones(ByVal html As String) As String
+    Dim resultado As String
+    resultado = html
+    
+    ' Modificar rowMatches
+    resultado = Replace(resultado, _
+        "function rowMatches(row, ignoreCol=-1) {" & vbCrLf & "  for (let i=0;i<7;i++) {", _
+        "function rowMatches(row, ignoreCol=-1) {" & vbCrLf & "  const exp = expand(row);" & vbCrLf & "  for (let i=0;i<7;i++) {")
+    
+    resultado = Replace(resultado, _
+        "    const cell = String(row[i]).toLowerCase();", _
+        "    const cell = String(exp[i]).toLowerCase();")
+    
+    ' Modificar renderTable
+    resultado = Replace(resultado, _
+        "  for (const row of matched.slice(0,limit)) {" & vbCrLf & "    const tr = document.createElement(""tr"");" & vbCrLf & "    row.forEach((c,i)=>{", _
+        "  for (const row of matched.slice(0,limit)) {" & vbCrLf & "    const exp = expand(row);" & vbCrLf & "    const tr = document.createElement(""tr"");" & vbCrLf & "    exp.forEach((c,i)=>{")
+    
+    ' Modificar updateDatalist
+    resultado = Replace(resultado, _
+        "  for (const row of DATA) {" & vbCrLf & "    if (!rowMatches(row,col)) continue;" & vbCrLf & "    const v = String(row[col]);", _
+        "  for (const row of DATA) {" & vbCrLf & "    if (!rowMatches(row,col)) continue;" & vbCrLf & "    const exp = expand(row);" & vbCrLf & "    const v = String(exp[col]);")
+    
+    ModificarFunciones = resultado
+End Function
+
+Function EscapeJS(ByVal texto As Variant) As String
+    Dim txt As String
+    txt = CStr(texto)
+    txt = Replace(txt, "\", "\\")
+    txt = Replace(txt, """", "\""")
+    EscapeJS = txt
+End Function
+
+Function LeerArchivoUTF8(ByVal ruta As String) As String
     Dim stream As Object
     Set stream = CreateObject("ADODB.Stream")
     
     With stream
         .Charset = "UTF-8"
         .Open
-        .LoadFromFile rutaArchivo
+        .LoadFromFile ruta
         LeerArchivoUTF8 = .ReadText
         .Close
     End With
@@ -115,7 +247,7 @@ Function LeerArchivoUTF8(ByVal rutaArchivo As String) As String
     Set stream = Nothing
 End Function
 
-Sub GuardarArchivoUTF8(ByVal rutaArchivo As String, ByVal contenido As String)
+Sub GuardarArchivoUTF8(ByVal ruta As String, ByVal contenido As String)
     Dim stream As Object
     Set stream = CreateObject("ADODB.Stream")
     
@@ -123,201 +255,9 @@ Sub GuardarArchivoUTF8(ByVal rutaArchivo As String, ByVal contenido As String)
         .Charset = "UTF-8"
         .Open
         .WriteText contenido
-        .SaveToFile rutaArchivo, 2
+        .SaveToFile ruta, 2
         .Close
     End With
     
     Set stream = Nothing
 End Sub
-
-Sub CrearDiccionario(ByVal dataText As String, ByRef dict As Object)
-    Dim lineas As Variant, i As Long
-    Dim linea As String, campos As Variant, j As Long
-    
-    lineas = Split(dataText, vbLf)
-    
-    For i = 0 To UBound(lineas)
-        linea = Trim(Replace(lineas(i), vbCr, ""))
-        
-        ' Buscar líneas con datos: ["...","..."]
-        If InStr(linea, "[""") > 0 And InStr(linea, """]") > 0 Then
-            
-            ' Extraer solo el contenido entre [" y "]
-            Dim contenido As String
-            Dim posIni As Long, posFin As Long
-            posIni = InStr(linea, "[""") + 2
-            posFin = InStr(posIni, linea, """]")
-            
-            If posFin > posIni Then
-                contenido = Mid(linea, posIni, posFin - posIni)
-                campos = Split(contenido, """,""")
-                
-                For j = 0 To UBound(campos)
-                    Dim valor As String
-                    valor = campos(j)
-                    
-                    ' Solo comprimir textos > 20 caracteres
-                    If Len(valor) > 20 And Not dict.exists(valor) Then
-                        Dim clave As String
-                        clave = GenerarClave(valor, dict)
-                        dict.Add valor, clave
-                    End If
-                Next j
-            End If
-        End If
-    Next i
-End Sub
-
-Function ComprimirDataSeguro(ByVal dataText As String, ByRef dict As Object) As String
-    Dim resultado As String
-    resultado = dataText
-    
-    Dim k As Variant
-    For Each k In dict.Keys
-        Dim textoOriginal As String, textoNuevo As String
-        textoOriginal = CStr(k)
-        textoNuevo = dict(k)
-        
-        ' Reemplazar SOLO cuando está entre comillas ""
-        resultado = Replace(resultado, textoOriginal, textoNuevo)
-    Next k
-    
-    ComprimirDataSeguro = resultado
-End Function
-
-Function GenerarDiccionarioJS(ByRef dict As Object) As String
-    Dim resultado As String
-    Dim k As Variant
-    Dim contador As Long
-    
-    resultado = "// Diccionario de compresión (" & dict.Count & " entradas)" & vbCrLf
-    resultado = resultado & "const DICT = {" & vbCrLf
-    
-    contador = 0
-    For Each k In dict.Keys
-        contador = contador + 1
-        resultado = resultado & "  """ & dict(k) & """: """ & EscapeJS(CStr(k)) & """"
-        
-        ' No agregar coma en el último elemento
-        If contador < dict.Count Then
-            resultado = resultado & ","
-        End If
-        resultado = resultado & vbCrLf
-    Next k
-    
-    resultado = resultado & "};" & vbCrLf & vbCrLf
-    
-    ' Función expand
-    resultado = resultado & "function expand(row) {" & vbCrLf & _
-                "  return row.map(cell => DICT[cell] || cell);" & vbCrLf & _
-                "}" & vbCrLf & vbCrLf
-    
-    GenerarDiccionarioJS = resultado
-End Function
-
-Function GenerarClave(ByVal texto As String, ByRef dict As Object) As String
-    Dim base As String, counter As Long
-    Dim palabras As Variant, i As Long
-    
-    ' Generar clave a partir de iniciales
-    If InStr(texto, " ") > 0 Then
-        palabras = Split(texto, " ")
-        base = ""
-        For i = 0 To UBound(palabras)
-            If Len(palabras(i)) > 0 Then
-                base = base & UCase(Left(palabras(i), 1))
-                If Len(base) >= 4 Then Exit For
-            End If
-        Next i
-    Else
-        base = UCase(Left(texto, 4))
-    End If
-    
-    If base = "" Then base = "KEY"
-    
-    counter = 0
-    Dim claveTemp As String
-    claveTemp = base
-    
-    Do While ClaveYaExiste(claveTemp, dict)
-        counter = counter + 1
-        claveTemp = base & counter
-    Loop
-    
-    GenerarClave = claveTemp
-End Function
-
-Function ClaveYaExiste(ByVal clave As String, ByRef dict As Object) As Boolean
-    Dim k As Variant
-    ClaveYaExiste = False
-    
-    For Each k In dict.Keys
-        If dict(k) = clave Then
-            ClaveYaExiste = True
-            Exit Function
-        End If
-    Next k
-End Function
-
-Function EscapeJS(ByVal texto As Variant) As String
-    Dim txt As String
-    txt = CStr(texto)
-    
-    txt = Replace(txt, "\", "\\")
-    txt = Replace(txt, """", "\""")
-    
-    EscapeJS = txt
-End Function
-
-Function ModificarFuncionRowMatches(ByVal html As String) As String
-    Dim buscar As String, reemplazar As String
-    
-    buscar = "function rowMatches(row, ignoreCol=-1) {" & vbCrLf & _
-             "  for (let i=0;i<7;i++) {"
-    
-    reemplazar = "function rowMatches(row, ignoreCol=-1) {" & vbCrLf & _
-                 "  const exp = expand(row);" & vbCrLf & _
-                 "  for (let i=0;i<7;i++) {"
-    
-    html = Replace(html, buscar, reemplazar)
-    
-    buscar = "    const cell = String(row[i]).toLowerCase();"
-    reemplazar = "    const cell = String(exp[i]).toLowerCase();"
-    html = Replace(html, buscar, reemplazar)
-    
-    ModificarFuncionRowMatches = html
-End Function
-
-Function ModificarFuncionRenderTable(ByVal html As String) As String
-    Dim buscar As String, reemplazar As String
-    
-    buscar = "  for (const row of matched.slice(0,limit)) {" & vbCrLf & _
-             "    const tr = document.createElement(""tr"");" & vbCrLf & _
-             "    row.forEach((c,i)=>{"
-    
-    reemplazar = "  for (const row of matched.slice(0,limit)) {" & vbCrLf & _
-                 "    const exp = expand(row);" & vbCrLf & _
-                 "    const tr = document.createElement(""tr"");" & vbCrLf & _
-                 "    exp.forEach((c,i)=>{"
-    
-    html = Replace(html, buscar, reemplazar)
-    
-    ModificarFuncionRenderTable = html
-End Function
-
-Function ModificarFuncionUpdateDatalist(ByVal html As String) As String
-    Dim buscar As String, reemplazar As String
-    
-    buscar = "  for (const row of DATA) {" & vbCrLf & _
-             "    if (!rowMatches(row,col)) continue;" & vbCrLf & _
-             "    const v = String(row[col]);"
-    
-    reemplazar = "  for (const row of DATA) {" & vbCrLf & _
-                 "    if (!rowMatches(row,col)) continue;" & vbCrLf & _
-                 "    const exp = expand(row);" & vbCrLf & _
-                 "    const v = String(exp[col]);"
-    
-    html = Replace(html, buscar, reemplazar)
-    
-    ModificarFuncionUpdateDatalist = html
-End Function
