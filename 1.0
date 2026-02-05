@@ -1,76 +1,153 @@
 Option Explicit
 
-Sub Optimizar_HTML_Total_Final()
-    Dim filePath As Variant, content As String, i As Long, j As Long
+Sub OptimizarHTML_CORREGIDO_FINAL()
+    Dim filePath As Variant, i As Long, j As Long
     Dim dicts() As Object: ReDim dicts(6)
+    Dim respReducir As VbMsgBoxResult, respOfuscar As VbMsgBoxResult
     
-    filePath = Application.GetOpenFilename("Archivos HTML (*.html), *.html", , "Seleccionar HTML con 23.000 filas")
+    respReducir = MsgBox("¿Comprimir HTML?", vbYesNo + vbQuestion)
+    If respReducir = vbNo Then Exit Sub
+    respOfuscar = MsgBox("¿Ofuscar?", vbYesNo + vbQuestion)
+    
+    filePath = Application.GetOpenFilename("HTML (*.html), *.html")
     If filePath = False Then Exit Sub
     
     For i = 0 To 6: Set dicts(i) = CreateObject("Scripting.Dictionary"): Next
-    content = ReadUTF8(CStr(filePath))
     
-    ' 1. Localizar bloque DATA para extraer los 23.000 registros
-    Dim dStart As Long: dStart = InStr(content, "const DATA = [")
-    Dim dEnd As Long: dEnd = InStr(dStart, content, "];") + 2
-    If dStart = 0 Then MsgBox "No se encontró DATA", vbCritical: Exit Sub
+    ' LEER ARCHIVO
+    Dim stream As Object, todo As String
+    Set stream = CreateObject("ADODB.Stream")
+    stream.Type = 2: stream.Charset = "UTF-8": stream.Open
+    stream.LoadFromFile CStr(filePath)
+    todo = stream.ReadText
+    stream.Close
     
-    Dim rowsPart As String: rowsPart = Mid(content, dStart + 14, dEnd - dStart - 16)
-    Dim lines() As String: lines = Split(rowsPart, vbLf)
-    Dim compressedRows As String: compressedRows = ""
+    ' ENCONTRAR POSICIONES
+    Dim posScriptIni As Long, posScriptFin As Long
+    Dim posDataIni As Long, posDataFin As Long
     
-    ' 2. Procesar y Comprimir registros
-    For i = LBound(lines) To UBound(lines)
-        Dim line As String: line = Trim(Replace(lines(i), vbCr, ""))
-        If InStr(line, "[") > 0 Then
-            Dim raw As String: raw = Mid(line, InStr(line, "[") + 1, InStrRev(line, "]") - InStr(line, "[") - 1)
-            Dim cols() As String: cols = Split(raw, ",")
-            Dim newRow As String: newRow = "  ["
+    posScriptIni = InStr(todo, "<script>")
+    posScriptFin = InStr(posScriptIni, todo, "</script>")
+    posDataIni = InStr(posScriptIni, todo, "const DATA = [")
+    posDataFin = InStr(posDataIni, todo, "];")
+    
+    If posScriptIni = 0 Or posDataIni = 0 Then
+        MsgBox "No se encontró <script> o DATA", vbCritical
+        Exit Sub
+    End If
+    
+    ' EXTRAER PARTES
+    Dim antesScript As String, despuesScript As String, dataOriginal As String
+    antesScript = Left(todo, posScriptIni - 1)
+    despuesScript = Mid(todo, posScriptFin)
+    dataOriginal = Mid(todo, posDataIni + 14, posDataFin - posDataIni - 14)
+    
+    ' PROCESAR DATA
+    Dim lineas() As String, comprimido As String
+    lineas = Split(dataOriginal, vbLf)
+    comprimido = ""
+    
+    For i = LBound(lineas) To UBound(lineas)
+        Dim linea As String: linea = Trim(Replace(lineas(i), vbCr, ""))
+        If InStr(linea, "[") > 0 And InStr(linea, "]") > 0 Then
+            Dim crudo As String
+            crudo = Mid(linea, InStr(linea, "[") + 1, InStrRev(linea, "]") - InStr(linea, "[") - 1)
+            Dim cols() As String: cols = Split(crudo, ",")
+            Dim nuevaFila As String: nuevaFila = "["
+            
             For j = 0 To 6
-                Dim val As String: val = ""
-                If j <= UBound(cols) Then val = Trim(Replace(cols(j), """", ""))
-                Dim key As String: key = "k" & j & "x" & dicts(j).Count
-                If Not dicts(j).Exists(val) Then dicts(j).Add val, key
-                newRow = newRow & """" & dicts(j)(val) & """" & IIf(j < 6, ",", "")
+                Dim valor As String: valor = ""
+                If j <= UBound(cols) Then valor = Trim(Replace(cols(j), """", ""))
+                
+                Dim clave As String
+                
+                ' CRÍTICO: NO COMPRIMIR VALORES VACÍOS O MUY CORTOS
+                If Len(valor) <= 3 Then
+                    ' Mantener valores cortos sin comprimir
+                    clave = valor
+                ElseIf Not dicts(j).exists(valor) Then
+                    clave = "k" & j & "x" & dicts(j).Count
+                    dicts(j).Add valor, clave
+                Else
+                    clave = dicts(j)(valor)
+                End If
+                
+                nuevaFila = nuevaFila & """" & clave & """"
+                If j < 6 Then nuevaFila = nuevaFila & ","
             Next j
-            compressedRows = compressedRows & newRow & "]," & vbLf
+            
+            comprimido = comprimido & nuevaFila & "]," & vbCrLf
         End If
     Next i
     
-    ' 3. Crear el Mapa de Traducción MAPS
-    Dim mStr As String: mStr = "var MAPS = {" & vbLf
+    ' CREAR MAPS (solo para valores largos)
+    Dim maps As String: maps = "const MAPS = {" & vbCrLf
     For i = 0 To 6
-        mStr = mStr & "  " & i & ": {" & vbLf
-        Dim k As Variant, c As Long: c = 0
+        maps = maps & "  " & i & ": {"
+        Dim k As Variant, cnt As Long: cnt = 0
         For Each k In dicts(i).Keys
-            c = c + 1: Dim esc As String: esc = Replace(Replace(CStr(k), "\", "\\"), """", "\""")
-            mStr = mStr & "    """ & dicts(i)(k) & """: """ & esc & """" & IIf(c < dicts(i).Count, ",", "") & vbLf
+            cnt = cnt + 1
+            Dim esc As String: esc = Replace(Replace(CStr(k), "\", "\\"), """", "\""")
+            If cnt > 1 Then maps = maps & ","
+            maps = maps & """" & dicts(i)(k) & """:""" & esc & """"
         Next k
-        mStr = mStr & "  }" & IIf(i < 6, ",", "") & vbLf
+        maps = maps & "}"
+        If i < 6 Then maps = maps & ","
+        maps = maps & vbCrLf
     Next i
-    mStr = mStr & "};" & vbLf
+    maps = maps & "};" & vbCrLf
     
-    ' 4. Fragmentos del Motor JS (Para evitar error de línea larga en VBA)
-    Dim j1$, j2$, j3$, j4$, j5$, j6$
-    j1 = "const DEFAULT_RENDER_LIMIT=500,MAX_SUGGESTIONS=500,INPUTS=[...document.querySelectorAll('thead input')],TBODY=document.getElementById('tbody'),STATUS=document.getElementById('status'),FILTERS=Array(7).fill('');"
-    j2 = "function getVal(c,k){if(!k)return '';const s=String(k).trim();if(window.MAPS&&MAPS[c]&&MAPS[c][s]!==undefined)return MAPS[c][s];return (s.startsWith('k'+c+'x'))?'':s;}"
-    j3 = "function rowMatches(r,ig=-1){for(let i=0;i<7;i++){if(i===ig)continue;const f=FILTERS[i];if(!f)continue;const cell=String(getVal(i,r[i])).toLowerCase(),p=f.split(/\s+/).filter(Boolean);for(const x of p){if(x.startsWith('+')&&!cell.includes(x.slice(1)))return false;if(x.startsWith('-')&&cell.includes(x.slice(1)))return false;if(!x.startsWith('+')&&!x.startsWith('-')&&!cell.includes(x))return false}}return true}"
-    j4 = "function renderTable(){TBODY.innerHTML='';const m=DATA.filter(r=>rowMatches(r)),l=Math.min(m.length,DEFAULT_RENDER_LIMIT);for(const r of m.slice(0,l)){const tr=document.createElement('tr');r.forEach((c,i)=>{const td=document.createElement('td');td.innerHTML=highlightText(String(getVal(i,c)),i);tr.appendChild(td)});TBODY.appendChild(tr)}STATUS.textContent=`Coincidencias: ${m.length}${m.length>l?' (limitado)':''}`}function highlightText(t,c){const f=FILTERS[c];if(!f)return t;let res=t;const p=f.split(/\s+/).filter(x=>!x.startsWith('-'));for(const x of p){const s=x.replace(/^\+/,''),re=new RegExp('('+s+')','ig');res=res.replace(re,'<mark>$1</mark>')}return res}"
-    j5 = "function updateDatalist(c,t){const dl=document.getElementById('dl'+c);dl.innerHTML='';const cnt=new Map();for(const r of DATA){if(!rowMatches(r,c))continue;const v=getVal(c,r[c]);if(!v)continue;cnt.set(v,(cnt.get(v)||0)+1)}const o=[...cnt.entries()].sort((a,b)=>a[0].localeCompare(b[0]));for(const [v,n] of o){if(t&&!v.toLowerCase().includes(t))continue;const opt=document.createElement('option');opt.value=v;opt.label=`${v} (${n})`;dl.appendChild(opt);if(dl.children.length>=MAX_SUGGESTIONS)break}}"
-    j6 = "function updateAllDatalists(e=-1){for(let i=0;i<7;i++)if(i!==e)updateDatalist(i,INPUTS[i].value)}function handleType(c,el){const v=el.value.toLowerCase().trim();FILTERS[c]=v;el.classList.toggle('active',!!v);updateDatalist(c,v);renderTable();updateAllDatalists(c)}function clearAllFilters(){FILTERS.fill('');INPUTS.forEach(i=>{i.value='';i.classList.remove('active')});renderTable();updateAllDatalists()}updateAllDatalists();renderTable();"
+    ' CREAR JS
+    Dim js As String
+    If respOfuscar = vbYes Then
+        js = "const D=500,M=500,I=[...document.querySelectorAll('thead input')],T=document.getElementById('tbody'),S=document.getElementById('status'),F=Array(7).fill('');"
+        js = js & "function g(c,k){if(!k)return'';const s=String(k).trim();return(MAPS[c]&&MAPS[c][s])?MAPS[c][s]:s;}"
+        js = js & "function m(r,ig=-1){for(let i=0;i<7;i++){if(i===ig)continue;const f=F[i];if(!f)continue;const cl=String(g(i,r[i])).toLowerCase(),p=f.split(/\s+/).filter(Boolean);for(const x of p){if(x.startsWith('+')&&!cl.includes(x.slice(1)))return false;if(x.startsWith('-')&&cl.includes(x.slice(1)))return false;if(!x.startsWith('+')&&!x.startsWith('-')&&!cl.includes(x))return false}}return true}"
+        js = js & "function render(){T.innerHTML='';const mt=DATA.filter(r=>m(r)),l=Math.min(mt.length,D);for(const r of mt.slice(0,l)){const tr=document.createElement('tr');r.forEach((c,i)=>{const td=document.createElement('td');td.innerHTML=h(String(g(i,c)),i);tr.appendChild(td)});T.appendChild(tr)}S.textContent=`Coincidencias: ${mt.length}${mt.length>l?' (limitado)':''}`;}"
+        js = js & "function h(t,c){const f=F[c];if(!f)return t;let res=t;const p=f.split(/\s+/).filter(x=>!x.startsWith('-'));for(const x of p){const s=x.replace(/^\+/,''),re=new RegExp('('+s+')','ig');res=res.replace(re,'<mark>$1</mark>')}return res}"
+        js = js & "function u(c,t){const dl=document.getElementById('dl'+c);dl.innerHTML='';const cnt=new Map();for(const r of DATA){if(!m(r,c))continue;const v=g(c,r[c]);if(v)cnt.set(v,(cnt.get(v)||0)+1)}const o=[...cnt.entries()].sort((a,b)=>a[0].localeCompare(b[0]));for(const[v,n]of o){if(t&&!v.toLowerCase().includes(t))continue;const opt=document.createElement('option');opt.value=v;opt.label=`${v} (${n})`;dl.appendChild(opt);if(dl.children.length>=M)break}}"
+        js = js & "function uAll(e=-1){for(let i=0;i<7;i++)if(i!==e)u(i,I[i].value)}"
+        js = js & "function handleType(c,el){const v=el.value.toLowerCase().trim();F[c]=v;el.classList.toggle('active',!!v);u(c,v);render();uAll(c)}"
+        js = js & "function clearAllFilters(){F.fill('');I.forEach(i=>{i.value='';i.classList.remove('active')});render();uAll()}"
+        js = js & "uAll();render();"
+    Else
+        js = "const DEFAULT_RENDER_LIMIT=500,MAX_SUGGESTIONS=500,INPUTS=[...document.querySelectorAll('thead input')],TBODY=document.getElementById('tbody'),STATUS=document.getElementById('status'),FILTERS=Array(7).fill('');" & vbCrLf
+        js = js & "function getVal(c,k){if(!k)return '';const s=String(k).trim();return(MAPS[c]&&MAPS[c][s])?MAPS[c][s]:s;}" & vbCrLf
+        js = js & "function rowMatches(r,ig=-1){for(let i=0;i<7;i++){if(i===ig)continue;const f=FILTERS[i];if(!f)continue;const cell=String(getVal(i,r[i])).toLowerCase(),p=f.split(/\s+/).filter(Boolean);for(const x of p){if(x.startsWith('+')&&!cell.includes(x.slice(1)))return false;if(x.startsWith('-')&&cell.includes(x.slice(1)))return false;if(!x.startsWith('+')&&!x.startsWith('-')&&!cell.includes(x))return false}}return true}" & vbCrLf
+        
+        js = js & "function renderTable(){TBODY.innerHTML='';"
+js = js & "const m=DATA.filter(r=>rowMatches(r)),l=Math.min(m.length,DEFAULT_RENDER_LIMIT);"
+js = js & "for(const r of m.slice(0,l)){const tr=document.createElement('tr');r.forEach((c,i)=>{const td=document.createElement('td');td.innerHTML=highlightText(String(getVal(i,c)),i);tr.appendChild(td)});TBODY.appendChild(tr)}"
+js = js & "STATUS.textContent=`Coincidencias: ${m.length}${m.length>l?' (limitado)':''}`;}" & vbCrLf
 
-    ' 5. Guardar y Abrir
-    Dim finalPath As String: finalPath = Left(filePath, InStrRev(filePath, ".") - 1) & "_OPTIMIZADO.html"
-    Dim sPos As Long: sPos = InStr(content, "<script>") + 8
-    Call WriteUTF8(finalPath, Left(content, sPos) & vbLf & mStr & "const DATA = [" & vbLf & compressedRows & "];" & vbLf & j1 & j2 & j3 & j4 & j5 & j6 & vbLf & "</script> </body> </html>")
+        
+        js = js & "function highlightText(t,c){const f=FILTERS[c];if(!f)return t;let res=t;const p=f.split(/\s+/).filter(x=>!x.startsWith('-'));for(const x of p){const s=x.replace(/^\+/,''),re=new RegExp('('+s+')','ig');res=res.replace(re,'<mark>$1</mark>')}return res}" & vbCrLf
+        js = js & "function updateDatalist(c,t){const dl=document.getElementById('dl'+c);dl.innerHTML='';const cnt=new Map();for(const r of DATA){if(!rowMatches(r,c))continue;const v=getVal(c,r[c]);if(v)cnt.set(v,(cnt.get(v)||0)+1)}const o=[...cnt.entries()].sort((a,b)=>a[0].localeCompare(b[0]));for(const[v,n]of o){if(t&&!v.toLowerCase().includes(t))continue;const opt=document.createElement('option');opt.value=v;opt.label=`${v} (${n})`;dl.appendChild(opt);if(dl.children.length>=MAX_SUGGESTIONS)break}}" & vbCrLf
+        js = js & "function updateAllDatalists(e=-1){for(let i=0;i<7;i++)if(i!==e)updateDatalist(i,INPUTS[i].value)}" & vbCrLf
+        js = js & "function handleType(c,el){const v=el.value.toLowerCase().trim();FILTERS[c]=v;el.classList.toggle('active',!!v);updateDatalist(c,v);renderTable();updateAllDatalists(c)}" & vbCrLf
+        js = js & "function clearAllFilters(){FILTERS.fill('');INPUTS.forEach(i=>{i.value='';i.classList.remove('active')});renderTable();updateAllDatalists()}" & vbCrLf
+        js = js & "updateAllDatalists();renderTable();"
+    End If
     
-    Shell "cmd /c start """" """ & finalPath & """", vbHide
-End Sub
-
-Private Function ReadUTF8(p As String) As String
-    Dim s: Set s = CreateObject("ADODB.Stream"): s.Type = 2: s.Charset = "utf-8": s.Open: s.LoadFromFile p: ReadUTF8 = s.ReadText: s.Close
-End Function
-Private Sub WriteUTF8(p As String, c As String)
-    Dim s: Set s = CreateObject("ADODB.Stream"): s.Type = 2: s.Charset = "utf-8": s.Open: s.WriteText c: s.SaveToFile p, 2: s.Close
+    ' ESCRIBIR ARCHIVO
+    Dim salida As String
+    salida = Replace(CStr(filePath), ".html", "_optimizado.html")
+    salida = Replace(salida, ".HTML", "_optimizado.html")
+    
+    Set stream = CreateObject("ADODB.Stream")
+    stream.Type = 2: stream.Charset = "UTF-8": stream.Open
+    stream.WriteText antesScript & "<script>" & vbCrLf & maps & "const DATA=[" & vbCrLf & comprimido & "];" & vbCrLf & js & vbCrLf & despuesScript
+    stream.SaveToFile salida, 2
+    stream.Close
+    
+    Dim fso As Object: Set fso = CreateObject("Scripting.FileSystemObject")
+    Dim orig As Long, nuevo As Long
+    orig = fso.GetFile(CStr(filePath)).Size
+    nuevo = fso.GetFile(salida).Size
+    
+    MsgBox "? Completado" & vbCrLf & vbCrLf & _
+           "Original: " & Format(orig / 1024, "#,##0") & " KB" & vbCrLf & _
+           "Nuevo: " & Format(nuevo / 1024, "#,##0") & " KB" & vbCrLf & _
+           "Ahorro: " & Format((1 - nuevo / orig) * 100, "0.0") & "%", vbInformation
 End Sub
 
