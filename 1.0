@@ -1,9 +1,9 @@
 Sub OptimizarHTML()
-    Dim fso As Object, ts As Object
+    Dim fso As Object
     Dim filePath As String, htmlContent As String
     Dim dict As Object, dictJS As String
     Dim compressed As String, dataStart As Long, dataEnd As Long
-    Dim respReducir As VbMsgBoxResult, respOfuscar As VbMsgBoxResult
+    Dim respReducir As VbMsgBoxResult
     
     ' Seleccionar archivo HTML
     With Application.FileDialog(msoFileDialogFilePicker)
@@ -20,15 +20,9 @@ Sub OptimizarHTML()
                          vbYesNo + vbQuestion, "Optimización")
     If respReducir = vbNo Then Exit Sub
     
-    respOfuscar = MsgBox("¿Ofuscar datos de la tabla?" & vbCrLf & vbCrLf & _
-                         "Codificará valores (opcional)", _
-                         vbYesNo + vbQuestion, "Ofuscación")
-    
-    ' Leer HTML
+    ' Leer HTML en UTF-8
     Set fso = CreateObject("Scripting.FileSystemObject")
-    Set ts = fso.OpenTextFile(filePath, 1, False, -2)
-    htmlContent = ts.ReadAll
-    ts.Close
+    htmlContent = LeerArchivoUTF8(filePath)
     
     ' Extraer DATA
     dataStart = InStr(htmlContent, "const DATA = [")
@@ -44,57 +38,19 @@ Sub OptimizarHTML()
     
     ' Analizar y comprimir
     Set dict = CreateObject("Scripting.Dictionary")
-    Dim dataSection As String, lines As Variant, i As Long
+    Dim dataSection As String
     dataSection = Mid(htmlContent, dataStart + 14, dataEnd - dataStart - 14)
-    lines = Split(dataSection, "[""")
     
-    ' Crear diccionario de textos largos repetidos
-    For i = 1 To UBound(lines)
-        Dim line As String, campos As Variant, j As Long
-        line = lines(i)
-        If InStr(line, """]") > 0 Then
-            line = Left(line, InStr(line, """]") - 1)
-            campos = Split(line, """,""")
-            
-            For j = 0 To UBound(campos)
-                Dim valor As String
-                valor = Trim(campos(j))
-                
-                ' Solo comprimir textos largos (>20 caracteres)
-                If Len(valor) > 20 And Not dict.exists(valor) Then
-                    Dim clave As String
-                    clave = GenerarClave(valor, dict)
-                    dict.Add valor, clave
-                End If
-            Next j
-        End If
-    Next i
+    ' Crear diccionario de textos largos
+    CrearDiccionario dataSection, dict
     
-    ' Generar JavaScript del diccionario
-    If dict.Count > 0 Then
-        dictJS = "// Diccionario de compresión" & vbCrLf
-        dictJS = dictJS & "const DICT = {" & vbCrLf
-        
-        Dim k As Variant
-        For Each k In dict.Keys
-            dictJS = dictJS & "  """ & dict(k) & """: """ & EscapeJS(CStr(k)) & """," & vbCrLf
-        Next k
-        
-        ' Eliminar última coma
-        If Right(dictJS, 3) = "," & vbCrLf Then
-            dictJS = Left(dictJS, Len(dictJS) - 3) & vbCrLf
-        End If
-        
-        dictJS = dictJS & "};" & vbCrLf & vbCrLf
-        
-        ' Función expand
-        dictJS = dictJS & "function expand(row) {" & vbCrLf & _
-                 "  return row.map(cell => DICT[cell] || cell);" & vbCrLf & _
-                 "}" & vbCrLf & vbCrLf
-    Else
+    If dict.Count = 0 Then
         MsgBox "No se encontraron textos largos para comprimir", vbInformation
         Exit Sub
     End If
+    
+    ' Generar JavaScript del diccionario
+    dictJS = GenerarDiccionarioJS(dict)
     
     ' Comprimir DATA
     compressed = ComprimirData(dataSection, dict)
@@ -104,22 +60,18 @@ Sub OptimizarHTML()
     beforeData = Left(htmlContent, dataStart - 1)
     afterData = Mid(htmlContent, dataEnd + 2)
     
-    ' Insertar diccionario antes de DATA
     Dim newHTML As String
-    newHTML = beforeData & dictJS & "const DATA = [" & vbCrLf & compressed & "];;" & afterData
+    newHTML = beforeData & dictJS & "const DATA = [" & vbCrLf & compressed & vbCrLf & "];" & afterData
     
-    ' Modificar funciones JavaScript para usar expand()
+    ' Modificar funciones JavaScript
     newHTML = ModificarFuncionRowMatches(newHTML)
     newHTML = ModificarFuncionRenderTable(newHTML)
     newHTML = ModificarFuncionUpdateDatalist(newHTML)
     
-    ' Guardar archivo optimizado
+    ' Guardar archivo optimizado en UTF-8
     Dim newPath As String
     newPath = Replace(filePath, ".html", "_optimizado.html")
-    
-    Set ts = fso.CreateTextFile(newPath, True, False)
-    ts.Write newHTML
-    ts.Close
+    GuardarArchivoUTF8 newPath, newHTML
     
     ' Informe final
     Dim tamOriginal As Long, tamNuevo As Long, ahorro As Double
@@ -137,6 +89,102 @@ Sub OptimizarHTML()
     Set fso = Nothing
     Set dict = Nothing
 End Sub
+
+Function LeerArchivoUTF8(ByVal rutaArchivo As String) As String
+    Dim stream As Object
+    Set stream = CreateObject("ADODB.Stream")
+    
+    With stream
+        .Charset = "UTF-8"
+        .Open
+        .LoadFromFile rutaArchivo
+        LeerArchivoUTF8 = .ReadText
+        .Close
+    End With
+    
+    Set stream = Nothing
+End Function
+
+Sub GuardarArchivoUTF8(ByVal rutaArchivo As String, ByVal contenido As String)
+    Dim stream As Object
+    Set stream = CreateObject("ADODB.Stream")
+    
+    With stream
+        .Charset = "UTF-8"
+        .Open
+        .WriteText contenido
+        .SaveToFile rutaArchivo, 2 ' 2 = sobrescribir
+        .Close
+    End With
+    
+    Set stream = Nothing
+End Sub
+
+Sub CrearDiccionario(ByVal dataText As String, ByRef dict As Object)
+    Dim lineas As Variant, i As Long
+    Dim linea As String, inicio As Long, fin As Long
+    Dim fila As String, campos As Variant, j As Long
+    
+    ' Dividir por saltos de línea
+    lineas = Split(dataText, vbLf)
+    
+    For i = 0 To UBound(lineas)
+        linea = Trim(Replace(lineas(i), vbCr, ""))
+        
+        ' Buscar filas tipo ["...","...","..."],
+        If InStr(linea, "[""") > 0 Then
+            inicio = InStr(linea, "[""")
+            fin = InStr(inicio, linea, "],")
+            If fin = 0 Then fin = InStr(inicio, linea, "]")
+            
+            If fin > inicio Then
+                fila = Mid(linea, inicio + 2, fin - inicio - 2)
+                fila = Replace(fila, """],", "")
+                fila = Replace(fila, """]", "")
+                
+                campos = Split(fila, """,""")
+                
+                For j = 0 To UBound(campos)
+                    Dim valor As String
+                    valor = Trim(campos(j))
+                    
+                    ' Solo comprimir textos > 20 caracteres que no estén ya
+                    If Len(valor) > 20 And Not dict.exists(valor) Then
+                        Dim clave As String
+                        clave = GenerarClave(valor, dict)
+                        dict.Add valor, clave
+                    End If
+                Next j
+            End If
+        End If
+    Next i
+End Sub
+
+Function GenerarDiccionarioJS(ByRef dict As Object) As String
+    Dim resultado As String
+    Dim k As Variant
+    
+    resultado = "// Diccionario de compresión" & vbCrLf
+    resultado = resultado & "const DICT = {" & vbCrLf
+    
+    For Each k In dict.Keys
+        resultado = resultado & "  """ & dict(k) & """: """ & EscapeJS(CStr(k)) & """," & vbCrLf
+    Next k
+    
+    ' Eliminar última coma
+    If Right(resultado, 3) = "," & vbCrLf Then
+        resultado = Left(resultado, Len(resultado) - 3) & vbCrLf
+    End If
+    
+    resultado = resultado & "};" & vbCrLf & vbCrLf
+    
+    ' Función expand
+    resultado = resultado & "function expand(row) {" & vbCrLf & _
+                "  return row.map(cell => DICT[cell] || cell);" & vbCrLf & _
+                "}" & vbCrLf & vbCrLf
+    
+    GenerarDiccionarioJS = resultado
+End Function
 
 Function GenerarClave(ByVal texto As String, ByRef dict As Object) As String
     Dim base As String, counter As Long
@@ -156,10 +204,9 @@ Function GenerarClave(ByVal texto As String, ByRef dict As Object) As String
         base = UCase(Left(texto, 3))
     End If
     
-    ' Si la clave está vacía, usar primeros caracteres
-    If base = "" Then base = UCase(Left(texto, 2))
+    If base = "" Then base = "KEY"
     
-    ' Verificar si ya existe y agregar número
+    ' Verificar si ya existe
     counter = 0
     Dim claveTemp As String
     claveTemp = base
@@ -188,10 +235,10 @@ Function ComprimirData(ByVal dataText As String, ByRef dict As Object) As String
     Dim resultado As String
     resultado = dataText
     
-    ' Reemplazar cada texto largo por su clave
     Dim k As Variant
     For Each k In dict.Keys
-        resultado = Replace(resultado, """" & CStr(k) & """", """" & dict(k) & """")
+        ' Reemplazar texto completo por clave
+        resultado = Replace(resultado, CStr(k), dict(k))
     Next k
     
     ComprimirData = resultado
@@ -201,13 +248,9 @@ Function EscapeJS(ByVal texto As Variant) As String
     Dim txt As String
     txt = CStr(texto)
     
-    ' Escapar caracteres especiales para JavaScript
+    ' Escapar solo comillas y barras invertidas
     txt = Replace(txt, "\", "\\")
     txt = Replace(txt, """", "\""")
-    txt = Replace(txt, vbCrLf, "\n")
-    txt = Replace(txt, vbCr, "\n")
-    txt = Replace(txt, vbLf, "\n")
-    txt = Replace(txt, vbTab, "\t")
     
     EscapeJS = txt
 End Function
@@ -215,18 +258,15 @@ End Function
 Function ModificarFuncionRowMatches(ByVal html As String) As String
     Dim buscar As String, reemplazar As String
     
-    ' Buscar la función original
     buscar = "function rowMatches(row, ignoreCol=-1) {" & vbCrLf & _
              "  for (let i=0;i<7;i++) {"
     
-    ' Nueva versión con expand()
     reemplazar = "function rowMatches(row, ignoreCol=-1) {" & vbCrLf & _
                  "  const exp = expand(row);" & vbCrLf & _
                  "  for (let i=0;i<7;i++) {"
     
     html = Replace(html, buscar, reemplazar)
     
-    ' Reemplazar row[i] por exp[i] en el contenido de la función
     buscar = "    const cell = String(row[i]).toLowerCase();"
     reemplazar = "    const cell = String(exp[i]).toLowerCase();"
     html = Replace(html, buscar, reemplazar)
@@ -237,7 +277,6 @@ End Function
 Function ModificarFuncionRenderTable(ByVal html As String) As String
     Dim buscar As String, reemplazar As String
     
-    ' Buscar el bucle de renderizado
     buscar = "  for (const row of matched.slice(0,limit)) {" & vbCrLf & _
              "    const tr = document.createElement(""tr"");" & vbCrLf & _
              "    row.forEach((c,i)=>{"
@@ -255,7 +294,6 @@ End Function
 Function ModificarFuncionUpdateDatalist(ByVal html As String) As String
     Dim buscar As String, reemplazar As String
     
-    ' Buscar la parte donde se obtiene el valor
     buscar = "  for (const row of DATA) {" & vbCrLf & _
              "    if (!rowMatches(row,col)) continue;" & vbCrLf & _
              "    const v = String(row[col]);"
