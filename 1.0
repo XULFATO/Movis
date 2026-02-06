@@ -45,12 +45,6 @@ h2{margin:0 0 8px}
   border:1px solid var(--active);
   background:var(--active);
   color:#fff;
-  transition:.15s;
-}
-
-.actions button:hover{
-  background:#094db1;
-  box-shadow:0 2px 8px rgba(11,110,237,.35);
 }
 
 table{
@@ -152,22 +146,16 @@ mark{
     <datalist id="dl3"></datalist>
   </th>
   <th>
-    <input list="dl4" placeholder="Descripción 2"
+    <input list="dl4" placeholder="Capítulo"
            onfocus="handleFocus(4)"
            oninput="handleType(4,this)">
     <datalist id="dl4"></datalist>
   </th>
   <th>
-    <input list="dl5" placeholder="€"
+    <input list="dl5" placeholder="Descripción 2"
            onfocus="handleFocus(5)"
            oninput="handleType(5,this)">
     <datalist id="dl5"></datalist>
-  </th>
-  <th>
-    <input list="dl6" placeholder="Capítulo"
-           onfocus="handleFocus(6)"
-           oninput="handleType(6,this)">
-    <datalist id="dl6"></datalist>
   </th>
 </tr>
 <tr>
@@ -175,9 +163,8 @@ mark{
   <th>Código</th>
   <th>Formato</th>
   <th>Descripción</th>
-  <th>Descripción 2</th>
-  <th>€</th>
   <th>Capítulo</th>
+  <th>Descripción 2</th>
 </tr>
 </thead>
 
@@ -187,38 +174,39 @@ mark{
 <div class="status" id="status"></div>
 
 <script>
-const DATA=[
- ["F(XXXX) FICHERO DE PERSONAL","A001","A25","APELLIDOS","INFORMACIONES REPETITIVAS","",""],
- ["F(XXXX) FICHERO DE PERSONAL","A002","A15","NOMBRE","","",""],
- ["W(XXXX) VALORES DE REFERENCIA DEL TRATAMIENTO","0127","P9.2","LIBRE","","",""],
- ["W(XXXX) VALORES DE REFERENCIA DEL TRATAMIENTO","0128","P9.2","LIBRE","","",""],
- ["W(XXXX) VALORES DE REFERENCIA DEL TRATAMIENTO","0129","A01","TIPO DE EXPLOTACIÓN","","",""],
- ["W(XXXX) VALORES DE REFERENCIA DEL TRATAMIENTO","0130","N04","FECHA DE NOMINA","","",""]
+const DATA = [
+ ["F(XXXX) FICHERO DE PERSONAL","A001","A25","APELLIDOS","01","INFORMACIONES REPETITIVAS"],
+ ["F(XXXX) FICHERO DE PERSONAL","A002","A15","NOMBRE","01",""],
+ ["W(XXXX) VALORES DE REFERENCIA","0127","P9.2","LIBRE","02",""],
+ ["W(XXXX) VALORES DE REFERENCIA","0128","P9.2","LIBRE","02",""],
+ ["W(XXXX) VALORES DE REFERENCIA","0129","A01","TIPO DE EXPLOTACIÓN","03",""],
+ ["W(XXXX) VALORES DE REFERENCIA","0130","N04","FECHA DE NOMINA","03",""]
 ];
 
-const TBODY=document.getElementById("tbody");
-const STATUS=document.getElementById("status");
-const INPUTS=[...document.querySelectorAll("thead input")];
-const FILTERS=Array(7).fill("");
+const COLS = 6;
+const TBODY = document.getElementById("tbody");
+const STATUS = document.getElementById("status");
+const INPUTS = [...document.querySelectorAll("thead input")];
+const FILTERS = Array(COLS).fill("");
 
 let debounceTimer;
 
 function rowMatches(row){
-  for(let i=0;i<7;i++){
-    const f=FILTERS[i];
-    if(!f)continue;
+  for(let i=0;i<COLS;i++){
+    const f = FILTERS[i];
+    if(!f) continue;
 
-    const cell=String(row[i]).toLowerCase();
-    const norm=f.replace(/<>\s+/g,"<>");
-    const parts=norm.split(/\s+/).filter(Boolean);
+    const cell = String(row[i]).toLowerCase();
+    const norm = f.replace(/<>\s+/g,"<>");
+    const parts = norm.split(/\s+/).filter(Boolean);
 
     for(const p of parts){
       if(p.startsWith("+")){
-        if(!cell.includes(p.slice(1)))return false;
+        if(!cell.includes(p.slice(1))) return false;
       }else if(p.startsWith("<>")){
-        if(cell.includes(p.slice(2)))return false;
+        if(cell.includes(p.slice(2))) return false;
       }else{
-        if(!cell.includes(p))return false;
+        if(!cell.includes(p)) return false;
       }
     }
   }
@@ -226,52 +214,52 @@ function rowMatches(row){
 }
 
 function highlightText(txt,col){
-  const f=FILTERS[col];
-  if(!f)return txt;
+  const f = FILTERS[col];
+  if(!f) return txt;
 
-  const norm=f.replace(/<>\s+/g,"<>");
-  const parts=norm.split(/\s+/).filter(p=>!p.startsWith("<>"));
+  const norm = f.replace(/<>\s+/g,"<>");
+  const parts = norm.split(/\s+/).filter(p=>!p.startsWith("<>"));
 
-  let res=txt;
+  let res = txt;
   for(const p of parts){
-    const t=p.replace(/^\+/,"");
-    if(!t)continue;
-    res=res.replace(new RegExp(`(${t})`,"ig"),"<mark>$1</mark>");
+    const t = p.replace(/^\+/,"");
+    if(!t) continue;
+    res = res.replace(new RegExp(`(${t})`,"ig"),"<mark>$1</mark>");
   }
   return res;
 }
 
 function renderTable(){
-  TBODY.innerHTML="";
-  const rows=DATA.filter(rowMatches);
+  TBODY.innerHTML = "";
+  const rows = DATA.filter(rowMatches);
 
   for(const r of rows){
-    const tr=document.createElement("tr");
+    const tr = document.createElement("tr");
     r.forEach((c,i)=>{
-      const td=document.createElement("td");
-      td.innerHTML=highlightText(String(c),i);
+      const td = document.createElement("td");
+      td.innerHTML = highlightText(String(c),i);
       tr.appendChild(td);
     });
     TBODY.appendChild(tr);
   }
-  STATUS.textContent=`Coincidencias: ${rows.length}`;
+  STATUS.textContent = `Coincidencias: ${rows.length}`;
 }
 
 function updateDatalist(col){
-  const dl=document.getElementById("dl"+col);
-  dl.innerHTML="";
-  const counts=new Map();
+  const dl = document.getElementById("dl"+col);
+  dl.innerHTML = "";
+  const counts = new Map();
 
   for(const row of DATA){
-    if(!rowMatches(row))continue;
-    const v=String(row[col]);
+    if(!rowMatches(row)) continue;
+    const v = String(row[col]);
     counts.set(v,(counts.get(v)||0)+1);
   }
 
   for(const [val,n] of [...counts.entries()].sort((a,b)=>a[0].localeCompare(b[0]))){
-    const opt=document.createElement("option");
-    opt.value=val;
-    opt.label=`${val} (${n})`;
+    const opt = document.createElement("option");
+    opt.value = val;
+    opt.label = `${val} (${n})`;
     dl.appendChild(opt);
   }
 }
@@ -283,9 +271,9 @@ function handleFocus(col){
 
 function handleType(col,el){
   clearTimeout(debounceTimer);
-  debounceTimer=setTimeout(()=>{
-    const v=el.value.toLowerCase().trim();
-    FILTERS[col]=v;
+  debounceTimer = setTimeout(()=>{
+    const v = el.value.toLowerCase().trim();
+    FILTERS[col] = v;
     el.classList.toggle("active",v.length>0);
     el.classList.toggle("exclude",v.includes("<>"));
     updateDatalist(col);
