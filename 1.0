@@ -1,109 +1,139 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-<meta charset="UTF-8" />
-<title>Tabla filtrable – Personal</title>
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta charset="UTF-8">
+<title>DICCIONARIO – Personal</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,
+<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'>
+  <text y='0.9em' font-size='90'>☀️ Diccionario</text>
+</svg>">
 
 <style>
 :root{
-  --bg:#f5f5f5;
-  --ink:#222;
-  --muted:#666;
-  --line:#ddd;
-  --head:#333;
-  --headink:#fff;
-  --active:#0b6eed;
-  --exclude:#dc3545;
+  --bg: #f1f5fb;        /* azul muy suave */
+  --ink: #1f2d3d;       /* azul oscuro */
+  --muted: #5b6b82;
+  --line: #d6deeb;
+  --head: #2f4a7d;      /* azul cabecera */
+  --headink: #ffffff;
+  --active: #3b82f6;    /* azul elegante */
 }
 
 body{
-  font-family:system-ui,Arial,sans-serif;
-  margin:20px;
-  background:var(--bg);
-  color:var(--ink);
+  font-family: system-ui, Arial, sans-serif;
+  margin: 20px;
+  background: var(--bg);
+  color: var(--ink);
 }
 
-h2{margin:0 0 8px}
+h2{
+  margin: 0 0 8px;
+  font-weight: 600;
+}
 
 .meta{
-  font-size:12px;
-  color:var(--muted);
-  margin-bottom:6px;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 8px;
 }
 
 .actions{
-  margin-bottom:10px;
+  margin-bottom: 12px;
 }
 
 .actions button{
-  padding:6px 14px;
-  border-radius:6px;
-  cursor:pointer;
-  font-size:14px;
-  font-weight:600;
-  border:1px solid var(--active);
-  background:var(--active);
-  color:#fff;
+  padding: 6px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  border: 1px solid var(--active);
+  background: var(--active);
+  color: #fff;
+}
+
+.actions button:hover{
+  background: #2563eb;
 }
 
 table{
-  width:100%;
-  border-collapse:collapse;
-  background:#fff;
-  box-shadow:0 2px 10px rgba(0,0,0,.06);
+  width: 100%;
+  border-collapse: collapse;
+  background: #ffffff;
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 6px 24px rgba(30,58,138,.08);
 }
 
-th,td{
-  padding:8px 10px;
-  border:1px solid var(--line);
-  vertical-align:top;
+th, td{
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
 }
 
 thead th{
-  background:var(--head);
-  color:var(--headink);
-  position:sticky;
-  top:0;
-  z-index:1;
+  background: var(--head);
+  color: var(--headink);
+  position: sticky;
+  top: 0;
+  z-index: 1;
 }
 
 thead input{
-  width:100%;
-  padding:6px 8px;
-  border-radius:6px;
-  border:1px solid var(--line);
-  outline:none;
-  box-sizing:border-box;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  outline: none;
+  box-sizing: border-box;
+  background: #f8fbff;
+  color: var(--ink);
 }
 
 thead input.active{
-  border-color:var(--active);
-  font-weight:700;
+  border-color: var(--active);
+  box-shadow: 0 0 0 2px rgba(59,130,246,.18);
+  font-weight: 600;
 }
 
-thead input.exclude{
-  border-color:var(--exclude);
-  background:#fff5f5;
-}
-
-tbody tr:nth-child(even) td{
-  background:#fafafa;
+tbody tr:nth-child(even){
+  background: #f7faff;
 }
 
 mark{
-  background:none;
-  color:var(--active);
-  font-weight:700;
+  background: none;
+  color: var(--active);
+  font-weight: 700;
 }
 
 .status{
-  margin-top:12px;
-  font-size:13px;
-  color:var(--muted);
-  font-weight:600;
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--muted);
+  font-weight: 600;
 }
+
+
+thead tr:first-child th {
+  padding-bottom: 10px;
+  border-bottom: 4px solid #ffffff;
+}
+
+thead tr:last-child th {
+  text-transform: uppercase;
+  font-size: 12px;
+  letter-spacing: .05em;
+  background: #355a9b; /* azul un pelín distinto */
+}
+
+thead input.exclude{
+  border-color: var(--exclude);
+  background: #ffb6c1;
+}
+
 </style>
+
 </head>
 
 <body>
@@ -121,42 +151,12 @@ mark{
 <table>
 <thead>
 <tr>
-  <th>
-    <input list="dl0" placeholder="Fichero"
-           onfocus="handleFocus(0)"
-           oninput="handleType(0,this)">
-    <datalist id="dl0"></datalist>
-  </th>
-  <th>
-    <input list="dl1" placeholder="Código"
-           onfocus="handleFocus(1)"
-           oninput="handleType(1,this)">
-    <datalist id="dl1"></datalist>
-  </th>
-  <th>
-    <input list="dl2" placeholder="Formato"
-           onfocus="handleFocus(2)"
-           oninput="handleType(2,this)">
-    <datalist id="dl2"></datalist>
-  </th>
-  <th>
-    <input list="dl3" placeholder="Descripción"
-           onfocus="handleFocus(3)"
-           oninput="handleType(3,this)">
-    <datalist id="dl3"></datalist>
-  </th>
-  <th>
-    <input list="dl4" placeholder="Capítulo"
-           onfocus="handleFocus(4)"
-           oninput="handleType(4,this)">
-    <datalist id="dl4"></datalist>
-  </th>
-  <th>
-    <input list="dl5" placeholder="Descripción 2"
-           onfocus="handleFocus(5)"
-           oninput="handleType(5,this)">
-    <datalist id="dl5"></datalist>
-  </th>
+  <th><input list="dl0" placeholder="Fichero" onfocus="handleFocus(0)" oninput="handleType(0,this)"><datalist id="dl0"></datalist></th>
+  <th><input list="dl1" placeholder="Código" onfocus="handleFocus(1)" oninput="handleType(1,this)"><datalist id="dl1"></datalist></th>
+  <th><input list="dl2" placeholder="Formato" onfocus="handleFocus(2)" oninput="handleType(2,this)"><datalist id="dl2"></datalist></th>
+  <th><input list="dl3" placeholder="Descripción" onfocus="handleFocus(3)" oninput="handleType(3,this)"><datalist id="dl3"></datalist></th>
+  <th><input list="dl4" placeholder="Capítulo" onfocus="handleFocus(4)" oninput="handleType(4,this)"><datalist id="dl4"></datalist></th>
+  <th><input list="dl5" placeholder="Descripción 2" onfocus="handleFocus(5)" oninput="handleType(5,this)"><datalist id="dl5"></datalist></th>
 </tr>
 <tr>
   <th>Fichero</th>
@@ -174,29 +174,51 @@ mark{
 <div class="status" id="status"></div>
 
 <script>
+
 const DATA = [
- ["F(XXXX) FICHERO DE PERSONAL","A001","A25","APELLIDOS","01","INFORMACIONES REPETITIVAS"],
- ["F(XXXX) FICHERO DE PERSONAL","A002","A15","NOMBRE","01",""],
- ["W(XXXX) VALORES DE REFERENCIA","0127","P9.2","LIBRE","02",""],
- ["W(XXXX) VALORES DE REFERENCIA","0128","P9.2","LIBRE","02",""],
- ["W(XXXX) VALORES DE REFERENCIA","0129","A01","TIPO DE EXPLOTACIÓN","03",""],
- ["W(XXXX) VALORES DE REFERENCIA","0130","N04","FECHA DE NOMINA","03",""]
+  ["FICHERO PERSONAL","A001","A25","APELLIDOS","01","INFORMACIONES"],
+  ["FICHERO PERSONAL","A002","A15","NOMBRE","01",""],
+  ["VALORES REFERENCIA","0127","P9.2","LIBRE","02",""],
+  ["VALORES REFERENCIA","0128","P9.2","LIBRE","02",""],
+  ["VALORES REFERENCIA","0129","A01","TIPO EXPLOTACIÓN","03",""],
+  ["VALORES REFERENCIA","0130","N04","FECHA NÓMINA","03",""]
 ];
 
+/* =======================
+   CONFIGURACIÓN
+======================= */
 const COLS = 6;
-const TBODY = document.getElementById("tbody");
-const STATUS = document.getElementById("status");
+const MAX_RENDER = 500;
+
+/* =======================
+   ELEMENTOS
+======================= */
 const INPUTS = [...document.querySelectorAll("thead input")];
+const TBODY  = document.getElementById("tbody");
+const STATUS = document.getElementById("status");
 const FILTERS = Array(COLS).fill("");
 
-let debounceTimer;
+let debounce;
 
+/* =======================
+   DECODIFICADOR MAPS
+   (compatible con DATA normal)
+======================= */
+function getVal(col, key){
+  return (window.MAPS && MAPS[col] && MAPS[col][key] !== undefined)
+    ? MAPS[col][key]
+    : key;
+}
+
+/* =======================
+   FILTRADO
+======================= */
 function rowMatches(row){
-  for(let i=0;i<COLS;i++){
+  for(let i = 0; i < COLS; i++){
     const f = FILTERS[i];
     if(!f) continue;
 
-    const cell = String(row[i]).toLowerCase();
+    const cell = String(getVal(i, row[i])).toLowerCase();
     const norm = f.replace(/<>\s+/g,"<>");
     const parts = norm.split(/\s+/).filter(Boolean);
 
@@ -213,89 +235,123 @@ function rowMatches(row){
   return true;
 }
 
-function highlightText(txt,col){
+/* =======================
+   RESALTADO
+======================= */
+function highlightText(text, col){
   const f = FILTERS[col];
-  if(!f) return txt;
+  if(!f) return text;
 
   const norm = f.replace(/<>\s+/g,"<>");
-  const parts = norm.split(/\s+/).filter(p=>!p.startsWith("<>"));
+  const parts = norm.split(/\s+/).filter(p => !p.startsWith("<>"));
 
-  let res = txt;
+  let res = text;
   for(const p of parts){
     const t = p.replace(/^\+/,"");
     if(!t) continue;
-    res = res.replace(new RegExp(`(${t})`,"ig"),"<mark>$1</mark>");
+    res = res.replace(
+      new RegExp(`(${t})`, "ig"),
+      "<mark>$1</mark>"
+    );
   }
   return res;
 }
 
+/* =======================
+   RENDER TABLA
+======================= */
 function renderTable(){
   TBODY.innerHTML = "";
-  const rows = DATA.filter(rowMatches);
 
-  for(const r of rows){
+  const matched = DATA.filter(rowMatches);
+  const showing = Math.min(matched.length, MAX_RENDER);
+
+  for(const row of matched.slice(0, showing)){
     const tr = document.createElement("tr");
-    r.forEach((c,i)=>{
+    row.forEach((c,i)=>{
       const td = document.createElement("td");
-      td.innerHTML = highlightText(String(c),i);
+      td.innerHTML = highlightText(String(getVal(i,c)), i);
       tr.appendChild(td);
     });
     TBODY.appendChild(tr);
   }
-  STATUS.textContent = `Coincidencias: ${rows.length}`;
+
+  STATUS.textContent =
+    `Coincidencias: ${matched.length} · Mostrando: ${showing}` +
+    (matched.length > showing ? " (limitado por rendimiento)" : "");
 }
 
+/* =======================
+   DATALIST
+======================= */
 function updateDatalist(col){
   const dl = document.getElementById("dl"+col);
   dl.innerHTML = "";
-  const counts = new Map();
+  const cnt = new Map();
 
-  for(const row of DATA){
-    if(!rowMatches(row)) continue;
-    const v = String(row[col]);
-    counts.set(v,(counts.get(v)||0)+1);
+  for(const r of DATA){
+    if(!rowMatches(r)) continue;
+    const v = getVal(col, r[col]);
+    cnt.set(v, (cnt.get(v) || 0) + 1);
   }
 
-  for(const [val,n] of [...counts.entries()].sort((a,b)=>a[0].localeCompare(b[0]))){
+  for(const [v,n] of [...cnt.entries()].sort((a,b)=>a[0].localeCompare(b[0]))){
     const opt = document.createElement("option");
-    opt.value = val;
-    opt.label = `${val} (${n})`;
+    opt.value = v;
+    opt.label = `${v} (${n})`;
     dl.appendChild(opt);
   }
 }
 
+/* =======================
+   EVENTOS INPUT
+======================= */
 function handleFocus(col){
   updateDatalist(col);
-  INPUTS[col].dispatchEvent(new Event("input",{bubbles:true}));
 }
 
-function handleType(col,el){
-  clearTimeout(debounceTimer);
-  debounceTimer = setTimeout(()=>{
-    const v = el.value.toLowerCase().trim();
-    FILTERS[col] = v;
-    el.classList.toggle("active",v.length>0);
-    el.classList.toggle("exclude",v.includes("<>"));
+function handleType(col, el){
+  clearTimeout(debounce);
+
+  debounce = setTimeout(()=>{
+    const raw = el.value.trim();
+    const val = raw.toLowerCase();
+
+    FILTERS[col] = val;
+
+    el.classList.toggle("active", val.length > 0);
+    el.classList.toggle("exclude", val.includes("<>"));
+
     updateDatalist(col);
     renderTable();
-  },120);
+  }, 120);
 }
 
+/* =======================
+   LIMPIAR FILTROS
+======================= */
 function clearAllFilters(){
   FILTERS.fill("");
   INPUTS.forEach(i=>{
-    i.value="";
+    i.value = "";
     i.classList.remove("active","exclude");
   });
   renderTable();
 }
 
-document.addEventListener("keydown",e=>{
-  if(e.key==="Escape") clearAllFilters();
+/* =======================
+   TECLA ESC
+======================= */
+document.addEventListener("keydown", e=>{
+  if(e.key === "Escape") clearAllFilters();
 });
 
+/* =======================
+   INIT
+======================= */
 renderTable();
 </script>
+
 
 </body>
 </html>
