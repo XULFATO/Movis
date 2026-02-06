@@ -1,244 +1,69 @@
-Option Explicit
+function rowMatches(row, ignoreCol=-1) {
+  for (let i=0;i<7;i++) {
+    if (i===ignoreCol) continue;
+    const f = FILTERS[i];
+    if (!f) continue;
 
-Sub OptimizarHTML_FINAL()
+    const cell = String(row[i]).toLowerCase();
+    const parts = f.split(/\s+/).filter(Boolean);
 
-    Dim filePath As Variant
-    Dim i As Long, j As Long
-    Dim dicts(0 To 6) As Object
+    for (const p of parts) {
+      if (p.startsWith("+")) {
+        if (!cell.includes(p.slice(1))) return false;
 
-    Dim respReducir As VbMsgBoxResult
-    respReducir = MsgBox("¿Comprimir HTML?", vbYesNo + vbQuestion)
-    If respReducir = vbNo Then Exit Sub
+      } else if (p.startsWith("<>")) {
+        if (cell.includes(p.slice(2))) return false;
 
-    filePath = Application.GetOpenFilename("HTML (*.html),*.html")
-    If filePath = False Then Exit Sub
+      } else {
+        if (!cell.includes(p)) return false;
+      }
+    }
+  }
+  return true;
+}
 
-    For i = 0 To 6
-        Set dicts(i) = CreateObject("Scripting.Dictionary")
-    Next i
+----------------------------------------------------------
+function highlightText(text, col) {
+  const f = FILTERS[col];
+  if (!f) return text;
 
-    ' ===== LEER HTML =====
-    Dim stmIn As Object
-    Set stmIn = CreateObject("ADODB.Stream")
-    stmIn.Type = 2
-    stmIn.Charset = "UTF-8"
-    stmIn.Open
-    stmIn.LoadFromFile CStr(filePath)
+  let result = text;
+  const parts = f.split(/\s+/).filter(p => !p.startsWith("<>"));
 
-    Dim html As String
-    html = stmIn.ReadText
-    stmIn.Close
-
-    ' ===== LOCALIZAR SCRIPT Y DATA =====
-    Dim posScriptIni As Long, posScriptFin As Long
-    Dim posDataIni As Long, posDataFin As Long
-
-    posScriptIni = InStr(html, "<script>")
-    posScriptFin = InStr(posScriptIni, html, "</script>")
-    posDataIni = InStr(posScriptIni, html, "const DATA = [")
-    posDataFin = InStr(posDataIni, html, "];")
-
-    If posScriptIni = 0 Or posDataIni = 0 Or posDataFin = 0 Then
-        MsgBox "No se encontró <script> o DATA", vbCritical
-        Exit Sub
-    End If
-
-    Dim antesScript As String, despuesScript As String
-    antesScript = Left$(html, posScriptIni - 1)
-    despuesScript = Mid$(html, posScriptFin + 9)
-
-    Dim dataOriginal As String
-    dataOriginal = Mid$(html, posDataIni, posDataFin - posDataIni + 2)
-
-    ' ===== PROCESAR DATA =====
-    Dim lineas() As String
-    lineas = Split(dataOriginal, vbLf)
-
-    Dim dataStm As Object
-    Set dataStm = CreateObject("ADODB.Stream")
-    dataStm.Type = 2
-    dataStm.Charset = "UTF-8"
-    dataStm.Open
-
-    For i = LBound(lineas) To UBound(lineas)
-        Dim linea As String
-        linea = Trim$(Replace(lineas(i), vbCr, ""))
-
-        If Left$(linea, 1) = "[" Then
-            Dim cols() As String
-            cols = ParseJsArrayRowTo7(linea)
-
-            dataStm.WriteText "  ["
-
-            For j = 0 To 6
-                Dim valor As String
-                valor = cols(j)
-
-                Dim clave As String
-                If Len(valor) <= 3 Then
-                    clave = valor
-                Else
-                    If Not dicts(j).Exists(valor) Then
-                        dicts(j).Add valor, "k" & j & "x" & dicts(j).Count
-                    End If
-                    clave = dicts(j)(valor)
-                End If
-
-                dataStm.WriteText """" & clave & """"
-                If j < 6 Then dataStm.WriteText ","
-            Next j
-
-            dataStm.WriteText "]," & vbCrLf
-        End If
-    Next i
-
-    ' ===== CREAR MAPS =====
-    Dim maps As String
-    maps = "const MAPS = {" & vbCrLf
-
-    For i = 0 To 6
-        maps = maps & "  " & i & ": {"
-        Dim k As Variant, c As Long
-        c = 0
-        For Each k In dicts(i).Keys
-            c = c + 1
-            Dim esc As String
-            esc = CStr(k)
-            esc = Replace(esc, "\", "\\")
-            esc = Replace(esc, """", "\""")
-            esc = Replace(esc, vbCr, "\r")
-            esc = Replace(esc, vbLf, "\n")
-            If c > 1 Then maps = maps & ","
-            maps = maps & """" & dicts(i)(k) & """:""" & esc & """"
-        Next k
-        maps = maps & "}"
-        If i < 6 Then maps = maps & ","
-        maps = maps & vbCrLf
-    Next i
-
-    maps = maps & "};" & vbCrLf
-
-    ' ===== JS FINAL CORRECTO =====
-    Dim js As String
-
-    js = ""
-    js = js & "const DEFAULT_RENDER_LIMIT=500,MAX_SUGGESTIONS=500;" & vbCrLf
-    js = js & "const INPUTS=[...document.querySelectorAll('thead input')];" & vbCrLf
-    js = js & "const TBODY=document.getElementById('tbody');" & vbCrLf
-    js = js & "const STATUS=document.getElementById('status');" & vbCrLf
-    js = js & "const FILTERS=Array(7).fill('');" & vbCrLf
-
-    js = js & "function getVal(c,k){if(!k)return'';const s=String(k);return(MAPS[c]&&MAPS[c][s]!==undefined)?MAPS[c][s]:s;}" & vbCrLf
-
-    js = js & "function rowMatches(row,ig=-1){for(let i=0;i<7;i++){if(i===ig)continue;const f=FILTERS[i];if(!f)continue;const cell=getVal(i,row[i]).toLowerCase();const parts=f.split(/\s+/).filter(Boolean);for(const p of parts){if(p.startsWith('+')){if(!cell.includes(p.slice(1)))return false;}else if(p.startsWith('-')){if(cell.includes(p.slice(1)))return false;}else{if(!cell.includes(p))return false;}}}return true;}" & vbCrLf
-
-    js = js & "function renderTable(){TBODY.innerHTML='';const m=DATA.filter(r=>rowMatches(r)),l=Math.min(m.length,DEFAULT_RENDER_LIMIT);for(const row of m.slice(0,l)){const tr=document.createElement('tr');row.forEach((c,i)=>{const td=document.createElement('td');td.textContent=getVal(i,c);tr.appendChild(td)});TBODY.appendChild(tr)}STATUS.textContent=`Coincidencias: ${m.length}${m.length>l?' (limitado)':''}`;}" & vbCrLf
-
-    js = js & "function updateDatalist(c,t){const dl=document.getElementById('dl'+c);dl.innerHTML='';const cnt=new Map();for(const r of DATA){if(!rowMatches(r,c))continue;const v=getVal(c,r[c]);if(v)cnt.set(v,(cnt.get(v)||0)+1)}for(const [v,n] of [...cnt.entries()].sort((a,b)=>a[0].localeCompare(b[0]))){if(t&&!v.toLowerCase().includes(t))continue;const o=document.createElement('option');o.value=v;o.label=`${v} (${n})`;dl.appendChild(o);if(dl.children.length>=MAX_SUGGESTIONS)break}}" & vbCrLf
-
-    js = js & "function updateAllDatalists(except=-1){for(let i=0;i<7;i++)if(i!==except)updateDatalist(i,INPUTS[i].value)}" & vbCrLf
-
-    js = js & "function handleType(c,el){const v=el.value.toLowerCase().trim();FILTERS[c]=v;el.classList.toggle('active',v.length>0);updateDatalist(c,v);renderTable();updateAllDatalists(c)}" & vbCrLf
-
-    js = js & "function clearAllFilters(){FILTERS.fill('');INPUTS.forEach(i=>{i.value='';i.classList.remove('active')});renderTable();updateAllDatalists()}" & vbCrLf
-
-    js = js & "renderTable();updateAllDatalists();" & vbCrLf
-
-    ' ===== ESCRIBIR HTML FINAL =====
-    Dim outPath As String
-    outPath = Replace(filePath, ".html", "_OPTIMIZADO.html")
-
-    Dim stmOut As Object
-    Set stmOut = CreateObject("ADODB.Stream")
-    stmOut.Type = 2
-    stmOut.Charset = "UTF-8"
-    stmOut.Open
-
-    stmOut.WriteText antesScript
-    stmOut.WriteText "<script>" & vbCrLf
-    stmOut.WriteText maps
-    stmOut.WriteText "const DATA=[" & vbCrLf
-    dataStm.Position = 0
-    stmOut.WriteText dataStm.ReadText
-    stmOut.WriteText "];" & vbCrLf
-    stmOut.WriteText js
-    stmOut.WriteText "</script>" & vbCrLf
-    stmOut.WriteText despuesScript
-
-    stmOut.SaveToFile outPath, 2
-    stmOut.Close
-
-    MsgBox "✓ HTML generado correctamente y funcionando", vbInformation
-
-End Sub
+  for (const p of parts) {
+    const t = p.replace(/^\+/,"");
+    if (!t) continue;
+    const re = new RegExp(`(${t})`,"ig");
+    result = result.replace(re,"<mark>$1</mark>");
+  }
+  return result;
+}
 
 
 
+-----------------------------------------------------------
+function highlightText(text, col) {
+  const f = FILTERS[col];
+  if (!f) return text;
 
+  let result = text;
+  const parts = f.split(/\s+/).filter(p => !p.startsWith("<>"));
 
-Private Function ParseJsArrayRowTo7(ByVal line As String) As String()
-    Dim res(0 To 6) As String
-    Dim i As Long, col As Long
-    Dim ch As String, quoteChar As String
-    Dim insideString As Boolean
-    Dim escapeNext As Boolean
-    Dim cur As String
+  for (const p of parts) {
+    const t = p.replace(/^\+/,"");
+    if (!t) continue;
+    const re = new RegExp(`(${t})`,"ig");
+    result = result.replace(re,"<mark>$1</mark>");
+  }
+  return result;
+}
 
-    col = 0
-    cur = ""
-    insideString = False
-    escapeNext = False
-    quoteChar = ""
-
-    i = InStr(1, line, "[")
-    If i = 0 Then ParseJsArrayRowTo7 = res: Exit Function
-    i = i + 1
-
-    Do While i <= Len(line) And col <= 6
-        ch = Mid$(line, i, 1)
-
-        If insideString Then
-            If escapeNext Then
-                cur = cur & ch
-                escapeNext = False
-            ElseIf ch = "\" Then
-                escapeNext = True
-            ElseIf ch = quoteChar Then
-                insideString = False
-            Else
-                cur = cur & ch
-            End If
-        Else
-            Select Case ch
-                Case """", "'"
-                    insideString = True
-                    quoteChar = ch
-                Case ","
-                    res(col) = cur
-                    cur = ""
-                    col = col + 1
-                Case "]"
-                    res(col) = cur
-                    Exit Do
-                Case Else
-                    cur = cur & ch
-            End Select
-        End If
-
-        i = i + 1
-    Loop
-
-    Do While col < 6
-        col = col + 1
-        res(col) = ""
-    Loop
-
-    ParseJsArrayRowTo7 = res
-End Function
-
-
-
-
-
-
-
+--------------------------------------------------------------
+function handleType(col, el) {
+  const val = el.value.toLowerCase().trim();
+  FILTERS[col] = val;
+  el.classList.toggle("active", val.length > 0);
+  updateDatalist(col,val);
+  renderTable();
+  updateAllDatalists(col);
+}
