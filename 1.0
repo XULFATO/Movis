@@ -1,18 +1,14 @@
 Option Explicit
 
-Sub OptimizarHTML_FINAL_FUNCIONANDO()
+Sub OptimizarHTML_FINAL()
 
     Dim filePath As Variant
     Dim i As Long, j As Long
     Dim dicts(0 To 6) As Object
 
     Dim respReducir As VbMsgBoxResult
-    Dim respOfuscar As VbMsgBoxResult
-
     respReducir = MsgBox("¿Comprimir HTML?", vbYesNo + vbQuestion)
     If respReducir = vbNo Then Exit Sub
-
-    respOfuscar = MsgBox("¿Ofuscar JavaScript?", vbYesNo + vbQuestion)
 
     filePath = Application.GetOpenFilename("HTML (*.html),*.html")
     If filePath = False Then Exit Sub
@@ -21,7 +17,7 @@ Sub OptimizarHTML_FINAL_FUNCIONANDO()
         Set dicts(i) = CreateObject("Scripting.Dictionary")
     Next i
 
-    ' ========= LEER ARCHIVO =========
+    ' ===== LEER HTML =====
     Dim stmIn As Object
     Set stmIn = CreateObject("ADODB.Stream")
     stmIn.Type = 2
@@ -33,7 +29,7 @@ Sub OptimizarHTML_FINAL_FUNCIONANDO()
     html = stmIn.ReadText
     stmIn.Close
 
-    ' ========= LOCALIZAR SCRIPT Y DATA =========
+    ' ===== LOCALIZAR SCRIPT Y DATA =====
     Dim posScriptIni As Long, posScriptFin As Long
     Dim posDataIni As Long, posDataFin As Long
 
@@ -48,13 +44,13 @@ Sub OptimizarHTML_FINAL_FUNCIONANDO()
     End If
 
     Dim antesScript As String, despuesScript As String
-    Dim dataOriginal As String
-
     antesScript = Left$(html, posScriptIni - 1)
     despuesScript = Mid$(html, posScriptFin + 9)
+
+    Dim dataOriginal As String
     dataOriginal = Mid$(html, posDataIni, posDataFin - posDataIni + 2)
 
-    ' ========= PROCESAR DATA =========
+    ' ===== PROCESAR DATA =====
     Dim lineas() As String
     lineas = Split(dataOriginal, vbLf)
 
@@ -96,7 +92,7 @@ Sub OptimizarHTML_FINAL_FUNCIONANDO()
         End If
     Next i
 
-    ' ========= CREAR MAPS =========
+    ' ===== CREAR MAPS =====
     Dim maps As String
     maps = "const MAPS = {" & vbCrLf
 
@@ -122,7 +118,7 @@ Sub OptimizarHTML_FINAL_FUNCIONANDO()
 
     maps = maps & "};" & vbCrLf
 
-    ' ========= JS FINAL (NO OFUSCADO) =========
+    ' ===== JS FINAL CORRECTO =====
     Dim js As String
 
     js = ""
@@ -134,21 +130,21 @@ Sub OptimizarHTML_FINAL_FUNCIONANDO()
 
     js = js & "function getVal(c,k){if(!k)return'';const s=String(k);return(MAPS[c]&&MAPS[c][s]!==undefined)?MAPS[c][s]:s;}" & vbCrLf
 
-    js = js & "function rowMatches(row,ig=-1){for(let i=0;i<7;i++){if(i===ig)continue;const f=FILTERS[i];if(!f)continue;const cell=getVal(i,row[i]).toLowerCase(),p=f.split(/\s+/).filter(Boolean);for(const x of p){if(x.startsWith('+')&&!cell.includes(x.slice(1)))return false;if(x.startsWith('-')&&cell.includes(x))return false;if(!x.startsWith('+')&&!x.startsWith('-')&&!cell.includes(x))return false}}return true}" & vbCrLf
+    js = js & "function rowMatches(row,ig=-1){for(let i=0;i<7;i++){if(i===ig)continue;const f=FILTERS[i];if(!f)continue;const cell=getVal(i,row[i]).toLowerCase();const parts=f.split(/\s+/).filter(Boolean);for(const p of parts){if(p.startsWith('+')){if(!cell.includes(p.slice(1)))return false;}else if(p.startsWith('-')){if(cell.includes(p.slice(1)))return false;}else{if(!cell.includes(p))return false;}}}return true;}" & vbCrLf
 
-    js = js & "function renderTable(){TBODY.innerHTML='';const m=DATA.filter(r=>rowMatches(r)),l=Math.min(m.length,DEFAULT_RENDER_LIMIT);for(const row of m.slice(0,l)){const tr=document.createElement('tr');row.forEach((c,i)=>{const td=document.createElement('td');td.textContent=getVal(i,c);tr.appendChild(td)});TBODY.appendChild(tr)}STATUS.textContent=`Coincidencias: ${m.length}`}" & vbCrLf
+    js = js & "function renderTable(){TBODY.innerHTML='';const m=DATA.filter(r=>rowMatches(r)),l=Math.min(m.length,DEFAULT_RENDER_LIMIT);for(const row of m.slice(0,l)){const tr=document.createElement('tr');row.forEach((c,i)=>{const td=document.createElement('td');td.textContent=getVal(i,c);tr.appendChild(td)});TBODY.appendChild(tr)}STATUS.textContent=`Coincidencias: ${m.length}${m.length>l?' (limitado)':''}`;}" & vbCrLf
 
     js = js & "function updateDatalist(c,t){const dl=document.getElementById('dl'+c);dl.innerHTML='';const cnt=new Map();for(const r of DATA){if(!rowMatches(r,c))continue;const v=getVal(c,r[c]);if(v)cnt.set(v,(cnt.get(v)||0)+1)}for(const [v,n] of [...cnt.entries()].sort((a,b)=>a[0].localeCompare(b[0]))){if(t&&!v.toLowerCase().includes(t))continue;const o=document.createElement('option');o.value=v;o.label=`${v} (${n})`;dl.appendChild(o);if(dl.children.length>=MAX_SUGGESTIONS)break}}" & vbCrLf
 
     js = js & "function updateAllDatalists(except=-1){for(let i=0;i<7;i++)if(i!==except)updateDatalist(i,INPUTS[i].value)}" & vbCrLf
 
-    js = js & "function handleType(c,el){const v=el.value.toLowerCase().trim();FILTERS[c]=v;el.classList.toggle('active',!!v);updateDatalist(c,v);renderTable();updateAllDatalists(c)}" & vbCrLf
+    js = js & "function handleType(c,el){const v=el.value.toLowerCase().trim();FILTERS[c]=v;el.classList.toggle('active',v.length>0);updateDatalist(c,v);renderTable();updateAllDatalists(c)}" & vbCrLf
 
     js = js & "function clearAllFilters(){FILTERS.fill('');INPUTS.forEach(i=>{i.value='';i.classList.remove('active')});renderTable();updateAllDatalists()}" & vbCrLf
 
     js = js & "renderTable();updateAllDatalists();" & vbCrLf
 
-    ' ========= ESCRIBIR ARCHIVO =========
+    ' ===== ESCRIBIR HTML FINAL =====
     Dim outPath As String
     outPath = Replace(filePath, ".html", "_OPTIMIZADO.html")
 
@@ -172,85 +168,9 @@ Sub OptimizarHTML_FINAL_FUNCIONANDO()
     stmOut.SaveToFile outPath, 2
     stmOut.Close
 
-    MsgBox "? HTML generado correctamente y funcionando", vbInformation
+    MsgBox "✓ HTML generado correctamente y funcionando", vbInformation
 
 End Sub
-
-Private Function ParseJsArrayRowTo7(ByVal line As String) As String()
-    Dim res(0 To 6) As String
-    Dim i As Long, col As Long
-    Dim ch As String, q As String
-    Dim insideString As Boolean, esc As Boolean
-    Dim cur As String
-
-    col = 0
-    cur = ""
-    insideString = False
-    esc = False
-
-    i = InStr(1, line, "[")
-    If i = 0 Then
-        ParseJsArrayRowTo7 = res
-        Exit Function
-    End If
-
-    i = i + 1
-    Do While i <= Len(line) And col <= 6
-        ch = Mid$(line, i, 1)
-
-        If insideString Then
-            If esc Then
-                cur = cur & ch
-                esc = False
-            ElseIf ch = "\" Then
-                esc = True
-            ElseIf ch = q Then
-                insideString = False
-            Else
-                cur = cur & ch
-            End If
-        Else
-            Select Case ch
-                Case """", "'"
-                    insideString = True
-                    q = ch
-
-                Case ","
-                    res(col) = Trim$(cur)
-                    cur = ""
-                    col = col + 1
-
-                Case "]"
-                    res(col) = Trim$(cur)
-                    Exit Do
-
-                Case " ", vbTab, vbCr, vbLf
-                    ' ignorar espacios fuera de string
-
-                Case Else
-                    cur = cur & ch
-            End Select
-        End If
-
-        i = i + 1
-    Loop
-
-    Do While col < 6
-        col = col + 1
-        res(col) = ""
-    Loop
-
-    ParseJsArrayRowTo7 = res
-End Function
-
-
-
-
-
-
-
-
-
 
 
 
@@ -270,13 +190,8 @@ Private Function ParseJsArrayRowTo7(ByVal line As String) As String()
     escapeNext = False
     quoteChar = ""
 
-    ' Ir al primer [
     i = InStr(1, line, "[")
-    If i = 0 Then
-        ParseJsArrayRowTo7 = res
-        Exit Function
-    End If
-
+    If i = 0 Then ParseJsArrayRowTo7 = res: Exit Function
     i = i + 1
 
     Do While i <= Len(line) And col <= 6
@@ -284,39 +199,27 @@ Private Function ParseJsArrayRowTo7(ByVal line As String) As String()
 
         If insideString Then
             If escapeNext Then
-                ' Mantener el carácter escapado tal cual
                 cur = cur & ch
                 escapeNext = False
-
             ElseIf ch = "\" Then
                 escapeNext = True
-
             ElseIf ch = quoteChar Then
-                ' Cierre real del string
                 insideString = False
-
             Else
                 cur = cur & ch
             End If
-
         Else
             Select Case ch
                 Case """", "'"
                     insideString = True
                     quoteChar = ch
-
                 Case ","
                     res(col) = cur
                     cur = ""
                     col = col + 1
-
                 Case "]"
                     res(col) = cur
                     Exit Do
-
-                Case " ", vbTab, vbCr, vbLf
-                    ' ignorar fuera de string
-
                 Case Else
                     cur = cur & ch
             End Select
@@ -325,7 +228,6 @@ Private Function ParseJsArrayRowTo7(ByVal line As String) As String()
         i = i + 1
     Loop
 
-    ' Rellenar columnas faltantes
     Do While col < 6
         col = col + 1
         res(col) = ""
@@ -336,163 +238,6 @@ End Function
 
 
 
-
-const DEFAULT_RENDER_LIMIT = 500;
-const MAX_SUGGESTIONS = 500;
-
-const INPUTS = [...document.querySelectorAll("thead input")];
-const TBODY = document.getElementById("tbody");
-const STATUS = document.getElementById("status");
-const FILTERS = Array(7).fill("");
-
-function getVal(c,k){
-  if(!k) return "";
-  const s = String(k);
-  return (window.MAPS && MAPS[c] && MAPS[c][s] !== undefined) ? MAPS[c][s] : s;
-}
-
-function rowMatches(row, ignoreCol=-1){
-  for(let i=0;i<7;i++){
-    if(i===ignoreCol) continue;
-
-    const f = FILTERS[i];
-    if(!f) continue;
-
-    const cell = getVal(i,row[i]).toLowerCase();
-    const parts = f.split(/\s+/).filter(Boolean);
-
-    for(const p of parts){
-      if(p.startsWith("+")){
-        if(!cell.includes(p.slice(1))) return false;
-
-      } else if(p.startsWith("-")){
-        if(cell.includes(p.slice(1))) return false;
-
-      } else {
-        if(!cell.includes(p)) return false;
-      }
-    }
-  }
-  return true;
-}
-
-function renderTable(){
-  TBODY.innerHTML = "";
-  const m = DATA.filter(r => rowMatches(r));
-  const l = Math.min(m.length, DEFAULT_RENDER_LIMIT);
-
-  for(const row of m.slice(0,l)){
-    const tr = document.createElement("tr");
-    row.forEach((c,i)=>{
-      const td = document.createElement("td");
-      td.textContent = getVal(i,c);
-      tr.appendChild(td);
-    });
-    TBODY.appendChild(tr);
-  }
-
-  STATUS.textContent =
-    `Coincidencias: ${m.length}` +
-    (m.length>l ? " (limitado)" : "");
-}
-
-function updateDatalist(c,t){
-  const dl = document.getElementById("dl"+c);
-  dl.innerHTML = "";
-  const cnt = new Map();
-
-  for(const r of DATA){
-    if(!rowMatches(r,c)) continue;
-    const v = getVal(c,r[c]);
-    if(v) cnt.set(v,(cnt.get(v)||0)+1);
-  }
-
-  for(const [v,n] of [...cnt.entries()].sort((a,b)=>a[0].localeCompare(b[0]))){
-    if(t && !v.toLowerCase().includes(t)) continue;
-    const opt = document.createElement("option");
-    opt.value = v;
-    opt.label = `${v} (${n})`;
-    dl.appendChild(opt);
-    if(dl.children.length >= MAX_SUGGESTIONS) break;
-  }
-}
-
-function updateAllDatalists(except=-1){
-  for(let i=0;i<7;i++){
-    if(i!==except) updateDatalist(i, INPUTS[i].value);
-  }
-}
-
-function handleType(c,el){
-  const v = el.value.toLowerCase().trim();
-  FILTERS[c] = v;
-
-  /* 🔵 MARCAR CAMPO ACTIVO */
-  el.classList.toggle("active", v.length > 0);
-
-  updateDatalist(c,v);
-  renderTable();
-  updateAllDatalists(c);
-}
-
-function clearAllFilters(){
-  FILTERS.fill("");
-  INPUTS.forEach(i=>{
-    i.value="";
-    i.classList.remove("active");
-  });
-  renderTable();
-  updateAllDatalists();
-}
-
-/* ORDEN CORRECTO AL ARRANCAR */
-renderTable();
-updateAllDatalists();
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-function rowMatches(row, ignoreCol=-1){
-  for(let i=0;i<7;i++){
-    if(i===ignoreCol) continue;
-
-    const f = FILTERS[i];
-    if(!f) continue;
-
-    const cell = getVal(i,row[i]).toLowerCase();
-    const parts = f.split(/\s+/).filter(Boolean);
-
-    for(const x of parts){
-      if(x.startsWith('+')){
-        if(!cell.includes(x.slice(1))) return false;
-
-      } else if(x.startsWith('-')){
-        if(cell.includes(x.slice(1))) return false;
-
-      } else {
-        if(!cell.includes(x)) return false;
-      }
-    }
-  }
-  return true;
-}
 
 
 
