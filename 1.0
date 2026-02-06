@@ -256,5 +256,82 @@ End Function
 
 
 
-Replace(valor, """", "")
+Private Function ParseJsArrayRowTo7(ByVal line As String) As String()
+    Dim res(0 To 6) As String
+    Dim i As Long, col As Long
+    Dim ch As String, quoteChar As String
+    Dim insideString As Boolean
+    Dim escapeNext As Boolean
+    Dim cur As String
+
+    col = 0
+    cur = ""
+    insideString = False
+    escapeNext = False
+    quoteChar = ""
+
+    ' Ir al primer [
+    i = InStr(1, line, "[")
+    If i = 0 Then
+        ParseJsArrayRowTo7 = res
+        Exit Function
+    End If
+
+    i = i + 1
+
+    Do While i <= Len(line) And col <= 6
+        ch = Mid$(line, i, 1)
+
+        If insideString Then
+            If escapeNext Then
+                ' Mantener el carácter escapado tal cual
+                cur = cur & ch
+                escapeNext = False
+
+            ElseIf ch = "\" Then
+                escapeNext = True
+
+            ElseIf ch = quoteChar Then
+                ' Cierre real del string
+                insideString = False
+
+            Else
+                cur = cur & ch
+            End If
+
+        Else
+            Select Case ch
+                Case """", "'"
+                    insideString = True
+                    quoteChar = ch
+
+                Case ","
+                    res(col) = cur
+                    cur = ""
+                    col = col + 1
+
+                Case "]"
+                    res(col) = cur
+                    Exit Do
+
+                Case " ", vbTab, vbCr, vbLf
+                    ' ignorar fuera de string
+
+                Case Else
+                    cur = cur & ch
+            End Select
+        End If
+
+        i = i + 1
+    Loop
+
+    ' Rellenar columnas faltantes
+    Do While col < 6
+        col = col + 1
+        res(col) = ""
+    Loop
+
+    ParseJsArrayRowTo7 = res
+End Function
+
 
