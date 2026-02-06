@@ -335,3 +335,165 @@ Private Function ParseJsArrayRowTo7(ByVal line As String) As String()
 End Function
 
 
+
+
+const DEFAULT_RENDER_LIMIT = 500;
+const MAX_SUGGESTIONS = 500;
+
+const INPUTS = [...document.querySelectorAll("thead input")];
+const TBODY = document.getElementById("tbody");
+const STATUS = document.getElementById("status");
+const FILTERS = Array(7).fill("");
+
+function getVal(c,k){
+  if(!k) return "";
+  const s = String(k);
+  return (window.MAPS && MAPS[c] && MAPS[c][s] !== undefined) ? MAPS[c][s] : s;
+}
+
+function rowMatches(row, ignoreCol=-1){
+  for(let i=0;i<7;i++){
+    if(i===ignoreCol) continue;
+
+    const f = FILTERS[i];
+    if(!f) continue;
+
+    const cell = getVal(i,row[i]).toLowerCase();
+    const parts = f.split(/\s+/).filter(Boolean);
+
+    for(const p of parts){
+      if(p.startsWith("+")){
+        if(!cell.includes(p.slice(1))) return false;
+
+      } else if(p.startsWith("-")){
+        if(cell.includes(p.slice(1))) return false;
+
+      } else {
+        if(!cell.includes(p)) return false;
+      }
+    }
+  }
+  return true;
+}
+
+function renderTable(){
+  TBODY.innerHTML = "";
+  const m = DATA.filter(r => rowMatches(r));
+  const l = Math.min(m.length, DEFAULT_RENDER_LIMIT);
+
+  for(const row of m.slice(0,l)){
+    const tr = document.createElement("tr");
+    row.forEach((c,i)=>{
+      const td = document.createElement("td");
+      td.textContent = getVal(i,c);
+      tr.appendChild(td);
+    });
+    TBODY.appendChild(tr);
+  }
+
+  STATUS.textContent =
+    `Coincidencias: ${m.length}` +
+    (m.length>l ? " (limitado)" : "");
+}
+
+function updateDatalist(c,t){
+  const dl = document.getElementById("dl"+c);
+  dl.innerHTML = "";
+  const cnt = new Map();
+
+  for(const r of DATA){
+    if(!rowMatches(r,c)) continue;
+    const v = getVal(c,r[c]);
+    if(v) cnt.set(v,(cnt.get(v)||0)+1);
+  }
+
+  for(const [v,n] of [...cnt.entries()].sort((a,b)=>a[0].localeCompare(b[0]))){
+    if(t && !v.toLowerCase().includes(t)) continue;
+    const opt = document.createElement("option");
+    opt.value = v;
+    opt.label = `${v} (${n})`;
+    dl.appendChild(opt);
+    if(dl.children.length >= MAX_SUGGESTIONS) break;
+  }
+}
+
+function updateAllDatalists(except=-1){
+  for(let i=0;i<7;i++){
+    if(i!==except) updateDatalist(i, INPUTS[i].value);
+  }
+}
+
+function handleType(c,el){
+  const v = el.value.toLowerCase().trim();
+  FILTERS[c] = v;
+
+  /* 🔵 MARCAR CAMPO ACTIVO */
+  el.classList.toggle("active", v.length > 0);
+
+  updateDatalist(c,v);
+  renderTable();
+  updateAllDatalists(c);
+}
+
+function clearAllFilters(){
+  FILTERS.fill("");
+  INPUTS.forEach(i=>{
+    i.value="";
+    i.classList.remove("active");
+  });
+  renderTable();
+  updateAllDatalists();
+}
+
+/* ORDEN CORRECTO AL ARRANCAR */
+renderTable();
+updateAllDatalists();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+function rowMatches(row, ignoreCol=-1){
+  for(let i=0;i<7;i++){
+    if(i===ignoreCol) continue;
+
+    const f = FILTERS[i];
+    if(!f) continue;
+
+    const cell = getVal(i,row[i]).toLowerCase();
+    const parts = f.split(/\s+/).filter(Boolean);
+
+    for(const x of parts){
+      if(x.startsWith('+')){
+        if(!cell.includes(x.slice(1))) return false;
+
+      } else if(x.startsWith('-')){
+        if(cell.includes(x.slice(1))) return false;
+
+      } else {
+        if(!cell.includes(x)) return false;
+      }
+    }
+  }
+  return true;
+}
+
+
+
+
