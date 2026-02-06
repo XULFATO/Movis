@@ -1,11 +1,186 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<title>Tabla filtrable con los datos de ficheros personal</title>
+
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+
+<style>
+:root {
+  --bg: #f5f5f5;
+  --ink: #222;
+  --muted: #666;
+  --line: #ddd;
+  --head: #333;
+  --headink: #fff;
+  --active: #0b6eed;
+}
+
+body {
+  font-family: system-ui, Arial, sans-serif;
+  margin: 20px;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+h2 {
+  margin: 0 0 8px;
+}
+
+.meta {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  box-shadow: 0 2px 10px rgba(0,0,0,.06);
+}
+
+th, td {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+thead th {
+  background: var(--head);
+  color: var(--headink);
+  position: sticky;
+  top: 42px;
+  z-index: 1;
+}
+
+thead tr:first-child th {
+  top: 0;
+}
+
+thead input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  outline: none;
+}
+
+thead input.active {
+  border-color: var(--active);
+  font-weight: 600;
+}
+
+tbody tr:nth-child(even) td {
+  background: #fafafa;
+}
+
+mark {
+  background: none;
+  color: var(--active);
+  font-weight: 600;
+}
+
+.status {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 10px;
+}
+
+.actions {
+  margin-bottom: 10px;
+}
+
+.actions button {
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  background: #fff;
+}
+
+.actions button:hover {
+  background: #094db1;
+  color: #fff;
+}
+</style>
+</head>
+
+<body>
+
+<h2>Tabla filtrable con los datos de ficheros personal</h2>
+
+<div class="meta">
+  Usa <b>palabra</b> para buscar,
+  <b>+palabra</b> para obligar,
+  <b>&lt;&gt;palabra</b> para excluir.
+</div>
+
+<div class="actions">
+  <button onclick="clearAllFilters()">Borrar todos los filtros</button>
+</div>
+
+<table>
+<thead>
+<tr>
+  <th><input list="dl0" placeholder="Fichero" oninput="handleType(0,this)"><datalist id="dl0"></datalist></th>
+  <th><input list="dl1" placeholder="Código" oninput="handleType(1,this)"><datalist id="dl1"></datalist></th>
+  <th><input list="dl2" placeholder="Formato" oninput="handleType(2,this)"><datalist id="dl2"></datalist></th>
+  <th><input list="dl3" placeholder="Descripción" oninput="handleType(3,this)"><datalist id="dl3"></datalist></th>
+  <th><input list="dl4" placeholder="Descripción 2" oninput="handleType(4,this)"><datalist id="dl4"></datalist></th>
+  <th><input list="dl5" placeholder="€" oninput="handleType(5,this)"><datalist id="dl5"></datalist></th>
+  <th><input list="dl6" placeholder="Capítulo" oninput="handleType(6,this)"><datalist id="dl6"></datalist></th>
+</tr>
+<tr>
+  <th>Fichero</th>
+  <th>Código</th>
+  <th>Formato</th>
+  <th>Descripción</th>
+  <th>Descripción 2</th>
+  <th>€</th>
+  <th>Capítulo</th>
+</tr>
+</thead>
+
+<tbody id="tbody"></tbody>
+</table>
+
+<div class="status" id="status"></div>
+
+<script>
+const data = [
+ ["F(XXXX) FICHERO DE PERSONAL","A001","A25","APELLIDOS","INFORMACIONES REPETITIVAS","",""],
+ ["F(XXXX) FICHERO DE PERSONAL","A002","A15","NOMBRE","","",""],
+ ["W(XXXX) VALORES DE REFERENCIA DEL TRATAMIENTO","0126","P9.2","LIBRE","","",""],
+ ["W(XXXX) VALORES DE REFERENCIA DEL TRATAMIENTO","0128","P9.2","LIBRE","","",""],
+ ["W(XXXX) VALORES DE REFERENCIA DEL TRATAMIENTO","0129","A01","TIPO DE EXPLOTACIÓN","","",""],
+ ["W(XXXX) VALORES DE REFERENCIA DEL TRATAMIENTO","0130","N04","FECHA DE NOMINA","","",""]
+];
+
+const DEFAULT_RENDER_LIMIT = 500;
+const MAX_SUGGESTIONS = 500;
+
+const INPUTS = [...document.querySelectorAll("thead input")];
+const TBODY = document.getElementById("tbody");
+const STATUS = document.getElementById("status");
+const FILTERS = Array(6).fill("");
+
 function rowMatches(row, ignoreCol=-1) {
-  for (let i=0;i<7;i++) {
+  for (let i=0;i<6;i++) {
     if (i===ignoreCol) continue;
     const f = FILTERS[i];
     if (!f) continue;
 
     const cell = String(row[i]).toLowerCase();
-    const parts = f.split(/\s+/).filter(Boolean);
+
+    // 🔑 normalizar "<> palabra" → "<>palabra"
+    const normalized = f.replace(/<>\s+/g,"<>");
+
+    const parts = normalized.split(/\s+/).filter(Boolean);
 
     for (const p of parts) {
       if (p.startsWith("+")) {
@@ -22,13 +197,14 @@ function rowMatches(row, ignoreCol=-1) {
   return true;
 }
 
-----------------------------------------------------------
 function highlightText(text, col) {
   const f = FILTERS[col];
   if (!f) return text;
 
   let result = text;
-  const parts = f.split(/\s+/).filter(p => !p.startsWith("<>"));
+
+  const normalized = f.replace(/<>\s+/g,"<>");
+  const parts = normalized.split(/\s+/).filter(p => !p.startsWith("<>"));
 
   for (const p of parts) {
     const t = p.replace(/^\+/,"");
@@ -39,31 +215,75 @@ function highlightText(text, col) {
   return result;
 }
 
+function renderTable() {
+  TBODY.innerHTML = "";
+  const matched = DATA.filter(r => rowMatches(r));
+  const limit = Math.min(matched.length, DEFAULT_RENDER_LIMIT);
 
-
------------------------------------------------------------
-function highlightText(text, col) {
-  const f = FILTERS[col];
-  if (!f) return text;
-
-  let result = text;
-  const parts = f.split(/\s+/).filter(p => !p.startsWith("<>"));
-
-  for (const p of parts) {
-    const t = p.replace(/^\+/,"");
-    if (!t) continue;
-    const re = new RegExp(`(${t})`,"ig");
-    result = result.replace(re,"<mark>$1</mark>");
+  for (const row of matched.slice(0,limit)) {
+    const tr = document.createElement("tr");
+    row.forEach((c,i)=>{
+      const td = document.createElement("td");
+      td.innerHTML = highlightText(String(c),i);
+      tr.appendChild(td);
+    });
+    TBODY.appendChild(tr);
   }
-  return result;
+
+  STATUS.textContent =
+    `Coincidencias: ${matched.length}` +
+    (matched.length>limit ? " (limitado)" : "");
 }
 
---------------------------------------------------------------
+function updateDatalist(col, typed) {
+  const dl = document.getElementById("dl"+col);
+  dl.innerHTML = "";
+  const counts = new Map();
+
+  for (const row of DATA) {
+    if (!rowMatches(row,col)) continue;
+    const v = String(row[col]);
+    counts.set(v,(counts.get(v)||0)+1);
+  }
+
+  for (const [val,n] of [...counts.entries()].sort((a,b)=>a[0].localeCompare(b[0]))) {
+    if (typed && !val.toLowerCase().includes(typed)) continue;
+    const opt = document.createElement("option");
+    opt.value = val;
+    opt.label = `${val} (${n})`;
+    dl.appendChild(opt);
+    if (dl.children.length>=MAX_SUGGESTIONS) break;
+  }
+}
+
+function updateAllDatalists(except=-1) {
+  for (let i=0;i<6;i++) {
+    if (i!==except) updateDatalist(i,INPUTS[i].value);
+  }
+}
+
 function handleType(col, el) {
   const val = el.value.toLowerCase().trim();
   FILTERS[col] = val;
-  el.classList.toggle("active", val.length > 0);
+  el.classList.toggle("active", val.length>0);
   updateDatalist(col,val);
   renderTable();
   updateAllDatalists(col);
 }
+
+function clearAllFilters() {
+  FILTERS.fill("");
+  INPUTS.forEach(i=>{
+    i.value="";
+    i.classList.remove("active");
+  });
+  renderTable();
+  updateAllDatalists();
+}
+
+updateAllDatalists();
+renderTable();
+</script>
+
+</body>
+</html>
