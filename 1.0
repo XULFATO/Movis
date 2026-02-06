@@ -243,3 +243,18 @@ Private Function ParseJsArrayRowTo7(ByVal line As String) As String()
     ParseJsArrayRowTo7 = res
 End Function
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+Replace(valor, """", "")
+
