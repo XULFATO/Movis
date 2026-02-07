@@ -3,7 +3,7 @@ Option Explicit
 Sub OptimizarHTML_DICCIONARIO_PRO_V3()
     Dim filePath As Variant, outPath As String
     Dim i As Long, j As Long, dicts(0 To 5) As Object
-    Dim stmIn As Object, htmlOriginal As String
+    Dim stmIn As Object, stmOut As Object, htmlOriginal As String
     Dim tInicio As Double: tInicio = Timer
 
     filePath = Application.GetOpenFilename("HTML (*.html),*.html")
@@ -11,6 +11,7 @@ Sub OptimizarHTML_DICCIONARIO_PRO_V3()
 
     For i = 0 To 5: Set dicts(i) = CreateObject("Scripting.Dictionary"): Next i
 
+    ' --- LECTURA ---
     Set stmIn = CreateObject("ADODB.Stream")
     stmIn.Type = 2: stmIn.Charset = "UTF-8": stmIn.Open
     stmIn.LoadFromFile CStr(filePath): htmlOriginal = stmIn.ReadText: stmIn.Close
@@ -20,16 +21,14 @@ Sub OptimizarHTML_DICCIONARIO_PRO_V3()
     posDataFin = InStr(posDataIni, htmlOriginal, "];")
     If posDataIni = 0 Then MsgBox "No se encontró DATA", vbCritical: Exit Sub
 
-    ' --- PROCESAR HTML PARA INSERTAR EL CHECKBOX ---
-    ' Buscamos la zona de acciones para meter el checkbox de límite
+    ' --- PROCESAR HTML ---
     Dim htmlHead As String, htmlFoot As String
     Dim posActions As Long: posActions = InStr(htmlOriginal, "<div class=""actions"">")
     
-    ' Si existe la zona de acciones, le inyectamos el checkbox
     If posActions > 0 Then
         Dim insertPos As Long: insertPos = InStr(posActions, htmlOriginal, "</div>")
         htmlHead = Left$(htmlOriginal, insertPos - 1) & _
-                   " <label style='margin-left:20px;font-size:13px;font-weight:600;cursor:pointer'>" & _
+                   " <label style='margin-left:20px;font-size:13px;font-weight:600;cursor:pointer;color:var(--head)'>" & _
                    "<input type='checkbox' id='chkLimit' checked onchange='render()'> Limitar a 500 filas</label>" & _
                    Mid$(htmlOriginal, insertPos, InStr(htmlOriginal, "<script>") - insertPos + 8)
     Else
@@ -64,7 +63,7 @@ Sub OptimizarHTML_DICCIONARIO_PRO_V3()
     Next i
     If Right(dataFinal, 1) = "," Then dataFinal = Left(dataFinal, Len(dataFinal) - 1)
 
-    ' --- MAPS ---
+    ' --- DICCIONARIOS ---
     Dim maps As String: maps = "const MAPS={"
     For i = 0 To 5
         maps = maps & i & ":{"
@@ -80,7 +79,7 @@ Sub OptimizarHTML_DICCIONARIO_PRO_V3()
     Next i
     maps = maps & "};"
 
-    ' --- JS MOTOR (MODIFICADO PARA EL CHECKBOX) ---
+    ' --- MOTOR JS ---
     Dim js As String
     js = vbCrLf & "const DATA=[" & dataFinal & "];" & vbCrLf & maps & vbCrLf & _
          "const INPUTS=[...document.querySelectorAll('thead input')],TBODY=document.getElementById('tbody'),STATUS=document.getElementById('status'),FILTERS=Array(6).fill('');" & vbCrLf & _
@@ -88,10 +87,10 @@ Sub OptimizarHTML_DICCIONARIO_PRO_V3()
          "function rowMatches(r,skip=-1){for(let i=0;i<6;i++){if(i===skip)continue;const f=FILTERS[i];if(!f)continue;const v=String(getVal(i,r[i])).toLowerCase();" & _
          "const parts=f.split(/\s+/).filter(Boolean);for(const p of parts){if(p.startsWith('+')){if(!v.includes(p.slice(1)))return false}else if(p.startsWith('<>')){if(v.includes(p.slice(2)))return false}else{if(!v.includes(p))return false}}}return true}" & vbCrLf & _
          "function highlight(t,i){const f=FILTERS[i];if(!f)return t;const parts=f.split(/\s+/).filter(p=>!p.startsWith('<>'));let res=t;for(const p of parts){const s=p.startsWith('+')?p.slice(1):p;if(!s)continue;res=res.replace(new RegExp(`(${s})`,'ig'),'<mark>$1</mark>')}return res;}" & vbCrLf & _
-         "function render(){TBODY.innerHTML='';const m=DATA.filter(r=>rowMatches(r));const limitCheck=document.getElementById('chkLimit');" & _
-         "const toShow= (limitCheck && limitCheck.checked) ? m.slice(0,500) : m;" & _
-         "toShow.forEach(r=>{const tr=document.createElement('tr');r.forEach((c,i)=>{const td=document.createElement('td');td.innerHTML=highlight(String(getVal(i,c)),i);tr.appendChild(td)});TBODY.appendChild(tr)});" & _
-         "STATUS.textContent=`Coincidencias: ${m.length} ${ (limitCheck && limitCheck.checked && m.length>500) ? '(limitado a 500)' : ''}`}" & vbCrLf & _
+         "function render(){TBODY.innerHTML='';const m=DATA.filter(r=>rowMatches(r));const chk=document.getElementById('chkLimit');" & _
+         "const show= (chk && chk.checked) ? m.slice(0,500) : m;" & _
+         "show.forEach(r=>{const tr=document.createElement('tr');r.forEach((c,i)=>{const td=document.createElement('td');td.innerHTML=highlight(String(getVal(i,c)),i);tr.appendChild(td)});TBODY.appendChild(tr)});" & _
+         "STATUS.textContent=`Coincidencias: ${m.length} ${ (chk && chk.checked && m.length>500) ? '(limitado a 500)' : ''}`}" & vbCrLf & _
          "function updateDL(c){const dl=document.getElementById('dl'+c);if(!dl)return;dl.innerHTML='';const cnt=new Map();for(const r of DATA){if(!rowMatches(r,c))continue;const v=getVal(c,r[c]);if(v)cnt.set(v,(cnt.get(v)||0)+1)}[...cnt.entries()].sort((a,b)=>a[0].localeCompare(b[0])).slice(0,1000).forEach(([v,n])=>{const o=document.createElement('option');o.value=v;o.text=`${v} (${n})`;dl.appendChild(o)})}" & vbCrLf & _
          "function handleType(c,el){FILTERS[c]=el.value.trim().toLowerCase();el.classList.toggle('active',!!FILTERS[c]);el.classList.toggle('exclude',FILTERS[c].includes('<>'));render();}" & vbCrLf & _
          "function clearAllFilters(){FILTERS.fill('');INPUTS.forEach(i=>{i.value='';i.classList.remove('active','exclude')});render();}" & vbCrLf & _
@@ -99,14 +98,18 @@ Sub OptimizarHTML_DICCIONARIO_PRO_V3()
          "INPUTS.forEach((inp,idx)=>{inp.oninput=()=>handleType(idx,inp);inp.onfocus=()=>updateDL(idx);});" & vbCrLf & _
          "render();"
 
-    ' --- SALVAR ---
+    ' --- GUARDADO FINAL ---
     outPath = Replace(filePath, ".html", "_OPTIMIZADO.html")
-    Set stmIn = CreateObject("ADODB.Stream")
-    stmIn.Type = 2: stmIn.Charset = "UTF-8": stmIn.Open
-    stmIn.WriteText htmlHead & js & htmlFoot
-    stmOut.SaveToFile outPath, 2: stmIn.Close
+    Set stmOut = CreateObject("ADODB.Stream")
+    stmOut.Type = 2: stmOut.Charset = "UTF-8": stmOut.Open
+    stmOut.WriteText htmlHead & js & htmlFoot
+    stmOut.SaveToFile outPath, 2
+    stmOut.Close
 
-    MsgBox "Listo. Se ha añadido el checkbox de control de límite.", vbInformation
+    ' INFO DE REDUCCIÓN
+    Dim sO As Long, sF As Long
+    sO = FileLen(filePath) \ 1024: sF = FileLen(outPath) \ 1024
+    MsgBox "Optimización exitosa." & vbCrLf & "Original: " & sO & "KB" & vbCrLf & "Nuevo: " & sF & "KB" & vbCrLf & "Ahorro: " & Round((1 - (sF / sO)) * 100, 1) & "%", vbInformation
 End Sub
 
 Private Function ParseJsArrayRowTo6(ByVal line As String) As String()
