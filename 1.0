@@ -1,357 +1,135 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-<meta charset="UTF-8">
-<title>DICCIONARIO – Personal</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="icon" href="data:image/svg+xml,
-<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'>
-  <text y='0.9em' font-size='90'>☀️ Diccionario</text>
-</svg>">
+Option Explicit
 
-<style>
-:root{
-  --bg: #f1f5fb;        /* azul muy suave */
-  --ink: #1f2d3d;       /* azul oscuro */
-  --muted: #5b6b82;
-  --line: #d6deeb;
-  --head: #2f4a7d;      /* azul cabecera */
-  --headink: #ffffff;
-  --active: #3b82f6;    /* azul elegante */
-}
+Sub OptimizarHTML_DICCIONARIO_PRO_V2()
+    Dim filePath As Variant, outPath As String
+    Dim i As Long, j As Long, dicts(0 To 5) As Object
+    Dim stmIn As Object, htmlOriginal As String
+    Dim tInicio As Double: tInicio = Timer
 
-body{
-  font-family: system-ui, Arial, sans-serif;
-  margin: 20px;
-  background: var(--bg);
-  color: var(--ink);
-}
+    ' SELECCIÓN DE ARCHIVO
+    filePath = Application.GetOpenFilename("HTML (*.html),*.html")
+    If filePath = False Then Exit Sub
 
-h2{
-  margin: 0 0 8px;
-  font-weight: 600;
-}
+    For i = 0 To 5: Set dicts(i) = CreateObject("Scripting.Dictionary"): Next i
 
-.meta{
-  font-size: 12px;
-  color: var(--muted);
-  margin-bottom: 8px;
-}
+    ' LEER ARCHIVO ORIGINAL
+    Set stmIn = CreateObject("ADODB.Stream")
+    stmIn.Type = 2: stmIn.Charset = "UTF-8": stmIn.Open
+    stmIn.LoadFromFile CStr(filePath): htmlOriginal = stmIn.ReadText: stmIn.Close
 
-.actions{
-  margin-bottom: 12px;
-}
+    ' LOCALIZAR BLOQUE DATA
+    Dim posDataIni As Long, posDataFin As Long
+    posDataIni = InStr(htmlOriginal, "const DATA = [")
+    posDataFin = InStr(posDataIni, htmlOriginal, "];")
+    
+    If posDataIni = 0 Then MsgBox "No se encontró la constante DATA en el HTML", vbCritical: Exit Sub
 
-.actions button{
-  padding: 6px 14px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 600;
-  border: 1px solid var(--active);
-  background: var(--active);
-  color: #fff;
-}
+    ' EXTRAER PARTES FIJAS DEL HTML (Head y Estructura)
+    ' Cortamos justo antes del primer <script> y después del último </script>
+    Dim posScriptOpen As Long, posScriptClose As Long
+    posScriptOpen = InStr(htmlOriginal, "<script>")
+    posScriptClose = InStrRev(htmlOriginal, "</script>")
+    
+    Dim htmlHead As String, htmlFoot As String
+    htmlHead = Left$(htmlOriginal, posScriptOpen + 7)
+    htmlFoot = Mid$(htmlOriginal, posScriptClose)
 
-.actions button:hover{
-  background: #2563eb;
-}
+    ' PROCESAR LÍNEAS DE DATA
+    Dim dataOriginal As String, lineas() As String
+    dataOriginal = Mid$(htmlOriginal, posDataIni, posDataFin - posDataIni + 2)
+    lineas = Split(dataOriginal, vbLf)
 
-table{
-  width: 100%;
-  border-collapse: collapse;
-  background: #ffffff;
-  border-radius: 10px;
-  overflow: hidden;
-  box-shadow: 0 6px 24px rgba(30,58,138,.08);
-}
+    Dim dataFinal As String: dataFinal = ""
+    For i = LBound(lineas) To UBound(lineas)
+        Dim linea As String: linea = Trim$(Replace(lineas(i), vbCr, ""))
+        If Left$(linea, 1) = "[" Then
+            Dim cols() As String: cols = ParseJsArrayRowTo6(linea)
+            Dim filaStr As String: filaStr = "["
+            For j = 0 To 5
+                Dim v As String: v = cols(j)
+                If v = "" Then
+                    filaStr = filaStr & "0"
+                Else
+                    If Not dicts(j).Exists(v) Then dicts(j).Add v, dicts(j).Count + 1
+                    filaStr = filaStr & dicts(j)(v)
+                End If
+                If j < 5 Then filaStr = filaStr & ","
+            Next j
+            dataFinal = dataFinal & filaStr & "],"
+        End If
+    Next i
+    If Right(dataFinal, 1) = "," Then dataFinal = Left(dataFinal, Len(dataFinal) - 1)
 
-th, td{
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--line);
-  vertical-align: top;
-}
+    ' GENERAR DICCIONARIO (MAPS)
+    Dim maps As String: maps = "const MAPS={"
+    For i = 0 To 5
+        maps = maps & i & ":{"
+        Dim k As Variant, c As Long: c = 0
+        For Each k In dicts(i).Keys
+            c = c + 1
+            Dim esc As String: esc = Replace(Replace(CStr(k), "\", "\\"), """", "\""")
+            maps = maps & dicts(i)(k) & ":""" & esc & """"
+            If c < dicts(i).Count Then maps = maps & ","
+        Next k
+        maps = maps & "}"
+        If i < 5 Then maps = maps & ","
+    Next i
+    maps = maps & "};"
 
-thead th{
-  background: var(--head);
-  color: var(--headink);
-  position: sticky;
-  top: 0;
-  z-index: 1;
-}
+    ' MOTOR JAVASCRIPT CORREGIDO (CON DATALISTS)
+    Dim js As String
+    js = vbCrLf & "const DATA=[" & dataFinal & "];" & vbCrLf & maps & vbCrLf & _
+         "const INPUTS=[...document.querySelectorAll('thead input')],TBODY=document.getElementById('tbody'),STATUS=document.getElementById('status'),FILTERS=Array(6).fill('');" & vbCrLf & _
+         "const getVal=(c,k)=>k===0?'':(MAPS[c][k]||k);" & vbCrLf & _
+         "function rowMatches(r,skip=-1){for(let i=0;i<6;i++){if(i===skip)continue;const f=FILTERS[i];if(!f)continue;const v=String(getVal(i,r[i])).toLowerCase();const parts=f.split(/\s+/).filter(Boolean);" & _
+         "for(const p of parts){if(p.startsWith('+')){if(!v.includes(p.slice(1)))return false}else if(p.startsWith('<>')){if(v.includes(p.slice(2)))return false}else{if(!v.includes(p))return false}}}return true}" & vbCrLf & _
+         "function highlight(t,i){const f=FILTERS[i];if(!f)return t;const parts=f.split(/\s+/).filter(p=>!p.startsWith('<>'));let res=t;for(const p of parts){const s=p.startsWith('+')?p.slice(1):p;if(!s)continue;res=res.replace(new RegExp(`(${s})`,'ig'),'<mark>$1</mark>')}return res;}" & vbCrLf & _
+         "function render(){TBODY.innerHTML='';const m=DATA.filter(r=>rowMatches(r));m.slice(0,500).forEach(r=>{const tr=document.createElement('tr');r.forEach((c,i)=>{const td=document.createElement('td');td.innerHTML=highlight(String(getVal(i,c)),i);tr.appendChild(td)});TBODY.appendChild(tr)});STATUS.textContent=`Coincidencias: ${m.length} ${m.length>500?'(mostrando 500)':''}`;}" & vbCrLf & _
+         "function updateDL(c){const dl=document.getElementById('dl'+c);if(!dl)return;dl.innerHTML='';const cnt=new Map();for(const r of DATA){if(!rowMatches(r,c))continue;const v=getVal(c,r[c]);if(v)cnt.set(v,(cnt.get(v)||0)+1)}[...cnt.entries()].sort((a,b)=>a[0].localeCompare(b[0])).slice(0,1000).forEach(([v,n])=>{const o=document.createElement('option');o.value=v;o.text=`${v} (${n})`;dl.appendChild(o)})}" & vbCrLf & _
+         "function handleType(c,el){const v=el.value.trim().toLowerCase();FILTERS[c]=v;el.classList.toggle('active',!!v);el.classList.toggle('exclude',v.includes('<>'));render();}" & vbCrLf & _
+         "function handleFocus(c){updateDL(c);}" & vbCrLf & _
+         "function clearAllFilters(){FILTERS.fill('');INPUTS.forEach(i=>{i.value='';i.classList.remove('active','exclude')});render();}" & vbCrLf & _
+         "document.addEventListener('keydown',e=>e.key==='Escape'&&clearAllFilters());" & vbCrLf & _
+         "INPUTS.forEach((inp,idx)=>{inp.oninput=()=>handleType(idx,inp);inp.onfocus=()=>handleFocus(idx);});" & vbCrLf & _
+         "render();"
 
-thead input{
-  width: 100%;
-  padding: 6px 8px;
-  border-radius: 6px;
-  border: 1px solid var(--line);
-  outline: none;
-  box-sizing: border-box;
-  background: #f8fbff;
-  color: var(--ink);
-}
+    ' GUARDAR NUEVO ARCHIVO
+    outPath = Replace(filePath, ".html", "_OPTIMIZADO.html")
+    Dim stmOut As Object
+    Set stmOut = CreateObject("ADODB.Stream")
+    stmOut.Type = 2: stmOut.Charset = "UTF-8": stmOut.Open
+    stmOut.WriteText htmlHead & js & htmlFoot
+    stmOut.SaveToFile outPath, 2: stmOut.Close
 
-thead input.active{
-  border-color: var(--active);
-  box-shadow: 0 0 0 2px rgba(59,130,246,.18);
-  font-weight: 600;
-}
+    ' INFO FINAL
+    Dim sizeOrig As Long, sizeFin As Long
+    sizeOrig = FileLen(filePath) \ 1024
+    sizeFin = FileLen(outPath) \ 1024
+    MsgBox "Archivo generado: " & Mid(outPath, InStrRev(outPath, "\") + 1) & vbCrLf & _
+           "Tiempo: " & Round(Timer - tInicio, 2) & "s" & vbCrLf & _
+           "Reducción: " & sizeOrig & "KB -> " & sizeFin & "KB (" & Round((1 - (sizeFin / sizeOrig)) * 100, 1) & "%)", vbInformation
+End Sub
 
-tbody tr:nth-child(even){
-  background: #f7faff;
-}
+Private Function ParseJsArrayRowTo6(ByVal line As String) As String()
+    Dim res(0 To 5) As String, i As Long, col As Long, ch As String, q As String, inside As Boolean, cur As String
+    i = InStr(line, "[") + 1
+    Do While i <= Len(line) And col <= 5
+        ch = Mid$(line, i, 1)
+        If Not inside Then
+            If ch = """" Or ch = "'" Then
+                inside = True: q = ch
+            ElseIf ch = "," Then
+                res(col) = Trim$(cur): cur = "": col = col + 1
+            ElseIf ch = "]" Then
+                res(col) = Trim$(cur): Exit Do
+            Else
+                cur = cur & ch
+            End If
+        Else
+            If ch = q Then inside = False Else cur = cur & ch
+        End If
+        i = i + 1
+    Loop
+    ParseJsArrayRowTo6 = res
+End Function
 
-mark{
-  background: none;
-  color: var(--active);
-  font-weight: 700;
-}
-
-.status{
-  margin-top: 12px;
-  font-size: 13px;
-  color: var(--muted);
-  font-weight: 600;
-}
-
-
-thead tr:first-child th {
-  padding-bottom: 10px;
-  border-bottom: 4px solid #ffffff;
-}
-
-thead tr:last-child th {
-  text-transform: uppercase;
-  font-size: 12px;
-  letter-spacing: .05em;
-  background: #355a9b; /* azul un pelín distinto */
-}
-
-thead input.exclude{
-  border-color: var(--exclude);
-  background: #ffb6c1;
-}
-
-</style>
-
-</head>
-
-<body>
-
-<h2>Tabla filtrable con los datos de ficheros personal</h2>
-
-<div class="meta">
-  palabra · <b>+palabra</b> obligatorio · <b>&lt;&gt;palabra</b> excluir
-</div>
-
-<div class="actions">
-  <button onclick="clearAllFilters()">Borrar todos los filtros</button>
-</div>
-
-<table>
-<thead>
-<tr>
-  <th><input list="dl0" placeholder="Fichero" onfocus="handleFocus(0)" oninput="handleType(0,this)"><datalist id="dl0"></datalist></th>
-  <th><input list="dl1" placeholder="Código" onfocus="handleFocus(1)" oninput="handleType(1,this)"><datalist id="dl1"></datalist></th>
-  <th><input list="dl2" placeholder="Formato" onfocus="handleFocus(2)" oninput="handleType(2,this)"><datalist id="dl2"></datalist></th>
-  <th><input list="dl3" placeholder="Descripción" onfocus="handleFocus(3)" oninput="handleType(3,this)"><datalist id="dl3"></datalist></th>
-  <th><input list="dl4" placeholder="Capítulo" onfocus="handleFocus(4)" oninput="handleType(4,this)"><datalist id="dl4"></datalist></th>
-  <th><input list="dl5" placeholder="Descripción 2" onfocus="handleFocus(5)" oninput="handleType(5,this)"><datalist id="dl5"></datalist></th>
-</tr>
-<tr>
-  <th>Fichero</th>
-  <th>Código</th>
-  <th>Formato</th>
-  <th>Descripción</th>
-  <th>Capítulo</th>
-  <th>Descripción 2</th>
-</tr>
-</thead>
-
-<tbody id="tbody"></tbody>
-</table>
-
-<div class="status" id="status"></div>
-
-<script>
-
-const DATA = [
-  ["FICHERO PERSONAL","A001","A25","APELLIDOS","01","INFORMACIONES"],
-  ["FICHERO PERSONAL","A002","A15","NOMBRE","01",""],
-  ["VALORES REFERENCIA","0127","P9.2","LIBRE","02",""],
-  ["VALORES REFERENCIA","0128","P9.2","LIBRE","02",""],
-  ["VALORES REFERENCIA","0129","A01","TIPO EXPLOTACIÓN","03",""],
-  ["VALORES REFERENCIA","0130","N04","FECHA NÓMINA","03",""]
-];
-
-/* =======================
-   CONFIGURACIÓN
-======================= */
-const COLS = 6;
-const MAX_RENDER = 500;
-
-/* =======================
-   ELEMENTOS
-======================= */
-const INPUTS = [...document.querySelectorAll("thead input")];
-const TBODY  = document.getElementById("tbody");
-const STATUS = document.getElementById("status");
-const FILTERS = Array(COLS).fill("");
-
-let debounce;
-
-/* =======================
-   DECODIFICADOR MAPS
-   (compatible con DATA normal)
-======================= */
-function getVal(col, key){
-  return (window.MAPS && MAPS[col] && MAPS[col][key] !== undefined)
-    ? MAPS[col][key]
-    : key;
-}
-
-/* =======================
-   FILTRADO
-======================= */
-function rowMatches(row){
-  for(let i = 0; i < COLS; i++){
-    const f = FILTERS[i];
-    if(!f) continue;
-
-    const cell = String(getVal(i, row[i])).toLowerCase();
-    const norm = f.replace(/<>\s+/g,"<>");
-    const parts = norm.split(/\s+/).filter(Boolean);
-
-    for(const p of parts){
-      if(p.startsWith("+")){
-        if(!cell.includes(p.slice(1))) return false;
-      }else if(p.startsWith("<>")){
-        if(cell.includes(p.slice(2))) return false;
-      }else{
-        if(!cell.includes(p)) return false;
-      }
-    }
-  }
-  return true;
-}
-
-/* =======================
-   RESALTADO
-======================= */
-function highlightText(text, col){
-  const f = FILTERS[col];
-  if(!f) return text;
-
-  const norm = f.replace(/<>\s+/g,"<>");
-  const parts = norm.split(/\s+/).filter(p => !p.startsWith("<>"));
-
-  let res = text;
-  for(const p of parts){
-    const t = p.replace(/^\+/,"");
-    if(!t) continue;
-    res = res.replace(
-      new RegExp(`(${t})`, "ig"),
-      "<mark>$1</mark>"
-    );
-  }
-  return res;
-}
-
-/* =======================
-   RENDER TABLA
-======================= */
-function renderTable(){
-  TBODY.innerHTML = "";
-
-  const matched = DATA.filter(rowMatches);
-  const showing = Math.min(matched.length, MAX_RENDER);
-
-  for(const row of matched.slice(0, showing)){
-    const tr = document.createElement("tr");
-    row.forEach((c,i)=>{
-      const td = document.createElement("td");
-      td.innerHTML = highlightText(String(getVal(i,c)), i);
-      tr.appendChild(td);
-    });
-    TBODY.appendChild(tr);
-  }
-
-  STATUS.textContent =
-    `Coincidencias: ${matched.length} · Mostrando: ${showing}` +
-    (matched.length > showing ? " (limitado por rendimiento)" : "");
-}
-
-/* =======================
-   DATALIST
-======================= */
-function updateDatalist(col){
-  const dl = document.getElementById("dl"+col);
-  dl.innerHTML = "";
-  const cnt = new Map();
-
-  for(const r of DATA){
-    if(!rowMatches(r)) continue;
-    const v = getVal(col, r[col]);
-    cnt.set(v, (cnt.get(v) || 0) + 1);
-  }
-
-  for(const [v,n] of [...cnt.entries()].sort((a,b)=>a[0].localeCompare(b[0]))){
-    const opt = document.createElement("option");
-    opt.value = v;
-    opt.label = `${v} (${n})`;
-    dl.appendChild(opt);
-  }
-}
-
-/* =======================
-   EVENTOS INPUT
-======================= */
-function handleFocus(col){
-  updateDatalist(col);
-}
-
-function handleType(col, el){
-  clearTimeout(debounce);
-
-  debounce = setTimeout(()=>{
-    const raw = el.value.trim();
-    const val = raw.toLowerCase();
-
-    FILTERS[col] = val;
-
-    el.classList.toggle("active", val.length > 0);
-    el.classList.toggle("exclude", val.includes("<>"));
-
-    updateDatalist(col);
-    renderTable();
-  }, 120);
-}
-
-/* =======================
-   LIMPIAR FILTROS
-======================= */
-function clearAllFilters(){
-  FILTERS.fill("");
-  INPUTS.forEach(i=>{
-    i.value = "";
-    i.classList.remove("active","exclude");
-  });
-  renderTable();
-}
-
-/* =======================
-   TECLA ESC
-======================= */
-document.addEventListener("keydown", e=>{
-  if(e.key === "Escape") clearAllFilters();
-});
-
-/* =======================
-   INIT
-======================= */
-renderTable();
-</script>
-
-
-</body>
-</html>
