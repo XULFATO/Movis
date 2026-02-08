@@ -1,0 +1,120 @@
+Option Explicit
+
+Private Const SEP_MOD As String = "[[MOD:"
+Private Const SEP_ENDMOD As String = "]]"
+Private Const SEP_NL As String = "~NL~"
+
+Public Sub Reconstruir_VBA_Completo_Desde_FOTO()
+    Dim ws As Worksheet
+    Dim dict As Object
+    Dim lastRow As Long, r As Long
+    Dim id As Long, data As String
+    Dim maxId As Long
+    Dim missing As String
+    Dim txt As String
+    Dim wbNew As Workbook
+    Dim pos As Long, nextPos As Long
+    Dim modName As String, body As String
+    Dim vbComp As Object
+    
+    Set ws = Sheets("FOTO_VBA")
+    Set dict = CreateObject("Scripting.Dictionary")
+    
+    ' --------------------------------------------
+    ' 1) LEER BLOQUES A/B
+    ' --------------------------------------------
+    lastRow = ws.Cells(ws.Rows.Count, "B").End(xlUp).Row
+    If ws.Cells(ws.Rows.Count, "E").End(xlUp).Row > lastRow Then
+        lastRow = ws.Cells(ws.Rows.Count, "E").End(xlUp).Row
+    End If
+    
+    For r = 2 To lastRow
+        If IsNumeric(ws.Cells(r, "A").Value) Then
+            id = CLng(ws.Cells(r, "A").Value)
+            data = CStr(ws.Cells(r, "B").Value)
+            If Left$(data, 1) = "'" Then data = Mid$(data, 2)
+            If data <> "" Then dict(id) = data
+            If id > maxId Then maxId = id
+        End If
+    Next r
+    
+    ' --------------------------------------------
+    ' 2) LEER BLOQUES D/E
+    ' --------------------------------------------
+    For r = 2 To lastRow
+        If IsNumeric(ws.Cells(r, "D").Value) Then
+            id = CLng(ws.Cells(r, "D").Value)
+            data = CStr(ws.Cells(r, "E").Value)
+            If Left$(data, 1) = "'" Then data = Mid$(data, 2)
+            If data <> "" Then dict(id) = data
+            If id > maxId Then maxId = id
+        End If
+    Next r
+    
+    If maxId = 0 Then
+        MsgBox "No se han encontrado bloques válidos.", vbCritical
+        Exit Sub
+    End If
+    
+    ' --------------------------------------------
+    ' 3) VALIDAR CONTINUIDAD Y RECONSTRUIR TEXTO
+    ' --------------------------------------------
+    txt = ""
+    missing = ""
+    
+    For id = 1 To maxId
+        If Not dict.Exists(id) Then
+            missing = missing & id & ","
+        Else
+            txt = txt & dict(id)
+        End If
+    Next id
+    
+    If missing <> "" Then
+        MsgBox "FALTAN BLOQUES: " & Left$(missing, Len(missing) - 1) & _
+               vbCrLf & "Reconstrucción abortada.", vbCritical
+        Exit Sub
+    End If
+    
+    ' --------------------------------------------
+    ' 4) CREAR LIBRO NUEVO
+    ' --------------------------------------------
+    Set wbNew = Workbooks.Add
+    
+    ' --------------------------------------------
+    ' 5) CREAR MÓDULOS VBA
+    ' --------------------------------------------
+    pos = 1
+    Do
+        pos = InStr(pos, txt, SEP_MOD, vbTextCompare)
+        If pos = 0 Then Exit Do
+        
+        pos = pos + Len(SEP_MOD)
+        nextPos = InStr(pos, txt, SEP_ENDMOD, vbTextCompare)
+        If nextPos = 0 Then Exit Do
+        
+        modName = Mid$(txt, pos, nextPos - pos)
+        pos = nextPos + Len(SEP_ENDMOD)
+        
+        nextPos = InStr(pos, txt, SEP_MOD, vbTextCompare)
+        If nextPos = 0 Then
+            body = Mid$(txt, pos)
+        Else
+            body = Mid$(txt, pos, nextPos - pos)
+        End If
+        
+        body = Replace(body, SEP_NL, vbCrLf)
+        
+        Set vbComp = wbNew.VBProject.VBComponents.Add(1) ' módulo estándar
+        On Error Resume Next
+        vbComp.Name = modName
+        On Error GoTo 0
+        vbComp.CodeModule.AddFromString body
+        
+        If nextPos = 0 Then Exit Do
+        pos = nextPos
+    Loop
+    
+    MsgBox "VBA reconstruido COMPLETAMENTE en un libro nuevo." & vbCrLf & _
+           "Módulos creados: " & wbNew.VBProject.VBComponents.Count, vbInformation
+End Sub
