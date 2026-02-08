@@ -1,5 +1,106 @@
 Option Explicit
 
+Private Const TAM_BLOQUE As Long = 120    ' 100-160 suele ir bien en OCR
+Private Const SEP_MOD As String = "[[MOD:"
+Private Const SEP_NL As String = "~NL~"   ' separador de "saltos de línea" (OCR-friendly)
+Private Const SEP_ENDMOD As String = "]]"
+
+Public Sub ExportarVBA_A_FOTO()
+    Dim vbc As Object
+    Dim codLimpio As String, lin As String
+    Dim i As Long, n As Long, r As Long
+    Dim ws As Worksheet
+    Dim totalBloques As Long, bloquesPorCol As Long
+    Dim colBase As Long
+    
+    ' 1) Construir texto minificado
+    codLimpio = ""
+    For Each vbc In ThisWorkbook.VBProject.VBComponents
+        ' Si quieres solo módulos estándar:
+        ' If vbc.Type <> 1 Then GoTo NextComp
+        
+        codLimpio = codLimpio & SEP_MOD & vbc.Name & SEP_ENDMOD
+        
+        On Error Resume Next
+        With vbc.CodeModule
+            If .CountOfLines > 0 Then
+                For i = 1 To .CountOfLines
+                    lin = Trim$(.Lines(i, 1))
+                    If lin <> "" And Left$(lin, 1) <> "'" Then
+                        Do While InStr(lin, "  ") > 0
+                            lin = Replace(lin, "  ", " ")
+                        Loop
+                        codLimpio = codLimpio & lin & SEP_NL
+                    End If
+                Next i
+            End If
+        End With
+        On Error GoTo 0
+        
+'NextComp:
+    Next vbc
+    
+    If Len(codLimpio) = 0 Then
+        MsgBox "No se ha extraído código (¿Trust access VBProject?).", vbCritical
+        Exit Sub
+    End If
+    
+    ' 2) Crear hoja destino limpia
+    Application.DisplayAlerts = False
+    On Error Resume Next
+    Sheets("FOTO_VBA").Delete
+    On Error GoTo 0
+    Application.DisplayAlerts = True
+    
+    Set ws = Sheets.Add
+    ws.Name = "FOTO_VBA"
+    
+    ' 3) Calcular bloques y repartir en 2 columnas anchas: A-B y D-E
+    totalBloques = Application.WorksheetFunction.RoundUp(Len(codLimpio) / TAM_BLOQUE, 0)
+    bloquesPorCol = Application.WorksheetFunction.RoundUp(totalBloques / 2, 0)
+    
+    n = 1
+    For i = 1 To Len(codLimpio) Step TAM_BLOQUE
+        colBase = IIf(n <= bloquesPorCol, 0, 3) ' 0->A/B, 3->D/E
+        r = ((n - 1) Mod bloquesPorCol) + 2
+        
+        ws.Cells(r, colBase + 1).Value = n
+        ws.Cells(r, colBase + 2).Value = "'" & Mid$(codLimpio, i, TAM_BLOQUE)
+        
+        n = n + 1
+    Next i
+    
+    ' 4) Formato para foto/OCR
+    With ws
+        .Cells.Font.Name = "Consolas"
+        .Cells.Font.Size = 11
+        .Cells.VerticalAlignment = xlTop
+        .Columns("A").ColumnWidth = 6
+        .Columns("B").ColumnWidth = 90
+        .Columns("C").ColumnWidth = 3
+        .Columns("D").ColumnWidth = 6
+        .Columns("E").ColumnWidth = 90
+        
+        .Rows(1).Font.Bold = True
+        .Cells(1, 1).Value = "ID"
+        .Cells(1, 2).Value = "DATA"
+        .Cells(1, 4).Value = "ID"
+        .Cells(1, 5).Value = "DATA"
+        
+        ActiveWindow.DisplayGridlines = False
+        ActiveWindow.Zoom = 100
+        .Range("A2").Select
+        ActiveWindow.FreezePanes = True
+    End With
+    
+    MsgBox "Listo. Bloques totales: " & (n - 1) & vbCrLf & _
+           "Haz fotos que cubran ambas columnas (A-B y D-E).", vbInformation
+End Sub
+
+
+-----------------------------
+Option Explicit
+
 Private Const SEP_MOD As String = "[[MOD:"
 Private Const SEP_ENDMOD As String = "]]"
 Private Const SEP_NL As String = "~NL~"
