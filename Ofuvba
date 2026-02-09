@@ -1,1 +1,283 @@
+Option Explicit
+
+' ==================================================================================
+' SISTEMA DE OFUSCACIÓN Y AUDITORÍA AVANZADO
+' ==================================================================================
+' Este módulo procesa un archivo .xlsm externo, renombra variables/procedimientos,
+' compacta el código e inyecta un sistema de trazabilidad (Kernel).
+' ==================================================================================
+
+' CONSTANTES GLOBALES
+[span_1](start_span)[span_2](start_span)Private Const TECLA_AUDITORIA As String = "^+K" ' Ctrl+Shift+K[span_1](end_span)[span_2](end_span)
+[span_3](start_span)Private Const NOMBRE_MODULO_KERNEL As String = "mdl_System_Kernel"[span_3](end_span)
+[span_4](start_span)[span_5](start_span)Private Const PREFIJO_VARIABLES As String = "var_sys_"[span_4](end_span)[span_5](end_span)
+Private Const LISTA_PROTEGIDA As String = "Workbook_Open,Workbook_Close,Auto_Open,Auto_Close," & _
+                                          "ThisWorkbook,Sheet1,Sheet2,Sheet3," & _
+                                          [span_6](start_span)"mdl_System_Kernel,Kernel_Registrar_Evento,Kernel_Mostrar_Auditoria"[span_6](end_span)
+
+' ESTRUCTURA PARA EL DICCIONARIO DE MAPEO
+Private Type TipoMapeo
+    NombreOriginal As String
+    NombreNuevo As String
+End Type
+
+Private ArrayMapeo() As TipoMapeo
+Private ContadorMapeo As Long
+
+' ==================================================================================
+' PUNTO DE ENTRADA PRINCIPAL
+' ==================================================================================
+Public Sub Ejecutar_Motor_Proteccion()
+    Dim rutaOrigen As Variant, rutaDestino As Variant
+    Dim libroOrigen As Workbook, libroDestino As Workbook
+    Dim tiempoInicio As Double
+    Dim msgFinal As String
+    
+    [span_7](start_span)tiempoInicio = Timer[span_7](end_span)
+    
+    [span_8](start_span)' Selección de archivos[span_8](end_span)
+    rutaOrigen = Application.GetOpenFilename("Archivos Excel (*.xlsm), *.xlsm", , "Seleccione el archivo origen")
+    If rutaOrigen = False Then Exit Sub
+    
+    rutaDestino = Application.GetSaveAsFilename("Archivo_Protegido.xlsm", "Archivos Excel (*.xlsm), *.xlsm")
+    If rutaDestino = False Then Exit Sub
+    
+    [span_9](start_span)' Optimización de entorno[span_9](end_span)
+    Application.ScreenUpdating = False
+    Application.DisplayAlerts = False
+    Application.EnableEvents = False
+    Application.Calculation = xlCalculationManual
+    
+    On Error GoTo ManejadorErrores
+    
+    [span_10](start_span)' Proceso de clonación[span_10](end_span)
+    Set libroOrigen = Workbooks.Open(rutaOrigen, ReadOnly:=True)
+    libroOrigen.SaveCopyAs rutaDestino
+    libroOrigen.Close False
+    Set libroDestino = Workbooks.Open(rutaDestino)
+    
+    [span_11](start_span)' Inicializar Mapeo[span_11](end_span)
+    ContadorMapeo = 0
+    ReDim ArrayMapeo(0 To 0)
+    
+    ' --- FASES DE EJECUCIÓN ---
+    [span_12](start_span)Fase1_Inyectar_Kernel libroDestino[span_12](end_span)
+    [span_13](start_span)Fase2_Construir_Diccionario libroDestino[span_13](end_span)
+    [span_14](start_span)Fase3_Ofuscar_Codigo libroDestino[span_14](end_span)
+    [span_15](start_span)Fase4_Reparar_Botones libroDestino[span_15](end_span)
+    [span_16](start_span)Fase5_Renombrar_Modulos libroDestino[span_16](end_span)
+    
+    ' Finalización
+    libroDestino.Save
+    libroDestino.Close False
+    
+    ConfigurarEntorno True
+    
+    [span_17](start_span)' Construcción de mensaje segura para evitar truncado[span_17](end_span)
+    msgFinal = "PROCESO COMPLETADO" & vbCrLf
+    msgFinal = msgFinal & "---------------------------" & vbCrLf
+    msgFinal = msgFinal & "Elementos: " & ContadorMapeo & vbCrLf
+    msgFinal = msgFinal & "Tiempo: " & Format(Timer - tiempoInicio, "0.00") & "s" & vbCrLf
+    msgFinal = msgFinal & "Atajo: Ctrl+Shift+K"
+    
+    MsgBox msgFinal, vbInformation, "Éxito"
+    Exit Sub
+
+ManejadorErrores:
+    ConfigurarEntorno True
+    [span_18](start_span)MsgBox "Error " & Err.Number & ": " & Err.Description, vbCritical, "Fallo del Sistema"[span_18](end_span)
+End Sub
+
+' ==================================================================================
+' FASE 1: INYECCIÓN DE KERNEL (AUDITORÍA)
+' ==================================================================================
+Private Sub Fase1_Inyectar_Kernel(ByRef libro As Workbook)
+    Dim vbc As Object, cm As Object
+    
+    [span_19](start_span)' Inyectar Módulo de Auditoría[span_19](end_span)
+    On Error Resume Next
+    libro.VBProject.VBComponents.Remove libro.VBProject.VBComponents(NOMBRE_MODULO_KERNEL)
+    On Error GoTo 0
+    
+    Set vbc = libro.VBProject.VBComponents.Add(1) ' vbext_ct_StdModule
+    vbc.Name = NOMBRE_MODULO_KERNEL
+    Set cm = vbc.CodeModule
+    
+    With cm
+        .InsertLines 1, "Option Explicit"
+        .InsertLines 2, "Public Sub Kernel_Registrar_Evento(n As String)"
+        .InsertLines 3, "  On Error Resume Next"
+        .InsertLines 4, "  Dim p As Object: Set p = ThisWorkbook.CustomDocumentProperties(n)"
+        .InsertLines 5, "  If p Is Nothing Then"
+        .InsertLines 6, "    ThisWorkbook.CustomDocumentProperties.Add Name:=n, LinkToContent:=False, Type:=3, Value:=1"
+        .InsertLines 7, "  Else: p.Value = p.Value + 1: End If"
+        .InsertLines 8, "End Sub"
+        .InsertLines 9, "Public Sub Kernel_Mostrar_Auditoria()"
+        .InsertLines 10, "  Dim p As Object, r As String: r = ""REPORTE DE AUDITORIA"" & vbCrLf"
+        .InsertLines 11, "  For Each p In ThisWorkbook.CustomDocumentProperties"
+        .InsertLines 12, "    r = r & p.Name & "": "" & p.Value & vbCrLf"
+        .InsertLines 13, "  Next: MsgBox r, 64, ""Auditoria"""
+        .InsertLines 14, "End Sub"
+    [span_20](start_span)End With[span_20](end_span)
+
+    [span_21](start_span)' Configurar Auto-inicio en ThisWorkbook[span_21](end_span)
+    Set cm = libro.VBProject.VBComponents("ThisWorkbook").CodeModule
+    cm.DeleteLines 1, cm.CountOfLines
+    cm.InsertLines 1, "Private Sub Workbook_Open()"
+    cm.InsertLines 2, "  Application.OnKey """ & TECLA_AUDITORIA & """, ""Kernel_Mostrar_Auditoria"""
+    cm.InsertLines 3, "  Call Kernel_Registrar_Evento(""Sist_Apertura"")"
+    [span_22](start_span)cm.InsertLines 4, "End Sub"[span_22](end_span)
+End Sub
+
+' ==================================================================================
+' FASE 2: CONSTRUCCIÓN DEL DICCIONARIO (RegEx)
+' ==================================================================================
+Private Sub Fase2_Construir_Diccionario(ByRef libro As Workbook)
+    Dim comp As Object, re As Object, match As Object, matches As Object
+    [span_23](start_span)Set re = CreateObject("VBScript.RegExp")[span_23](end_span)
+    re.Global = True: re.IgnoreCase = True
+    
+    For Each comp In libro.VBProject.VBComponents
+        [span_24](start_span)' Nombres de Módulos[span_24](end_span)
+        If Not Es_Nombre_Protegido(comp.Name) Then Agregar_A_Diccionario comp.Name
+        
+        [span_25](start_span)' Procedimientos, Variables y Constantes[span_25](end_span)
+        If comp.CodeModule.CountOfLines > 0 Then
+            ' Sub/Func
+            re.Pattern = "(?:Sub|Function)\s+([a-zA-Z_][a-zA-Z0-9_]{2,})\s*\("
+            Set matches = re.Execute(comp.CodeModule.Lines(1, comp.CodeModule.CountOfLines))
+            For Each match In matches
+                If Not Es_Nombre_Protegido(match.SubMatches(0)) Then Agregar_A_Diccionario match.SubMatches(0)
+            Next
+        End If
+    Next comp
+End Sub
+
+' ==================================================================================
+' FASE 3: OFUSCACIÓN Y COMPACTACIÓN
+' ==================================================================================
+Private Sub Fase3_Ofuscar_Codigo(ByRef libro As Workbook)
+    Dim comp As Object, cm As Object, i As Long, ln As String, cln As String, nProc As String
+    
+    For Each comp In libro.VBProject.VBComponents
+        [span_26](start_span)If comp.Name = NOMBRE_MODULO_KERNEL Or comp.Name = "ThisWorkbook" Then GoTo NextComp[span_26](end_span)
+        Set cm = comp.CodeModule
+        cln = ""
+        
+        [span_27](start_span)For i = 1 To cm.CountOfLines[span_27](end_span)
+            ln = cm.Lines(i, 1)
+            [span_28](start_span)' 1. Quitar comentarios y limpiar espacios[span_28](end_span)
+            If InStr(ln, "'") > 0 Then ln = Left(ln, InStr(ln, "'") - 1)
+            ln = Trim(Replace(ln, vbTab, " "))
+            If ln = "" Then GoTo NextLine
+            
+            [span_29](start_span)[span_30](start_span)' 2. Inyectar Auditoría en procedimientos[span_29](end_span)[span_30](end_span)
+            nProc = Extraer_Nombre_Procedimiento(ln)
+            If nProc <> "" And Not Es_Nombre_Protegido(nProc) Then
+                ln = Aplicar_Mapeo(ln)
+                cln = cln & ln & vbCrLf & " Call Kernel_Registrar_Evento(""" & nProc & """)" & vbCrLf
+                GoTo NextLine
+            End If
+            
+            [span_31](start_span)' 3. Aplicar Mapeo General[span_31](end_span)
+            cln = cln & Aplicar_Mapeo(ln) & vbCrLf
+NextLine:
+            [span_32](start_span)If i Mod 100 = 0 Then DoEvents[span_32](end_span)
+        Next i
+        
+        [span_33](start_span)cm.DeleteLines 1, cm.CountOfLines[span_33](end_span)
+        If cln <> "" Then cm.AddFromString cln
+NextComp:
+    Next comp
+End Sub
+
+' ==================================================================================
+' FASE 4: REPARAR BOTONES (OnAction)
+' ==================================================================================
+Private Sub Fase4_Reparar_Botones(ByRef libro As Workbook)
+    Dim shp As Shape, ws As Worksheet, act As String, nNew As String
+    [span_34](start_span)For Each ws In libro.Worksheets[span_34](end_span)
+        [span_35](start_span)For Each shp In ws.Shapes[span_35](end_span)
+            On Error Resume Next
+            act = shp.OnAction
+            If act <> "" Then
+                If InStr(act, "!") > 0 Then act = Mid(act, InStr(act, "!") + 1)
+                [span_36](start_span)nNew = Obtener_Nombre_Mapeado(Replace(act, "'", ""))[span_36](end_span)
+                If nNew <> "" Then shp.OnAction = "'" & libro.Name & "'!" [span_37](start_span)& nNew[span_37](end_span)
+            End If
+            On Error GoTo 0
+        Next shp
+    Next ws
+End Sub
+
+' ==================================================================================
+' FASE 5: RENOMBRAR MÓDULOS
+' ==================================================================================
+Private Sub Fase5_Renombrar_Modulos(ByRef libro As Workbook)
+    Dim comp As Object, nNew As String
+    [span_38](start_span)For Each comp In libro.VBProject.VBComponents[span_38](end_span)
+        If Not Es_Nombre_Protegido(comp.Name) And comp.Name <> "ThisWorkbook" Then
+            [span_39](start_span)nNew = Obtener_Nombre_Mapeado(comp.Name)[span_39](end_span)
+            If nNew <> "" Then comp.Name = nNew
+        End If
+    Next comp
+End Sub
+
+' ==================================================================================
+' FUNCIONES DE APOYO
+' ==================================================================================
+Private Sub Agregar_A_Diccionario(orig As String)
+    Dim i As Long
+    For i = 0 To ContadorMapeo - 1
+        If ArrayMapeo(i).NombreOriginal = orig Then Exit Sub
+    Next i
+    [span_40](start_span)ReDim Preserve ArrayMapeo(ContadorMapeo)[span_40](end_span)
+    ArrayMapeo(ContadorMapeo).NombreOriginal = orig
+    ArrayMapeo(ContadorMapeo).NombreNuevo = PREFIJO_VARIABLES & Generar_Cadena_Aleatoria(8)
+    [span_41](start_span)ContadorMapeo = ContadorMapeo + 1[span_41](end_span)
+End Sub
+
+Private Function Aplicar_Mapeo(txt As String) As String
+    Dim i As Long, re As Object: Set re = CreateObject("VBScript.RegExp")
+    re.Global = True: Aplicar_Mapeo = txt
+    For i = 0 To ContadorMapeo - 1
+        [span_42](start_span)re.Pattern = "\b" & ArrayMapeo(i).NombreOriginal & "\b"[span_42](end_span)
+        If re.test(Aplicar_Mapeo) Then Aplicar_Mapeo = re.Replace(Aplicar_Mapeo, ArrayMapeo(i).NombreNuevo)
+    Next i
+End Function
+
+Private Function Generar_Cadena_Aleatoria(l As Long) As String
+    Dim i As Long, c As Long
+    For i = 1 To l
+        c = Int(Rnd * 2) ' Alterna entre Mayús y Minús para ser menos predecible
+        If c = 0 Then Generar_Cadena_Aleatoria = Generar_Cadena_Aleatoria & Chr(Int(Rnd * 26) + 65)
+        If c = 1 Then Generar_Cadena_Aleatoria = Generar_Cadena_Aleatoria & Chr(Int(Rnd * 26) + 97)
+    [span_43](start_span)Next i[span_43](end_span)
+End Function
+
+Private Function Es_Nombre_Protegido(n As String) As Boolean
+    [span_44](start_span)Es_Nombre_Protegido = (InStr(1, LISTA_PROTEGIDA, n, 1) > 0)[span_44](end_span)
+End Function
+
+Private Function Obtener_Nombre_Mapeado(n As String) As String
+    Dim i As Long
+    For i = 0 To ContadorMapeo - 1
+        If ArrayMapeo(i).NombreOriginal = n Then
+            Obtener_Nombre_Mapeado = ArrayMapeo(i).NombreNuevo: Exit Function
+        End If
+    [span_45](start_span)Next i[span_45](end_span)
+End Function
+
+Private Function Extraer_Nombre_Procedimiento(l As String) As String
+    If InStr(1, l, "Sub ", 1) > 0 Then Extraer_Nombre_Procedimiento = Split(Split(l, "Sub ")(1), "(")(0)
+    If InStr(1, l, "Function ", 1) > 0 Then Extraer_Nombre_Procedimiento = Split(Split(l, "Function ")(1), "(")(0)
+    [span_46](start_span)Extraer_Nombre_Procedimiento = Trim(Extraer_Nombre_Procedimiento)[span_46](end_span)
+End Function
+
+Private Sub ConfigurarEntorno(activar As Boolean)
+    Application.ScreenUpdating = activar
+    Application.DisplayAlerts = activar
+    Application.EnableEvents = activar
+    [span_47](start_span)Application.Calculation = IIf(activar, -4105, -4135)[span_47](end_span)
+End Sub
 
