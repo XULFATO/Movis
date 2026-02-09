@@ -1,182 +1,272 @@
 Option Explicit
 
 ' ==================================================================================
-' MOTOR DE OFUSCACIÓN Y AUDITORÍA VBA - VERSIÓN ULTRA-ESTABLE
+' MOTOR DE PROTECCIÓN VBA - VERSIÓN 5.4 (SENTINEL CORE - FINAL)
+' ==================================================================================
+' - Fix de Property Default (Colecciones y Clases avanzadas)
+' - Motor Core No-Recursivo para Rem inline
+' - Soporte para Namespaces complejos (MSForms.TextBox, ADODB.Recordset.Fields)
+' - Blindaje total de sintaxis VBA Industrial
 ' ==================================================================================
 
-Private Const TECLA_AUDITORIA As String = "^+K"
 Private Const NOMBRE_MODULO_KERNEL As String = "mdl_System_Kernel"
-Private Const PREFIJO_VARIABLES As String = "var_sys_"
-Private Const LISTA_PROTEGIDA As String = "Workbook_Open,Workbook_Close,Auto_Open,Auto_Close,ThisWorkbook,Sheet1,Sheet2,Sheet3,mdl_System_Kernel,Kernel_Registrar_Evento,Kernel_Mostrar_Auditoria"
+Private Const PREFIJO_SYS As String = "vs_"
+Private Const LLAMADA_KERNEL As String = "Call LogEv(""Apertura"")"
+
+' Keywords y Objetos Protegidos
+Private Const VBA_KEYWORDS As String = "|If|Then|Else|End|Sub|Function|Dim|As|Integer|String|Long|Double|Boolean|Variant|Object|On|Error|GoTo|Resume|Next|For|Each|In|Loop|Do|While|Until|Select|Case|Const|Public|Private|Static|ByVal|ByRef|Optional|ParamArray|Call|Set|New|Exit|True|False|Not|And|Or|Xor|Step|Mod|With|Stop|Attribute|VB_Name|Type|Enum|Property|Let|Get|Friend|Declare|Lib|Alias|Option|Explicit|Compare|Base|Implements|Erase|Redim|Preserve|Me|Rem|Err|Nothing|Is|Default|"
+Private Const OBJETOS_PROTEGIDOS As String = "|Range|Cells|Value|Count|Name|ActiveSheet|ThisWorkbook|Sheets|Workbooks|MsgBox|Debug|Print|Left|Right|Mid|Len|Chr|Asc|Val|Str|CInt|CLng|CDbl|CBool|CDate|CVar|CSng|SetFocus|Clear|Delete|Copy|Paste|Select|Activate|"
 
 Private Type TipoMapeo
-    NombreOriginal As String
-    NombreNuevo As String
+    Original As String
+    Nuevo As String
 End Type
 
-Private ArrayMapeo() As TipoMapeo
-Private ContadorMapeo As Long
+Private Map() As TipoMapeo
+Private MapCount As Long
 
 Public Sub Ejecutar_Motor_Proteccion()
-    Dim rutaOrigen As Variant, rutaDestino As Variant
-    Dim libroDestino As Workbook
-    Dim t As Double: t = Timer
+    Dim rOrig As Variant, rDest As Variant, wbD As Workbook
+    If Not VerificarAccesoEscritura() Then Exit Sub
     
-    rutaOrigen = Application.GetOpenFilename("Excel (*.xlsm), *.xlsm")
-    If rutaOrigen = False Then Exit Sub
-    
-    rutaDestino = Application.GetSaveAsFilename("Protegido.xlsm", "Excel (*.xlsm), *.xlsm")
-    If rutaDestino = False Then Exit Sub
+    rOrig = Application.GetOpenFilename("Excel (*.xlsm), *.xlsm")
+    If rOrig = False Then Exit Sub
+    rDest = Application.GetSaveAsFilename("Protegido.xlsm", "Excel (*.xlsm), *.xlsm")
+    If rDest = False Then Exit Sub
     
     On Error GoTo Errores
-    ConfigurarApp False
+    ToggleSystem False
     
-    ' Clonar archivo
-    FileCopy rutaOrigen, rutaDestino
-    Set libroDestino = Workbooks.Open(rutaDestino)
+    If Dir(rDest) <> "" Then Kill rDest
+    FileCopy rOrig, rDest
+    Set wbD = Workbooks.Open(rDest)
     
-    ' Reiniciar Diccionario
-    ContadorMapeo = 0
-    ReDim ArrayMapeo(0)
+    MapCount = 0: ReDim Map(0)
     
-    ' FASES
-    Fase1_Kernel libroDestino
-    Fase2_Diccionario libroDestino
-    Fase3_Ofuscar libroDestino
-    Fase4_Botones libroDestino
-    Fase5_Nombres libroDestino
+    ' FASES SENTINEL CORE
+    Fase1_InyectarKernel_V54 wbD
+    Fase2_Escanear_V54 wbD
+    Fase3_Ofuscar_V54 wbD
+    Fase4_RepararBotones_V54 wbD
     
-    libroDestino.Save
-    libroDestino.Close
-    ConfigurarApp True
-    
-    MsgBox "Protección exitosa en " & Format(Timer - t, "0.0") & "s." & vbCrLf & "Atajo: Ctrl+Shift+K", 64
+    wbD.Save: wbD.Close
+    ToggleSystem True
+    MsgBox "Sentinel V5.4: Motor Core Blindado con éxito.", 64
     Exit Sub
 Errores:
-    ConfigurarApp True
-    MsgBox "Error Crítico: " & Err.Description, 16
+    ToggleSystem True
+    MsgBox "ERROR CRÍTICO: " & Err.Description, 16
 End Sub
 
-Private Sub Fase1_Kernel(ByRef wb As Workbook)
-    Dim c As Object
+' FASE 1: Detección y Normalización de Inyección
+Private Sub Fase1_InyectarKernel_V54(ByRef wb As Workbook)
+    Dim c As Object, cm As Object, i As Long, inicioBody As Long, kindFound As Long, lNorm As String
     On Error Resume Next
     wb.VBProject.VBComponents.Remove wb.VBProject.VBComponents(NOMBRE_MODULO_KERNEL)
     On Error GoTo 0
     
-    Set c = wb.VBProject.VBComponents.Add(1)
-    c.Name = NOMBRE_MODULO_KERNEL
-    With c.CodeModule
-        .InsertLines 1, "Public Sub Kernel_Registrar_Evento(n As String)"
-        .InsertLines 2, "  On Error Resume Next: Dim p As Object: Set p = ThisWorkbook.CustomDocumentProperties(n)"
-        .InsertLines 3, "  If p Is Nothing Then ThisWorkbook.CustomDocumentProperties.Add n, False, 3, 1 Else p.Value = p.Value + 1"
-        .InsertLines 4, "End Sub"
-        .InsertLines 5, "Public Sub Kernel_Mostrar_Auditoria()"
-        .InsertLines 6, "  Dim p, r: r = ""LOGS:"" & vbCr: For Each p In ThisWorkbook.CustomDocumentProperties: r = r & p.Name & "": "" & p.Value & vbCr: Next: MsgBox r"
-        .InsertLines 7, "End Sub"
-    End With
+    Set c = wb.VBProject.VBComponents.Add(1): c.Name = NOMBRE_MODULO_KERNEL
+    c.CodeModule.AddFromString "Public Sub LogEv(n As String)" & vbCrLf & _
+        "On Error Resume Next: Dim p As Object: Set p = ThisWorkbook.CustomDocumentProperties(n)" & vbCrLf & _
+        "If p Is Nothing Then ThisWorkbook.CustomDocumentProperties.Add n, False, 3, 1 Else p.Value = p.Value + 1" & vbCrLf & _
+        "End Sub"
+
+    Set cm = wb.VBProject.VBComponents("ThisWorkbook").CodeModule
+    inicioBody = 0
+    For i = 0 To 3
+        On Error Resume Next
+        inicioBody = cm.ProcBodyLine("Workbook_Open", i)
+        On Error GoTo 0
+        If inicioBody > 0 Then: kindFound = i: Exit For: End If
+    Next i
     
-    Set c = wb.VBProject.VBComponents("ThisWorkbook").CodeModule
-    c.DeleteLines 1, c.CountOfLines
-    c.InsertLines 1, "Private Sub Workbook_Open(): Application.OnKey """ & TECLA_AUDITORIA & """, ""Kernel_Mostrar_Auditoria"": Call Kernel_Registrar_Evento(""Aperturas""): End Sub"
+    If inicioBody = 0 Then
+        cm.AddFromString vbCrLf & "Private Sub Workbook_Open()" & vbCrLf & "  " & LLAMADA_KERNEL & vbCrLf & "End Sub"
+    Else
+        Dim existe As Boolean: existe = False
+        For i = inicioBody To inicioBody + cm.ProcCountLines("Workbook_Open", kindFound) - 1
+            lNorm = LCase(Replace(Replace(Replace(cm.Lines(i, 1), " ", ""), vbTab, ""), "_", ""))
+            If InStr(1, lNorm, "logev(""apertura"")") > 0 Then existe = True: Exit For
+        Next i
+        If Not existe Then cm.InsertLines inicioBody + 1, "  " & LLAMADA_KERNEL
+    End If
 End Sub
 
-Private Sub Fase2_Diccionario(ByRef wb As Workbook)
-    Dim comp As Object, i As Long, re As Object, ms As Object, m As Object
-    Set re = CreateObject("VBScript.RegExp")
-    re.Global = True: re.IgnoreCase = True
+' FASE 2: Escaneo Industrial (Fix 1 y 3: Namespaces y Property Default)
+Private Sub Fase2_Escanear_V54(ByRef wb As Workbook)
+    Dim comp As Object, i As Long, ln As String, ms As Object, m As Object
+    
+    Dim reProc As Object: Set reProc = CreateObject("VBScript.RegExp")
+    reProc.Pattern = "\b(?:Sub|Function)\s+([a-zA-Z_][a-zA-Z0-9_]{2,})\b": reProc.IgnoreCase = True: reProc.Global = True
+    
+    ' Fix 3: Soporte para 'Default Property'
+    Dim reProp As Object: Set reProp = CreateObject("VBScript.RegExp")
+    reProp.Pattern = "\b(?:Public|Private|Friend)?\s*Property\s+(?:Default\s+)?(?:Get|Let|Set)\s+([a-zA-Z_][a-zA-Z0-9_]{2,})\b": reProp.IgnoreCase = True: reProp.Global = True
     
     For Each comp In wb.VBProject.VBComponents
-        If Not InStr(LISTA_PROTEGIDA, comp.Name) > 0 Then AddDict comp.Name
         If comp.CodeModule.CountOfLines > 0 Then
-            re.Pattern = "(?:Sub|Function|Dim|Const)\s+([a-zA-Z_][a-zA-Z0-9_]{2,})"
-            Set ms = re.Execute(comp.CodeModule.Lines(1, comp.CodeModule.CountOfLines))
-            For Each m In ms: AddDict m.SubMatches(0): Next
-        End If
-    Next
-End Sub
-
-Private Sub Fase3_Ofuscar(ByRef wb As Workbook)
-    Dim comp As Object, cm As Object, i As Long, ln As String, full As String, p As String
-    For Each comp In wb.VBProject.VBComponents
-        If comp.Name <> NOMBRE_MODULO_KERNEL And comp.Name <> "ThisWorkbook" Then
-            Set cm = comp.CodeModule: full = ""
-            For i = 1 To cm.CountOfLines
-                ln = cm.Lines(i, 1)
-                If InStr(ln, "'") > 0 Then ln = Left(ln, InStr(ln, "'") - 1)
-                ln = Trim(Replace(ln, vbTab, " "))
-                If ln <> "" Then
-                    p = GetProc(ln)
-                    ln = ApplyMap(ln)
-                    full = full & ln & vbCrLf
-                    If p <> "" And Not InStr(LISTA_PROTEGIDA, p) > 0 Then full = full & "Call Kernel_Registrar_Evento(""" & p & """)" & vbCrLf
+            For i = 1 To comp.CodeModule.CountOfLines
+                ln = comp.CodeModule.Lines(i, 1)
+                Set ms = reProc.Execute(ln): For Each m In ms: AddToMap m.SubMatches(0): Next
+                Set ms = reProp.Execute(ln): For Each m In ms: AddToMap m.SubMatches(0): Next
+                
+                If RegexTest(ln, "\b(Dim|Static|Const|Public|Private)\b") Then
+                    ExtraerVariablesV54 ln
                 End If
-            Next
-            cm.DeleteLines 1, cm.CountOfLines
-            If full <> "" Then cm.AddFromString full
+            Next i
         End If
     Next
 End Sub
 
-Private Sub Fase4_Botones(ByRef wb As Workbook)
-    Dim s As Shape, w As Worksheet, a As String, n As String
-    For Each w In wb.Worksheets
-        For Each s In w.Shapes
+Private Sub ExtraerVariablesV54(ByVal linea As String)
+    Dim v As Variant, i As Long, seg As String, id As String
+    seg = linea: If InStr(seg, "'") > 0 Then seg = Left(seg, InStr(seg, "'") - 1)
+    If InStr(seg, ":") > 0 Then seg = Left(seg, InStr(seg, ":") - 1)
+    
+    seg = RegexReplace(seg, "\b(Dim|Static|Const|Public|Private)\b", "")
+    
+    v = Split(seg, ",")
+    For i = 0 To UBound(v)
+        id = Trim(v(i))
+        ' Fix 1: Patrón laxo para Namespaces con puntos (A-Z0-9_.)
+        id = RegexReplace(id, "\bAs\s+New\s+[A-Za-z0-9_.]+\b", "")
+        id = RegexReplace(id, "\bAs\s+[A-Za-z0-9_.]+\b", "")
+        id = RegexReplace(id, "\bNew\s+[A-Za-z0-9_.]+\b", "")
+        
+        id = Split(id, " ")(0): id = Split(id, "(")(0): id = Split(id, "=")(0)
+        id = Replace(Replace(Replace(Replace(Replace(Replace(id, "%", ""), "$", ""), "!", ""), "#", ""), "@", ""), "&", "")
+        
+        If Len(id) >= 2 Then AddToMap id
+    Next i
+End Sub
+
+' FASE 3: Ofuscación (Fix 2: Eliminación de Recursión en Rem)
+Private Sub Fase3_Ofuscar_V54(ByRef wb As Workbook)
+    Dim comp As Object, cm As Object, i As Long, res As String
+    For Each comp In wb.VBProject.VBComponents
+        If comp.Name = NOMBRE_MODULO_KERNEL Then GoTo Sig
+        Set cm = comp.CodeModule: res = ""
+        For i = 1 To cm.CountOfLines
+            res = res & AnalizarVBA_V54(cm.Lines(i, 1)) & vbCrLf
+        Next
+        cm.DeleteLines 1, cm.CountOfLines
+        If res <> "" Then cm.AddFromString res
+Sig:
+    Next
+End Sub
+
+Private Function AnalizarVBA_V54(ByVal ln As String) As String
+    ' Fix 2: Motor No-Recursivo para Rem
+    Dim posRem As Long: posRem = InStr(1, " " & ln & " ", " Rem ", vbTextCompare)
+    If posRem > 0 Then
+        Dim codePart As String, remPart As String
+        codePart = Left(ln, posRem - 1)
+        remPart = Mid(ln, posRem)
+        AnalizarVBA_V54 = AnalizarVBA_Core(codePart) & remPart
+        Exit Function
+    End If
+    
+    If LCase(Trim(ln)) Like "rem *" Then: AnalizarVBA_V54 = ln: Exit Function: End If
+    
+    AnalizarVBA_V54 = AnalizarVBA_Core(ln)
+End Function
+
+' Motor Core Char-a-Char (Extraído para evitar recursión)
+Private Function AnalizarVBA_Core(ByVal ln As String) As String
+    Dim i As Long, char As String, enTexto As Boolean, resultado As String, palabraTmp As String
+    enTexto = False
+    For i = 1 To Len(ln)
+        char = Mid(ln, i, 1)
+        If char = "'" And Not enTexto Then
+            resultado = resultado & ProcesarTrozo(palabraTmp) & Mid(ln, i)
+            AnalizarVBA_Core = resultado: Exit Function
+        End If
+        If char = """" Then
+            If Not enTexto Then
+                resultado = resultado & ProcesarTrozo(palabraTmp): palabraTmp = ""
+                enTexto = True: resultado = resultado & """"
+            Else
+                If Mid(ln, i + 1, 1) = """" Then: resultado = resultado & """""": i = i + 1
+                Else: enTexto = False: resultado = resultado & """"
+                End If
+            End If
+        Else
+            If enTexto Then: resultado = resultado & char
+            Else
+                If char Like "[a-zA-Z0-9_]" Then palabraTmp = palabraTmp & char
+                Else: resultado = resultado & ProcesarTrozo(palabraTmp) & char: palabraTmp = ""
+                End If
+            End If
+        End If
+    Next
+    AnalizarVBA_Core = resultado & ProcesarTrozo(palabraTmp)
+End Function
+
+Private Sub Fase4_RepararBotones_V54(ByRef wb As Workbook)
+    Dim ws As Worksheet, s As Shape, a As String, n As String, parts As Variant
+    For Each ws In wb.Worksheets
+        For Each s In ws.Shapes
             On Error Resume Next
             a = s.OnAction: If a <> "" Then
+                a = Replace(a, "'", "")
                 If InStr(a, "!") > 0 Then a = Mid(a, InStr(a, "!") + 1)
-                n = GetMap(Replace(a, "'", "")): If n <> "" Then s.OnAction = "'" & wb.Name & "'!" & n
+                parts = Split(a, "."): a = Trim(parts(UBound(parts)))
+                n = GetMap(a): If n <> "" Then s.OnAction = "'" & wb.Name & "'!" & n
             End If
         Next
     Next
 End Sub
 
-Private Sub Fase5_Nombres(ByRef wb As Workbook)
-    Dim c As Object, n As String
-    For Each c In wb.VBProject.VBComponents
-        If Not InStr(LISTA_PROTEGIDA, c.Name) > 0 And c.Name <> "ThisWorkbook" Then
-            n = GetMap(c.Name): If n <> "" Then c.Name = n
-        End If
-    Next
-End Sub
-
-' --- HELPERS ---
-Private Sub AddDict(o As String)
-    Dim i As Long
-    If InStr(LISTA_PROTEGIDA, o) > 0 Then Exit Sub
-    For i = 0 To ContadorMapeo - 1: If ArrayMapeo(i).NombreOriginal = o Then Exit Sub
-    Next
-    ReDim Preserve ArrayMapeo(ContadorMapeo)
-    ArrayMapeo(ContadorMapeo).NombreOriginal = o
-    ArrayMapeo(ContadorMapeo).NombreNuevo = PREFIJO_VARIABLES & RndStr(8)
-    ContadorMapeo = ContadorMapeo + 1
-End Sub
-
-Private Function ApplyMap(t As String) As String
-    Dim i As Long, re As Object: Set re = CreateObject("VBScript.RegExp")
-    re.Global = True: ApplyMap = t
-    For i = 0 To ContadorMapeo - 1
-        re.Pattern = "\b" & ArrayMapeo(i).NombreOriginal & "\b"
-        ApplyMap = re.Replace(ApplyMap, ArrayMapeo(i).NombreNuevo)
-    Next
-End Function
-
+' HELPERS
 Private Function GetMap(o As String) As String
-    Dim i As Long
-    For i = 0 To ContadorMapeo - 1: If ArrayMapeo(i).NombreOriginal = o Then GetMap = ArrayMapeo(i).NombreNuevo: Exit Function
-    Next
+    Dim i As Long: For i = 0 To MapCount - 1
+        If Map(i).Original = o Then GetMap = Map(i).Nuevo: Exit Function
+    Next i
 End Function
 
-Private Function RndStr(l As Long) As String
-    Dim i As Long: For i = 1 To l: RndStr = RndStr & Chr(Int(Rnd * 26) + 97): Next
-End Function
-
-Private Function GetProc(l As String) As String
-    If InStr(1, l, "Sub ", 1) > 0 Then GetProc = Split(Split(l, "Sub ")(1), "(")(0)
-    If InStr(1, l, "Function ", 1) > 0 Then GetProc = Split(Split(l, "Function ")(1), "(")(0)
-    GetProc = Trim(GetProc)
-End Function
-
-Private Sub ConfigurarApp(st As Boolean)
-    Application.ScreenUpdating = st: Application.EnableEvents = st
-    Application.Calculation = IIf(st, -4105, -4135)
+Private Sub AddToMap(o As String)
+    If EsKeyword(o) Or Len(o) < 2 Or GetMap(o) <> "" Then Exit Sub
+    ReDim Preserve Map(MapCount)
+    Map(MapCount).Original = o
+    Map(MapCount).Nuevo = PREFIJO_SYS & GenerarNombre(6)
+    MapCount = MapCount + 1
 End Sub
+
+Private Function GenerarNombre(l As Long) As String
+    Dim i As Long: Static init As Boolean: If Not init Then Randomize: init = True
+    For i = 1 To l: GenerarNombre = GenerarNombre & Chr(Int(Rnd * 26) + 97): Next
+End Function
+
+Private Function EsKeyword(n As String) As Boolean
+    EsKeyword = (InStr(1, VBA_KEYWORDS, "|" & n & "|", 1) > 0 Or InStr(1, OBJETOS_PROTEGIDOS, "|" & n & "|", 1) > 0)
+End Function
+
+Private Function RegexTest(txt As String, pat As String) As Boolean
+    Dim re As Object: Set re = CreateObject("VBScript.RegExp")
+    re.Pattern = pat: re.IgnoreCase = True: RegexTest = re.Test(txt)
+End Function
+
+Private Function RegexReplace(txt As String, pat As String, rep As String) As String
+    Dim re As Object: Set re = CreateObject("VBScript.RegExp")
+    re.Pattern = pat: re.IgnoreCase = True: re.Global = True: RegexReplace = re.Replace(txt, rep)
+End Function
+
+Private Function VerificarAccesoEscritura() As Boolean
+    On Error Resume Next
+    Dim c As Object: Set c = Application.VBE.ActiveVBProject.VBComponents.Add(1)
+    If Err.Number <> 0 Then
+        MsgBox "Error: Trust access to the VBA project model.", 16: VerificarAccesoEscritura = False
+    Else
+        Application.VBE.ActiveVBProject.VBComponents.Remove c: VerificarAccesoEscritura = True
+    End If
+End Function
+
+Private Sub ToggleSystem(st As Boolean)
+    Application.ScreenUpdating = st: Application.EnableEvents = st
+    Application.Calculation = IIf(st, xlCalculationAutomatic, xlCalculationManual)
+End Sub
+
+Private Function ProcesarTrozo(ByVal txt As String) As String
+    Dim m As String: m = GetMap(txt)
+    ProcesarTrozo = IIf(m <> "", m, txt)
+End Function
