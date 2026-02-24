@@ -1,130 +1,121 @@
-Option Explicit
-
-Sub OptimizarHTML_DICCIONARIO_PRO_V3()
-    Dim filePath As Variant, outPath As String
-    Dim i As Long, j As Long, dicts(0 To 5) As Object
-    Dim stmIn As Object, stmOut As Object, htmlOriginal As String
-    Dim tInicio As Double: tInicio = Timer
-
-    filePath = Application.GetOpenFilename("HTML (*.html),*.html")
-    If filePath = False Then Exit Sub
-
-    For i = 0 To 5: Set dicts(i) = CreateObject("Scripting.Dictionary"): Next i
-
-    ' --- LECTURA ---
-    Set stmIn = CreateObject("ADODB.Stream")
-    stmIn.Type = 2: stmIn.Charset = "UTF-8": stmIn.Open
-    stmIn.LoadFromFile CStr(filePath): htmlOriginal = stmIn.ReadText: stmIn.Close
-
-    Dim posDataIni As Long, posDataFin As Long
-    posDataIni = InStr(htmlOriginal, "const DATA = [")
-    posDataFin = InStr(posDataIni, htmlOriginal, "];")
-    If posDataIni = 0 Then MsgBox "No se encontró DATA", vbCritical: Exit Sub
-
-    ' --- PROCESAR HTML ---
-    Dim htmlHead As String, htmlFoot As String
-    Dim posActions As Long: posActions = InStr(htmlOriginal, "<div class=""actions"">")
+MÉTODO 1: Cambio de DPB a DPx (Clásico)
+Copia de seguridad del archivo .xlsm
+Renombra de .xlsm a .zip
+Extrae TODO el contenido del ZIP a una carpeta
+Ve a la carpeta xl
+Busca el archivo vbaProject.bin
+Abre vbaProject.bin con Notepad++ o UltraEdit (modo texto)
+Busca (Ctrl+F) la cadena: DPB=
+Cambia DPB= por DPx= (solo la B por x)
+Guarda el archivo
+Selecciona TODO el contenido de la carpeta extraída (NO la carpeta, sino lo que está DENTRO: [Content_Types].xml, carpeta _rels, carpeta xl, etc.)
+Click derecho → Enviar a → Carpeta comprimida (o comprimir con 7-Zip/WinRAR)
+Renombra el nuevo .zip a .xlsm
+Abre en Excel
+Si te dice que está corrupto, ve al editor VBA (Alt+F11) y te pedirá nueva contraseña
+MÉTODO 2: Cambio de CMG a CMx
+Copia de seguridad del archivo .xlsm
+Renombra de .xlsm a .zip
+Extrae TODO el contenido
+Ve a xl → vbaProject.bin
+Abre con Notepad++ o UltraEdit
+Busca: CMG=
+Cambia CMG= por CMx=
+Guarda
+Selecciona TODO el contenido extraído (archivos y carpetas internas)
+Comprimir a ZIP
+Renombrar a .xlsm
+Abrir en Excel
+MÉTODO 3: Eliminación completa de líneas de protección
+Copia de seguridad
+Renombrar a .zip y extraer
+Abrir xl/vbaProject.bin con UltraEdit o Notepad++
+Buscar y ELIMINAR COMPLETAMENTE estas líneas (toda la línea entera):
+Línea que empiece con CMG=
+Línea que empiece con DPB=
+Línea que empiece con GC= (si existe)
+Guardar el archivo
+Comprimir TODO el contenido
+Renombrar a .xlsm
+Abrir en Excel
+MÉTODO 4: Edición hexadecimal precisa (UltraEdit)
+Copia de seguridad
+Renombrar a .zip y extraer
+Abrir vbaProject.bin con UltraEdit
+Ir a View → Hex Edit (o Ctrl+H)
+Buscar en HEX: 44 50 42 3D (esto es "DPB=" en hexadecimal)
+Cambiar el byte 42 por 78 (queda: 44 50 78 3D)
+Guardar
+Comprimir contenido
+Renombrar a .xlsm
+Abrir
+MÉTODO 5: Desde VBA con nuevo módulo
+Abre tu archivo .xlsm protegido en Excel normalmente
+Alt+F11 (abrir editor VBA)
+Insert → Module (insertar nuevo módulo - esto SÍ debería dejarte)
+Pega este código:
+Sub RemoverProteccion()
+    Dim wbPath As String
+    Dim fso As Object
+    Dim tempPath As String
     
-    If posActions > 0 Then
-        Dim insertPos As Long: insertPos = InStr(posActions, htmlOriginal, "</div>")
-        htmlHead = Left$(htmlOriginal, insertPos - 1) & _
-                   " <label style='margin-left:20px;font-size:13px;font-weight:600;cursor:pointer;color:var(--head)'>" & _
-                   "<input type='checkbox' id='chkLimit' checked onchange='render()'> Limitar a 500 filas</label>" & _
-                   Mid$(htmlOriginal, insertPos, InStr(htmlOriginal, "<script>") - insertPos + 8)
-    Else
-        htmlHead = Left$(htmlOriginal, InStr(htmlOriginal, "<script>") + 7)
-    End If
+    wbPath = ThisWorkbook.FullName
     
-    htmlFoot = Mid$(htmlOriginal, InStrRev(htmlOriginal, "</script>"))
-
-    ' --- PROCESAR DATA ---
-    Dim dataOriginal As String, lineas() As String
-    dataOriginal = Mid$(htmlOriginal, posDataIni, posDataFin - posDataIni + 2)
-    lineas = Split(dataOriginal, vbLf)
-
-    Dim dataFinal As String: dataFinal = ""
-    For i = LBound(lineas) To UBound(lineas)
-        Dim linea As String: linea = Trim$(Replace(lineas(i), vbCr, ""))
-        If Left$(linea, 1) = "[" Then
-            Dim cols() As String: cols = ParseJsArrayRowTo6(linea)
-            Dim filaStr As String: filaStr = "["
-            For j = 0 To 5
-                Dim v As String: v = cols(j)
-                If v = "" Then
-                    filaStr = filaStr & "0"
-                Else
-                    If Not dicts(j).Exists(v) Then dicts(j).Add v, dicts(j).Count + 1
-                    filaStr = filaStr & dicts(j)(v)
-                End If
-                If j < 5 Then filaStr = filaStr & ","
-            Next j
-            dataFinal = dataFinal & filaStr & "],"
-        End If
-    Next i
-    If Right(dataFinal, 1) = "," Then dataFinal = Left(dataFinal, Len(dataFinal) - 1)
-
-    ' --- DICCIONARIOS ---
-    Dim maps As String: maps = "const MAPS={"
-    For i = 0 To 5
-        maps = maps & i & ":{"
-        Dim k As Variant, c As Long: c = 0
-        For Each k In dicts(i).Keys
-            c = c + 1
-            Dim esc As String: esc = Replace(Replace(CStr(k), "\", "\\"), """", "\""")
-            maps = maps & dicts(i)(k) & ":""" & esc & """"
-            If c < dicts(i).Count Then maps = maps & ","
-        Next k
-        maps = maps & "}"
-        If i < 5 Then maps = maps & ","
-    Next i
-    maps = maps & "};"
-
-    ' --- MOTOR JS ---
-    Dim js As String
-    js = vbCrLf & "const DATA=[" & dataFinal & "];" & vbCrLf & maps & vbCrLf & _
-         "const INPUTS=[...document.querySelectorAll('thead input')],TBODY=document.getElementById('tbody'),STATUS=document.getElementById('status'),FILTERS=Array(6).fill('');" & vbCrLf & _
-         "const getVal=(c,k)=>k===0?'':(MAPS[c][k]||k);" & vbCrLf & _
-         "function rowMatches(r,skip=-1){for(let i=0;i<6;i++){if(i===skip)continue;const f=FILTERS[i];if(!f)continue;const v=String(getVal(i,r[i])).toLowerCase();" & _
-         "const parts=f.split(/\s+/).filter(Boolean);for(const p of parts){if(p.startsWith('+')){if(!v.includes(p.slice(1)))return false}else if(p.startsWith('<>')){if(v.includes(p.slice(2)))return false}else{if(!v.includes(p))return false}}}return true}" & vbCrLf & _
-         "function highlight(t,i){const f=FILTERS[i];if(!f)return t;const parts=f.split(/\s+/).filter(p=>!p.startsWith('<>'));let res=t;for(const p of parts){const s=p.startsWith('+')?p.slice(1):p;if(!s)continue;res=res.replace(new RegExp(`(${s})`,'ig'),'<mark>$1</mark>')}return res;}" & vbCrLf & _
-         "function render(){TBODY.innerHTML='';const m=DATA.filter(r=>rowMatches(r));const chk=document.getElementById('chkLimit');" & _
-         "const show= (chk && chk.checked) ? m.slice(0,500) : m;" & _
-         "show.forEach(r=>{const tr=document.createElement('tr');r.forEach((c,i)=>{const td=document.createElement('td');td.innerHTML=highlight(String(getVal(i,c)),i);tr.appendChild(td)});TBODY.appendChild(tr)});" & _
-         "STATUS.textContent=`Coincidencias: ${m.length} ${ (chk && chk.checked && m.length>500) ? '(limitado a 500)' : ''}`}" & vbCrLf & _
-         "function updateDL(c){const dl=document.getElementById('dl'+c);if(!dl)return;dl.innerHTML='';const cnt=new Map();for(const r of DATA){if(!rowMatches(r,c))continue;const v=getVal(c,r[c]);if(v)cnt.set(v,(cnt.get(v)||0)+1)}[...cnt.entries()].sort((a,b)=>a[0].localeCompare(b[0])).slice(0,1000).forEach(([v,n])=>{const o=document.createElement('option');o.value=v;o.text=`${v} (${n})`;dl.appendChild(o)})}" & vbCrLf & _
-         "function handleType(c,el){FILTERS[c]=el.value.trim().toLowerCase();el.classList.toggle('active',!!FILTERS[c]);el.classList.toggle('exclude',FILTERS[c].includes('<>'));render();}" & vbCrLf & _
-         "function clearAllFilters(){FILTERS.fill('');INPUTS.forEach(i=>{i.value='';i.classList.remove('active','exclude')});render();}" & vbCrLf & _
-         "document.addEventListener('keydown',e=>e.key==='Escape'&&clearAllFilters());" & vbCrLf & _
-         "INPUTS.forEach((inp,idx)=>{inp.oninput=()=>handleType(idx,inp);inp.onfocus=()=>updateDL(idx);});" & vbCrLf & _
-         "render();"
-
-    ' --- GUARDADO FINAL ---
-    outPath = Replace(filePath, ".html", "_OPTIMIZADO.html")
-    Set stmOut = CreateObject("ADODB.Stream")
-    stmOut.Type = 2: stmOut.Charset = "UTF-8": stmOut.Open
-    stmOut.WriteText htmlHead & js & htmlFoot
-    stmOut.SaveToFile outPath, 2
-    stmOut.Close
-
-    ' INFO DE REDUCCIÓN
-    Dim sO As Long, sF As Long
-    sO = FileLen(filePath) \ 1024: sF = FileLen(outPath) \ 1024
-    MsgBox "Optimización exitosa." & vbCrLf & "Original: " & sO & "KB" & vbCrLf & "Nuevo: " & sF & "KB" & vbCrLf & "Ahorro: " & Round((1 - (sF / sO)) * 100, 1) & "%", vbInformation
+    ' Guardar y cerrar
+    ThisWorkbook.Save
+    Application.DisplayAlerts = False
+    ThisWorkbook.Saved = True
+    
+    MsgBox "Ahora cierra Excel completamente y vuelve a abrir el archivo"
 End Sub
-
-Private Function ParseJsArrayRowTo6(ByVal line As String) As String()
-    Dim res(0 To 5) As String, i As Long, col As Long, ch As String, q As String, inside As Boolean, cur As String
-    i = InStr(line, "[") + 1
-    Do While i <= Len(line) And col <= 5
-        ch = Mid$(line, i, 1)
-        If Not inside Then
-            If ch = """" Or ch = "'" Then inside = True: q = ch
-            If ch = "," Then res(col) = Trim$(cur): cur = "": col = col + 1
-            If ch = "]" Then res(col) = Trim$(cur): Exit Do
-        Else
-            If ch = q Then inside = False Else cur = cur & ch
-        End If
-        i = i + 1
-    Loop
-    ParseJsArrayRowTo6 = res
-End Function
+Ejecuta la macro
+Cierra Excel
+Vuelve a abrir el archivo
+MÉTODO 6: Exportar módulos uno por uno (si puedes ver nombres)
+Abre el archivo
+Alt+F11
+En el explorador de proyectos (izquierda), ¿ves los nombres de módulos/formularios aunque no puedas abrirlos?
+Si SÍ, anota todos los nombres
+Crea un NUEVO archivo Excel
+Alt+F11 en el nuevo archivo
+Tools → References → marca las mismas referencias que tenías
+Ahora tendrás que recrear el código (sé que no es ideal, pero es un plan B)
+MÉTODO 7: VBA con acceso programático habilitado
+PRIMERO: Archivo → Opciones → Centro de confianza → Configuración del Centro de confianza → Configuración de macros
+Marca: "Confiar en el acceso al modelo de objetos de proyectos de VBA"
+Crea un NUEVO archivo Excel
+Alt+F11
+Insert → Module
+Pega:
+Sub DesbloquearVBA()
+    Dim wbProtegido As Workbook
+    Dim archivoPath As String
+    
+    ' Cambia esta ruta por la de tu archivo
+    archivoPath = "C:\ruta\a\tu\archivo.xlsm"
+    
+    Set wbProtegido = Workbooks.Open(archivoPath)
+    
+    On Error Resume Next
+    wbProtegido.VBProject.VBComponents("Module1").CodeModule.DeleteLines 1, 1
+    On Error GoTo 0
+    
+    wbProtegido.Close SaveChanges:=True
+    
+    MsgBox "Completado"
+End Sub
+Modifica la ruta del archivo
+Ejecuta la macro
+MÉTODO 8: Crear nuevo proyecto VBA limpio
+Renombrar .xlsm a .zip y extraer
+Ir a xl
+RENOMBRAR vbaProject.bin a vbaProject.bin.OLD
+Abrir el Excel original en otra ventana
+Alt+F11 → Insertar módulo vacío
+Guardar como nuevo archivo .xlsm
+Cerrar Excel
+Extraer ESTE nuevo archivo también
+Copiar el vbaProject.bin del archivo NUEVO
+Pegarlo en la carpeta xl del archivo VIEJO (sobrescribiendo)
+Comprimir y renombrar a .xlsm
+Abrir (ahora tendrás acceso pero SIN código - tendrás que importar desde el .OLD)
