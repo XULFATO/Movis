@@ -1,44 +1,118 @@
-Sub ValidarCombinaciones(celdaInicio As Range)
+Attribute VB_Name = "Modulo_X_Definitivo_BP"
 
-    Dim ws As Worksheet
-    Set ws = celdaInicio.Worksheet
-    
-    Dim fila As Long
-    Dim colBase As Long
-    Dim ultimaFila As Long
-    
-    colBase = celdaInicio.Column
-    fila = celdaInicio.Row
-    ultimaFila = ws.Cells(ws.Rows.Count, colBase).End(xlUp).Row
-    
-    Dim dict As Object
-    Set dict = CreateObject("Scripting.Dictionary")
-    
-    Dim clave As String
-    Dim comboActual As String
-    Dim comboGuardado As String
-    
-    For fila = celdaInicio.Row To ultimaFila
-        
-        clave = Trim(ws.Cells(fila, colBase).Value)
-        comboActual = Trim(ws.Cells(fila, colBase + 1).Value) & "|" & _
-                       Trim(ws.Cells(fila, colBase + 2).Value)
-        
-        If clave <> "" Then
-            If Not dict.Exists(clave) Then
-                ' Primera vez que aparece la clave
-                dict.Add clave, comboActual
-            Else
-                comboGuardado = dict(clave)
-                
-                If comboActual <> comboGuardado Then
-                    ' MARCAR ERROR (ejemplo: color rojo)
-                    ws.Rows(fila).Interior.Color = RGB(255, 180, 180)
-                End If
-            End If
+Option Explicit
+
+' ----------------------------------------------------------------------------------------------------------------------
+'  ESTO COMPRUEBA QUE LA CARPETA ESTE EN SU SITIO, SI NO, LA CREA A LAS BRAVAS
+' ----------------------------------------------------------------------------------------------------------------------
+Private Function     Check_Carpetas_Ok(ByVal   miPath   As   String) As Boolean
+    On Error Resume Next
+    MkDir "C:\CLIENTES": MkDir "C:\CLIENTES\PRUEBAS": MkDir "C:\CLIENTES\PRUEBAS\BP"
+    Check_Carpetas_Ok = (Dir(miPath, vbDirectory) <> "")
+    On Error GoTo 0
+End Function
+
+' ----------------------------------------------------------------------------------------------------------------------
+'  BUSCADOR DE FILAS POR TEXTO (TIENE EL RECORTE DE 20 CARACTERES POR SI ACASO)
+' ----------------------------------------------------------------------------------------------------------------------
+Private Function      DimeDondeEstaLaFila(ByVal h As Worksheet, ByVal t As String) As Long
+    Dim r As Long, u As Long, b As String
+    u = h.Cells(h.Rows.Count, 1).End(xlUp).Row: b = IIf(Len(t) > 20, Left(t, 20), t)
+    For r = 1 To u
+        If InStr(1, h.Cells(r, 1).Value, b, 1) > 0 Then: DimeDondeEstaLaFila = r: Exit Function
+    Next r
+End Function
+
+' ----------------------------------------------------------------------------------------------------------------------
+'  ESTO ES LO QUE REALMENTE BORRA LAS COSAS (O AÑADE SI TOCA)
+' ----------------------------------------------------------------------------------------------------------------------
+Private Sub     Limpiador_Estructural_Total(ByVal ws_t As Worksheet, ByVal c_ids As Collection, ByVal m As Integer)
+    Dim a() As String, i As Long, j As Long, aux As String
+    If c_ids.Count = 0 Then Exit Sub
+    ReDim a(1 To c_ids.Count)
+    For i = 1 To c_ids.Count: a(i) = CStr(c_ids(i)): Next i
+    ' Ordenar de mayor a menor para que no se nos mueva el suelo al borrar
+    For i = 1 To UBound(a) - 1: For j = i + 1 To UBound(a)
+        If Val(Split(a(i), "|")(0)) < Val(Split(a(j), "|")(0)) Then: aux = a(i): a(i) = a(j): a(j) = aux
+    Next j: Next i
+    ' Meter la tijera
+    For i = 1 To UBound(a)
+        If m = 1 Then: ws_t.Columns(CLng(a(i))).Delete
+        If m = 2 Then
+            Dim p() As String: p = Split(a(i), "|")
+            If UBound(p) >= 1 Then
+                If p(1) = "ADD" Then: ws_t.Cells(CLng(p(0)), 3).Value = p(2) Else: ws_t.Rows(CLng(p(0))).Delete
+            Else: ws_t.Rows(CLng(a(i))).Delete: End If
         End If
-    Next fila
-    
-    MsgBox "Validación terminada", vbInformation
+    Next i
+End Sub
 
+' **********************************************************************************************************************
+'  PROCESO DE GENERACION DEL EXCEL (EL QUE SE CURRA LO DE LAS MACROS Y EL FORMATO)
+' **********************************************************************************************************************
+Private Sub      Crea_El_Archivo_Ya(ByVal h_c As Worksheet, ByVal id_c As String, ByVal r_b As String, ByVal n_b As String)
+    Dim wb_n As Workbook, r_f As String, r_t As String, i_h As Long, c_c As Collection, c_f As Collection, h_a1 As Worksheet, h_a2 As Worksheet
+    r_f = r_b & n_b & "_" & id_c & ".xlsx": r_t = r_b & "TMP_" & id_c & ".xlsm"
+    ' Copia de seguridad y apertura
+    ThisWorkbook.SaveCopyAs r_t
+    Set wb_n = Workbooks.Open(r_t)
+    ' Fase Columnas
+    On Error Resume Next: Set h_a1 = wb_n.Worksheets("columnas"): On Error GoTo 0
+    If Not h_a1 Is Nothing Then
+        i_h = 0: Dim ff As Long: For ff = 1 To 5: If InStr(1, h_a1.Cells(ff, 2).Value, id_c, 1) > 0 Or InStr(1, h_a1.Cells(ff, 3).Value, id_c, 1) > 0 Then: i_h = ff: Exit For
+        Next ff: If i_h = 0 Then i_h = 2
+        Dim cc As Long, p_idx As Long: For cc = 1 To h_a1.Cells(i_h, h_a1.Columns.Count).End(xlToLeft).Column
+            If UCase(Trim(h_a1.Cells(i_h, cc).Value)) = UCase(id_c) Then: p_idx = cc: Exit For
+        Next cc
+        If p_idx > 0 Then
+            Set c_c = New Collection: Dim rr As Long, r_max As Long, n_et As String, v_ce As String, i_dest As Long
+            r_max = h_a1.Cells(h_a1.Rows.Count, 2).End(xlUp).Row
+            For rr = 4 To r_max: n_et = Trim(h_a1.Cells(rr, 2).Value): If n_et <> "" Then
+                v_ce = Trim(h_a1.Cells(rr, p_idx).Value): If UCase(v_ce) = "NO" Then
+                    i_dest = 0: Dim j_it As Long, f_en As Long: For f_en = 1 To 10: If wb_n.Worksheets("FuncionFiltar").Cells(f_en, 1).Value <> "" Then Exit For: Next f_en
+                    For j_it = 1 To wb_n.Worksheets("FuncionFiltar").Cells(f_en, wb_n.Worksheets("FuncionFiltar").Columns.Count).End(xlToLeft).Column
+                        If Trim(wb_n.Worksheets("FuncionFiltar").Cells(f_en, j_it).Value) = n_et Then: i_dest = j_it: Exit For
+                    Next j_it: If i_dest > 0 Then c_c.Add i_dest
+                End If: End If: Next rr
+            If Not c_c Is Nothing Then Limpiador_Estructural_Total wb_n.Worksheets("FuncionFiltar"), c_c, 1
+        End If
+    End If
+    ' Fase Filas
+    On Error Resume Next: Set h_a2 = wb_n.Worksheets("filas"): On Error GoTo 0
+    If Not h_a2 Is Nothing Then
+        ' Reutilizamos i_h y p_idx porque somos asi de apañados
+        If p_idx > 0 Then
+            Set c_f = New Collection: r_max = h_a2.Cells(h_a2.Rows.Count, 6).End(xlUp).Row
+            For rr = 3 To r_max: n_et = Trim(h_a2.Cells(rr, 6).Value): v_ce = Trim(h_a2.Cells(rr, p_idx).Value)
+                If n_et <> "" Then: Dim f_encontrada As Long: f_encontrada = DimeDondeEstaLaFila(wb_n.Worksheets("TEXOENFILADOS"), n_et)
+                    If f_encontrada > 0 Then
+                        If UCase(v_ce) = "NO" Then: c_f.Add f_encontrada & "|DEL"
+                        If Trim(h_a2.Cells(rr, p_idx + 5).Value) <> "" And UCase(v_ce) <> "NO" Then: c_f.Add f_encontrada & "|ADD|" & h_a2.Cells(rr, p_idx + 5).Value
+                    End If: End If: Next rr
+            If Not c_f Is Nothing Then Limpiador_Estructural_Total wb_n.Worksheets("TEXOENFILADOS"), c_f, 2
+        End If
+    End If
+    ' Matar hojas, guardar y a otra cosa
+    Application.DisplayAlerts = False: On Error Resume Next: wb_n.Worksheets("columnas").Delete: wb_n.Worksheets("filas").Delete: On Error GoTo 0
+    wb_n.SaveAs Filename:=r_f, FileFormat:=51: wb_n.Close False: If Dir(r_t) <> "" Then Kill r_t: Application.DisplayAlerts = True
+End Sub
+
+' **********************************************************************************************************************
+'  ESTO ES LO QUE TIENES QUE LANZAR TU
+' **********************************************************************************************************************
+Public Sub CrearExcelesSeparados()
+    Dim ws_c As Worksheet, c_configs As New Collection, v_i As Variant, r_b As String, n_o As String, n_t As Integer
+    On Error Resume Next: Set ws_c = ThisWorkbook.Worksheets("columnas"): On Error GoTo 0
+    If ws_c Is Nothing Then: MsgBox "Error de hojas", 16: Exit Sub
+    r_b = "C:\CLIENTES\PRUEBAS\BP\": If Not Check_Carpetas_Ok(r_b) Then: MsgBox "Ruta mal", 16: Exit Sub
+    n_o = Replace(ThisWorkbook.Name, ".xlsm", ""): Dim c_m As Long: c_m = ws_c.Cells(3, ws_c.Columns.Count).End(xlToLeft).Column
+    For n_t = 3 To c_m: If Trim(ws_c.Cells(3, n_t).Value) <> "" Then c_configs.Add Trim(ws_c.Cells(3, n_t).Value)
+    Next n_t: If c_configs.Count = 0 Then Exit Sub
+    ' --- SILENCIO ADMINISTRATIVO ---
+    Application.ScreenUpdating = False: Application.DisplayAlerts = False: Application.Calculation = -4135
+    n_t = 0: For Each v_i In c_configs
+        Crea_El_Archivo_Ya ws_c, CStr(v_i), r_b, n_o: n_t = n_t + 1
+    Next v_i
+    Application.Calculation = -4105: Application.DisplayAlerts = True: Application.ScreenUpdating = True
+    MsgBox "FIN. Archivos: " & n_t, 64
 End Sub
