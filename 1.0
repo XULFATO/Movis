@@ -317,3 +317,12 @@ javascript:(function(){try{var doc=document.getElementsByTagName('iframe')[1].co
 
 javascript:(function(){try{var win=document.getElementsByTagName('iframe')[1].contentWindow;var result='';for(var k in win){try{var v=win[k];if(typeof v!=='function'&&typeof v!=='object'&&v!==null&&v!==undefined){if(k.length<20){result+=k+': '+String(v).substring(0,40)+'\n';}}}catch(e){}}alert(result.substring(0,2000));}catch(ex){alert(ex.message);}})();
 
+
+
+javascript:(function(){try{var win=document.getElementsByTagName('iframe')[1].contentWindow;var doc=win.document;var result='=SCRIPTS=\n';var scripts=doc.getElementsByTagName('script');for(var i=0;i<scripts.length;i++){var s=scripts[i].innerHTML;if(s.length>10)result+=s.substring(0,300)+'\n---\n';}result+='=VARS WIN=\n';for(var k in win){try{var v=win[k];if(typeof v!=='function'&&String(v).indexOf('[object')===-1&&String(v).length<100)result+=k+'='+v+'\n';}catch(e){}}result+='=FORM HIDDEN=\n';var inputs=doc.getElementsByTagName('input');for(var j=0;j<inputs.length;j++){if(inputs[j].type==='hidden')result+=inputs[j].name+'='+inputs[j].value+'\n';}alert(result.substring(0,3000));}catch(ex){alert('ERROR:'+ex.message);}})();
+
+
+
+
+
+.
