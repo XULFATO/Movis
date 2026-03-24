@@ -164,4 +164,140 @@ javascript:(function(){try{var n=prompt('Nombre checkbox (ej: ACTUALIZA_0001)');
 javascript:(function(){try{if(window.__atlasFixOn){window.__atlasFixOn=false;alert('OFF');return;}window.__atlasFixOn=true;document.onclick=function(e){if(!window.__atlasFixOn)return true;e=e||window.event;var t=e.target||e.srcElement,row=t;while(row&&row.tagName!='TR'){row=row.parentNode;}if(!row)return true;var inputs=row.getElementsByTagName('INPUT'),cb=null,i;for(i=0;i<inputs.length;i++){if((inputs[i].type||'').toLowerCase()=='checkbox'&&(/^ACTUALIZA_/i).test(inputs[i].name||'')){cb=inputs[i];break;}}if(!cb)return true;e.returnValue=false;e.cancelBubble=true;setTimeout(function(){try{cb.click();}catch(x){}},0);return false;};alert('ON');}catch(ex){alert(ex.message);}}())
 
 // 7. PRO MANUAL
-javascript:(function(){try{var trs=document.getElementsByTagName('TR'),row=null,i,j,tds,bg;for(i=0;i<trs.length;i++){tds=trs[i].getElementsByTagName('TD');for(j=0;j<tds.length;j++){bg=(tds[j].style&&tds[j].style.backgroundColor)?tds[j].style.backgroundColor:'';if(bg){row=trs[i];break;}}if(row)break;}if(!row&&document.activeElement){row=document.activeElement;while(row&&row.tagName!='TR'){row=row.parentNode;}}if(!row){alert('No fila');return;}var inputs=row.getElementsByTagName('INPUT'),cb=null;for(i=0;i<inputs.length;i++){if((inputs[i].type||'').toLowerCase()=='checkbox'&&(/^ACTUALIZA_/i).test(inputs[i].name||'')){cb=inputs[i];break;}}if(!cb){alert('No checkbox');return;}cb.click();}catch(ex){alert(ex.message);}}())
+javascript:(function(){try{var trs=document.getElementsByTagName('TR'),row=null,i,j,tds,bg;for(i=0;i<trs.length;i++){tds=trs[i].getElementsByTagName('TD');for(j=0;j<tds.length;j++){bg=(tds[j].style&&tds[j].style.backgroundColor)?tds[j].style.backgroundColor:'';if(bg){row=trs[i];break;}}if(row)break;}if(!row&&document.activeElement){row=document.activeElement;while(row&&row.tagName!='TR'){row=row.parentNode;}}if(!row){alert('No fila');return;}var inputs=row.getElementsByTagName('INPUT'),cb=null;for(i=0;i<inputs.length;i++){if((inputs[i].type||'').toLowerCase()=='checkbox'&&(/^ACTUALIZA_/i).test(inputs[i].name||'')){cb=inputs[i];break;}}if(!cb){alert('No checkbox');return;}cb.click();}catch(ex){alert(ex.message);}}()))
+
+
+
+
+
+
+
+
+!!!!!
+// ============================================================
+// DEBUG COMPLETO - IE11 Quirks Mode - Estado interno stale
+// Ejecuta esto en consola F12 ANTES de reproducir el bug
+// ============================================================
+
+(function() {
+
+  // ── FASE 1: Snapshot del estado global ──────────────────────
+  var snapshot1 = {};
+  for (var k in window) {
+    try { snapshot1[k] = JSON.stringify(window[k]); } catch(e) {}
+  }
+  console.log("[F1] Snapshot inicial capturado. Abre un registro, vuelve, y ejecuta debugFase2()");
+
+  // ── FASE 2: Diff de variables globales ──────────────────────
+  window.debugFase2 = function() {
+    var snapshot2 = {};
+    for (var k in window) {
+      try { snapshot2[k] = JSON.stringify(window[k]); } catch(e) {}
+    }
+    var changed = [];
+    for (var k in snapshot2) {
+      if (snapshot1[k] !== snapshot2[k] && typeof window[k] !== 'function') {
+        changed.push({ key: k, before: snapshot1[k], after: snapshot2[k] });
+      }
+    }
+    console.log("[F2] Variables globales cambiadas tras abrir registro:");
+    console.log(JSON.stringify(changed, null, 2));
+  };
+
+  // ── FASE 3: Buscar funciones JS relevantes ───────────────────
+  var keywords = ['ACTUALIZA', 'registro', 'selected', 'current', 'activo', 'open', 'abrir', 'fila', 'row', 'check'];
+  var fns = [];
+  for (var k in window) {
+    try {
+      if (typeof window[k] === 'function') {
+        var src = window[k].toString();
+        for (var i = 0; i < keywords.length; i++) {
+          if (src.toLowerCase().indexOf(keywords[i].toLowerCase()) !== -1) {
+            fns.push({ name: k, src: src.substring(0, 300) });
+            break;
+          }
+        }
+      }
+    } catch(e) {}
+  }
+  console.log("[F3] Funciones globales sospechosas:");
+  console.log(JSON.stringify(fns, null, 2));
+
+  // ── FASE 4: Inspeccionar handlers en checkboxes ──────────────
+  var checkboxes = document.querySelectorAll('input[name^="ACTUALIZA_"]');
+  console.log("[F4] Checkboxes encontrados:", checkboxes.length);
+  for (var c = 0; c < checkboxes.length; c++) {
+    var el = checkboxes[c];
+    if (el.onclick) {
+      console.log("[F4] onclick en", el.name, "→", el.onclick.toString().substring(0, 300));
+      break;
+    }
+  }
+
+  // ── FASE 5: Inspeccionar handlers en TR / TD ─────────────────
+  var rows = document.querySelectorAll('tr');
+  var trFound = false;
+  for (var r = 0; r < rows.length; r++) {
+    if (rows[r].onclick) {
+      console.log("[F5] onclick en TR:", rows[r].onclick.toString().substring(0, 300));
+      trFound = true;
+      break;
+    }
+  }
+  var tds = document.querySelectorAll('td');
+  for (var t = 0; t < tds.length; t++) {
+    if (tds[t].onclick) {
+      console.log("[F5] onclick en TD:", tds[t].onclick.toString().substring(0, 300));
+      trFound = true;
+      break;
+    }
+  }
+  if (!trFound) console.log("[F5] Sin onclick en TR/TD");
+
+  // ── FASE 6: Monkey-patch de fireEvent para interceptar ───────
+  var patchTargets = [];
+  var allInputs = document.querySelectorAll('input[name^="ACTUALIZA_"]');
+  for (var p = 0; p < allInputs.length; p++) {
+    patchTargets.push(allInputs[p]);
+  }
+  // También parchea TRs con onclick
+  for (var rr = 0; rr < rows.length; rr++) {
+    if (rows[rr].onclick) patchTargets.push(rows[rr]);
+  }
+
+  for (var pt = 0; pt < patchTargets.length; pt++) {
+    (function(el) {
+      var origOnclick = el.onclick;
+      var origFireEvent = el.fireEvent;
+
+      // Interceptar onclick
+      if (origOnclick) {
+        el.onclick = function(evt) {
+          console.log("[F6] onclick interceptado en:", el.name || el.tagName, el.id || '');
+          console.log("[F6] Llamando handler original...");
+          return origOnclick.call(el, evt || window.event);
+        };
+      }
+
+      // Interceptar fireEvent (IE legacy)
+      if (origFireEvent) {
+        el.fireEvent = function() {
+          console.log("[F6] fireEvent interceptado en:", el.name || el.tagName, arguments[0]);
+          return origFireEvent.apply(el, arguments);
+        };
+      }
+    })(patchTargets[pt]);
+  }
+  console.log("[F6] Monkey-patch aplicado a", patchTargets.length, "elementos");
+
+  // ── RESUMEN ──────────────────────────────────────────────────
+  console.log("============================================");
+  console.log("PASOS:");
+  console.log("1. Haz click en un registro → se abre OK");
+  console.log("2. Vuelve con el menu interno");
+  console.log("3. Ejecuta debugFase2() en consola");
+  console.log("4. Haz click en OTRO registro");
+  console.log("5. Revisa los logs [F6] para ver qué se dispara");
+  console.log("============================================");
+
+})();
