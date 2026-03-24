@@ -301,3 +301,8 @@ javascript:(function(){try{var trs=document.getElementsByTagName('TR'),row=null,
   console.log("============================================");
 
 })();
+&&&&&
+
+javascript:(function(){var cbs=document.querySelectorAll('input[name^="_ACTUALIZA_"]');for(var i=0;i<cbs.length;i++){cbs[i].checked=false;}var tds=document.querySelectorAll('td,tr');for(var j=0;j<tds.length;j++){var el=tds[j];var orig=el.onclick;if(orig){(function(e,fn){e.onclick=function(evt){var cbs2=document.querySelectorAll('input[name^="_ACTUALIZA_"]');for(var k=0;k<cbs2.length;k++){cbs2[k].checked=false;}return fn.call(e,evt||window.event);};})(el,orig);}}alert('Fix aplicado. Ahora haz click en la fila.');})();
+
+####€
