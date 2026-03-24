@@ -119,3 +119,10 @@ Copiar el vbaProject.bin del archivo NUEVO
 Pegarlo en la carpeta xl del archivo VIEJO (sobrescribiendo)
 Comprimir y renombrar a .xlsm
 Abrir (ahora tendrás acceso pero SIN código - tendrás que importar desde el .OLD)
+
+
+
+
+window.onfocus = function() {
+    document.body.innerHTML = document.body.innerHTML;
+};
