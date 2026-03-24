@@ -312,5 +312,6 @@ javascript:(function(){try{var iframes=document.getElementsByTagName('iframe');v
 javascript:(function(){try{var iframes=document.getElementsByTagName('iframe');var win=iframes[0].contentWindow;var vars=['GXPARAMETERS','gx_evt','GXevt','gxev','gx_grid','selectedRow','currentRow'];var result='';for(var i=0;i<vars.length;i++){try{result+=vars[i]+': '+JSON.stringify(win[vars[i]])+'\n';}catch(e){result+=vars[i]+': ERROR\n';}}alert(result);}catch(ex){alert(ex.message);}})();
 javascript:(function(){try{var result='';var iframes=document.getElementsByTagName('iframe');result+='Padre: '+iframes.length+' iframes\n';for(var i=0;i<iframes.length;i++){try{var src=iframes[i].src||'sin src';var doc=iframes[i].contentDocument||iframes[i].contentWindow.document;var sub=doc.getElementsByTagName('iframe');result+='['+i+'] '+src+' → subiframes:'+sub.length+'\n';}catch(e){result+='['+i+'] ERROR acceso\n';}}alert(result);}catch(ex){alert(ex.message);}})();
 
+javascript:(function(){try{var doc=document.getElementsByTagName('iframe')[1].contentWindow;var vars=[];for(var k in doc){try{if(typeof doc[k]!=='function'){vars.push(k+': '+String(doc[k]).substring(0,50));}}catch(e){}}alert(vars.join('\n').substring(0,1000));}catch(ex){alert(ex.message);}})();
 
 
