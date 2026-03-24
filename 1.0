@@ -144,3 +144,24 @@ _------
 javascript:(function(){try{var n=prompt('Nombre del checkbox (ej: ACTUALIZA_0001)');if(!n)return;var x=document.getElementsByName(n);if(x&&x.length){x[0].click();}else{alert('No encontrado');}}catch(e){alert(e.message);}}())
 
 javascript:(function(){try{var f=document.forms[0];if(f){f.submit();}else{location.reload();}}catch(e){alert(e.message);}}())
+=====================
+// 1. RESET FUERTE
+javascript:(function(){try{location.replace(location.href);}catch(e){location.reload(true);}}())
+
+// 2. RESET NORMAL
+javascript:(function(){try{window.location.href=window.location.href;}catch(e){location.reload();}}())
+
+// 3. REFRESH INTERNO IE
+javascript:(function(){try{document.execCommand('Refresh');}catch(e){location.reload();}}())
+
+// 4. RESET SUAVE (FORM + FOCO)
+javascript:(function(){try{if(document.forms&&document.forms[0]){document.forms[0].reset();}if(document.activeElement){document.activeElement.blur();}}catch(e){alert(e.message);}}())
+
+// 5. CLICK FORZADO
+javascript:(function(){try{var n=prompt('Nombre checkbox (ej: ACTUALIZA_0001)');if(!n)return;var x=document.getElementsByName(n);if(x&&x.length){x[0].click();}else{alert('No encontrado');}}catch(e){alert(e.message);}}())
+
+// 6. PRO AUTOMÁTICO
+javascript:(function(){try{if(window.__atlasFixOn){window.__atlasFixOn=false;alert('OFF');return;}window.__atlasFixOn=true;document.onclick=function(e){if(!window.__atlasFixOn)return true;e=e||window.event;var t=e.target||e.srcElement,row=t;while(row&&row.tagName!='TR'){row=row.parentNode;}if(!row)return true;var inputs=row.getElementsByTagName('INPUT'),cb=null,i;for(i=0;i<inputs.length;i++){if((inputs[i].type||'').toLowerCase()=='checkbox'&&(/^ACTUALIZA_/i).test(inputs[i].name||'')){cb=inputs[i];break;}}if(!cb)return true;e.returnValue=false;e.cancelBubble=true;setTimeout(function(){try{cb.click();}catch(x){}},0);return false;};alert('ON');}catch(ex){alert(ex.message);}}())
+
+// 7. PRO MANUAL
+javascript:(function(){try{var trs=document.getElementsByTagName('TR'),row=null,i,j,tds,bg;for(i=0;i<trs.length;i++){tds=trs[i].getElementsByTagName('TD');for(j=0;j<tds.length;j++){bg=(tds[j].style&&tds[j].style.backgroundColor)?tds[j].style.backgroundColor:'';if(bg){row=trs[i];break;}}if(row)break;}if(!row&&document.activeElement){row=document.activeElement;while(row&&row.tagName!='TR'){row=row.parentNode;}}if(!row){alert('No fila');return;}var inputs=row.getElementsByTagName('INPUT'),cb=null;for(i=0;i<inputs.length;i++){if((inputs[i].type||'').toLowerCase()=='checkbox'&&(/^ACTUALIZA_/i).test(inputs[i].name||'')){cb=inputs[i];break;}}if(!cb){alert('No checkbox');return;}cb.click();}catch(ex){alert(ex.message);}}())
