@@ -126,3 +126,7 @@ Abrir (ahora tendrás acceso pero SIN código - tendrás que importar desde el .
 window.onfocus = function() {
     document.body.innerHTML = document.body.innerHTML;
 };
+
+
+
+javascript:(function(){document.body.innerHTML=document.body.innerHTML;})();
