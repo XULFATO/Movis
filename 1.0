@@ -315,3 +315,5 @@ javascript:(function(){try{var result='';var iframes=document.getElementsByTagNa
 javascript:(function(){try{var doc=document.getElementsByTagName('iframe')[1].contentWindow;var vars=[];for(var k in doc){try{if(typeof doc[k]!=='function'){vars.push(k+': '+String(doc[k]).substring(0,50));}}catch(e){}}alert(vars.join('\n').substring(0,1000));}catch(ex){alert(ex.message);}})();
 
 
+javascript:(function(){try{var win=document.getElementsByTagName('iframe')[1].contentWindow;var result='';for(var k in win){try{var v=win[k];if(typeof v!=='function'&&typeof v!=='object'&&v!==null&&v!==undefined){if(k.length<20){result+=k+': '+String(v).substring(0,40)+'\n';}}}catch(e){}}alert(result.substring(0,2000));}catch(ex){alert(ex.message);}})();
+
