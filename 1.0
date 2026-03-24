@@ -349,4 +349,48 @@ javascript:(function(){try{var iframes=document.getElementsByTagName('iframe');f
 ........
 javascript:(function(){try{var iframes=document.getElementsByTagName('iframe');for(var i=0;i<iframes.length;i++){try{var src=iframes[i].src;if(src&&src.indexOf('htrataplz')!==-1){iframes[i].src=src;alert('Recargando grid iframe['+i+']');return;}}catch(e){}}}catch(ex){alert(ex.message);}})();
 ........
+javascript:(function(){try{var iframes=document.getElementsByTagName('iframe');var f=iframes[1];f.src=f.src.split('?')[0]+'?'+new Date().getTime();alert('Recargando...');}catch(ex){alert(ex.message);}})();
 
+
+
+
+
+// ============================================================
+// BOOKMARKLET 1 - Recargar iframe con timestamp (anti-caché)
+// ============================================================
+javascript:(function(){try{var f=document.getElementsByTagName('iframe')[1];f.src=f.src.split('?')[0]+'?t='+new Date().getTime();alert('Recargando iframe...');}catch(ex){alert(ex.message);}})();
+
+// ============================================================
+// BOOKMARKLET 2 - Doble click checkbox (marca/desmarca/marca)
+// ============================================================
+javascript:(function(){try{var iframes=document.getElementsByTagName('iframe');for(var i=0;i<iframes.length;i++){try{var doc=iframes[i].contentDocument||iframes[i].contentWindow.document;var checks=doc.getElementsByTagName('input');for(var j=0;j<checks.length;j++){if(checks[j].type==='checkbox'&&checks[j].checked&&checks[j].name.indexOf('_ACTUALIZA_')===0){var cb=checks[j];cb.checked=false;cb.fireEvent('onclick');setTimeout(function(){cb.checked=true;cb.fireEvent('onclick');alert('Doble click OK: '+cb.name);},200);return;}}}catch(e){}}}catch(ex){alert(ex.message);}})();
+
+// ============================================================
+// BOOKMARKLET 3 - Interceptar submit y forzar _NUMRUBEJEGEN
+// ============================================================
+javascript:(function(){try{var iframes=document.getElementsByTagName('iframe');for(var i=0;i<iframes.length;i++){try{var doc=iframes[i].contentDocument||iframes[i].contentWindow.document;var checks=doc.getElementsByTagName('input');var activeNum=null;for(var j=0;j<checks.length;j++){if(checks[j].type==='checkbox'&&checks[j].checked&&checks[j].name.indexOf('_ACTUALIZA_')===0){var n=checks[j].name.replace('_ACTUALIZA_','');activeNum=parseInt(n,10);break;}}if(activeNum!==null){var inputs=doc.getElementsByTagName('input');for(var k=0;k<inputs.length;k++){if(inputs[k].name==='_NUMRUBEJEGEN'){inputs[k].value=activeNum;alert('Forzado _NUMRUBEJEGEN='+activeNum);break;}}}else{alert('No hay checkbox marcado');}}catch(e){}}}catch(ex){alert(ex.message);}})();
+
+// ============================================================
+// BOOKMARKLET 4 - Navegar directo a la grid saltando botón volver
+// ============================================================
+javascript:(function(){try{var iframes=document.getElementsByTagName('iframe');for(var i=0;i<iframes.length;i++){try{var src=iframes[i].src;if(src&&src.indexOf('htrataplz')!==-1){var base=src.split('?')[0];iframes[i].contentWindow.location.replace(base+'?t='+new Date().getTime());alert('Navegando directo a grid...');return;}}catch(e){}}}catch(ex){alert(ex.message);}})();
+
+// ============================================================
+// BOOKMARKLET 5 - Forzar submit limpio con solo checkbox activo
+// ============================================================
+javascript:(function(){try{var iframes=document.getElementsByTagName('iframe');for(var i=0;i<iframes.length;i++){try{var doc=iframes[i].contentDocument||iframes[i].contentWindow.document;var checks=doc.getElementsByTagName('input');var activeCb=null;for(var j=0;j<checks.length;j++){if(checks[j].type==='checkbox'&&checks[j].checked&&checks[j].name.indexOf('_ACTUALIZA_')===0){activeCb=checks[j];break;}}if(activeCb){var allChecks=doc.getElementsByTagName('input');for(var k=0;k<allChecks.length;k++){if(allChecks[k].type==='checkbox'&&allChecks[k]!==activeCb){allChecks[k].checked=false;}}var ev=doc.getElementById('_EventName');if(ev)ev.value='ECONSULTA.CLICK.';var btn=doc.getElementById('CONSULTA');if(btn){btn.fireEvent('onclick');alert('Submit forzado con: '+activeCb.name);}}}catch(e){}}}catch(ex){alert(ex.message);}})();
+
+// ============================================================
+// BOOKMARKLET 6 - Interceptar botón consulta y añadir timestamp
+// ============================================================
+javascript:(function(){try{var iframes=document.getElementsByTagName('iframe');for(var i=0;i<iframes.length;i++){try{var doc=iframes[i].contentDocument||iframes[i].contentWindow.document;var btn=doc.getElementById('CONSULTA');if(btn){var orig=btn.onclick;btn.onclick=function(e){var checks=doc.getElementsByTagName('input');for(var j=0;j<checks.length;j++){if(checks[j].type==='checkbox'&&!checks[j].checked&&checks[j].name.indexOf('_ACTUALIZA_')===0){checks[j].defaultChecked=false;}}if(orig)return orig.call(btn,e||window.event);};alert('Botón consulta interceptado iframe['+i+']');return;}}catch(e){}}}catch(ex){alert(ex.message);}})();
+
+// ============================================================
+// BOOKMARKLET 7 - Leer URL completa del iframe para debug
+// ============================================================
+javascript:(function(){try{var iframes=document.getElementsByTagName('iframe');var result='';for(var i=0;i<iframes.length;i++){try{result+='['+i+'] src: '+iframes[i].src+'\n';result+='['+i+'] loc: '+iframes[i].contentWindow.location.href+'\n';}catch(e){result+='['+i+'] ERROR\n';}}alert(result);}catch(ex){alert(ex.message);}})();
+
+// ============================================================
+// BOOKMARKLET 8 - Recargar iframe[1] via contentWindow.location
+// ============================================================
+javascript:(function(){try{var win=document.getElementsByTagName('iframe')[1].contentWindow;win.location.reload(true);alert('Reload forzado...');}catch(ex){alert(ex.message);}})();
