@@ -139,3 +139,8 @@ javascript:(function(){try{if(document.activeElement){document.activeElement.blu
 
 javascript:(function(){try{if(document.activeElement){document.activeElement.blur();}document.body.click();alert('RESET SUAVE');}catch(e){alert(e.message);}}())
 
+_------
+
+javascript:(function(){try{var n=prompt('Nombre del checkbox (ej: ACTUALIZA_0001)');if(!n)return;var x=document.getElementsByName(n);if(x&&x.length){x[0].click();}else{alert('No encontrado');}}catch(e){alert(e.message);}}())
+
+javascript:(function(){try{var f=document.forms[0];if(f){f.submit();}else{location.reload();}}catch(e){alert(e.message);}}())
