@@ -323,6 +323,7 @@ javascript:(function(){try{var win=document.getElementsByTagName('iframe')[1].co
 
 
 
-
+javascript:(function(){try{var iframes=document.getElementsByTagName('iframe');var fixed=false;for(var i=0;i<iframes.length;i++){try{var doc=iframes[i].contentDocument||iframes[i].contentWindow.document;var f=doc.MAINFORM;if(f&&f._NUMRUB){f._NUMRUB.value='';fixed=true;alert('Fix OK: _NUMRUB reseteado en iframe '+i);}}catch(e){}}if(!fixed)alert('No encontrado');}catch(ex){alert(ex.message);}})();
 
 .
+javascript:(function(){try{var iframes=document.getElementsByTagName('iframe');var fixed=false;for(var i=0;i<iframes.length;i++){try{var doc=iframes[i].contentDocument||iframes[i].contentWindow.document;var f=doc.MAINFORM;if(f&&f._NUMRUB){f._NUMRUB.value='';fixed=true;alert('Fix OK: _NUMRUB reseteado en iframe '+i);}}catch(e){}}if(!fixed)alert('No encontrado');}catch(ex){alert(ex.message);}})();
