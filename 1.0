@@ -133,3 +133,9 @@ javascript:(function(){document.body.innerHTML=document.body.innerHTML;})();
   FAVORITOS
 
 javascript:(function(){window.onfocus=function(){document.body.innerHTML=document.body.innerHTML;};alert('FIX ACTIVADO');})();
+
+
+javascript:(function(){try{if(document.activeElement){document.activeElement.blur();}if(document.selection&&document.selection.empty){document.selection.empty();}alert('FOCO LIMPIADO');}catch(e){alert(e.message);}}())
+
+javascript:(function(){try{if(document.activeElement){document.activeElement.blur();}document.body.click();alert('RESET SUAVE');}catch(e){alert(e.message);}}())
+
