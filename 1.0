@@ -394,3 +394,13 @@ javascript:(function(){try{var iframes=document.getElementsByTagName('iframe');v
 // BOOKMARKLET 8 - Recargar iframe[1] via contentWindow.location
 // ============================================================
 javascript:(function(){try{var win=document.getElementsByTagName('iframe')[1].contentWindow;win.location.reload(true);alert('Reload forzado...');}catch(ex){alert(ex.message);}})();
+
+
+
+
+llllll
+
+javascript:(function(){try{var iframes=document.getElementsByTagName('iframe');for(var i=0;i<iframes.length;i++){try{var src=iframes[i].src;if(src&&src.indexOf('htrataplz')!==-1){window.open(src.split('?')[0]+'?t='+new Date().getTime(),'_blank');return;}}catch(e){}}}catch(ex){alert(ex.message);}})();
+javascript:(function(){try{window.open('http://esp513:8084/adpnet/atlas2/servlet/hselrubdeha','_blank');}catch(ex){alert(ex.message);}})();
+javascript:(function(){try{window.open('http://esp513:8084/adpnet/atlas2/servlet/htrataplz5?t='+new Date().getTime(),'_blank');}catch(ex){alert(ex.message);}})();
+javascript:(function(){try{var iframes=document.getElementsByTagName('iframe');for(var i=0;i<iframes.length;i++){try{var doc=iframes[i].contentDocument||iframes[i].contentWindow.document;var sel=doc.getElementsByName('_SELORDRUB');if(sel&&sel.length>0){var ev=doc.getElementById('_EventName');if(ev)ev.value='EACEPTAR.CLICK.';sel[0].value='2';doc.getElementById('MAINFORM').submit();return;}}catch(e){}}}catch(ex){alert(ex.message);}})();
