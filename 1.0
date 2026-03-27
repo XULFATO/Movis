@@ -417,4 +417,10 @@ var links = document.getElementsByTagName('a'); alert(links[10].href + '\n' + li
 
 var links = document.getElementsByTagName('a'); alert(links[20].href + '\n' + links[21].href + '\n' + links[22].href);
 
+alert(document.body.innerHTML.indexOf('GX_setevent'))
+
+
+
+
+
 
