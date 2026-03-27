@@ -411,3 +411,10 @@ javascript:(function(){try{var iframes=document.getElementsByTagName('iframe');f
 
 
 var f = document.forms[0]; var s = ""; for(var i=0; i<f.elements.length; i++){s += f.elements[i].name + "=" + f.elements[i].value + "\n";} alert(s);
+
+
+var links = document.getElementsByTagName('a'); alert(links[10].href + '\n' + links[11].href);
+
+
+
+
