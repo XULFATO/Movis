@@ -404,3 +404,10 @@ javascript:(function(){try{var iframes=document.getElementsByTagName('iframe');f
 javascript:(function(){try{window.open('http://esp513:8084/adpnet/atlas2/servlet/hselrubdeha','_blank');}catch(ex){alert(ex.message);}})();
 javascript:(function(){try{window.open('http://esp513:8084/adpnet/atlas2/servlet/htrataplz5?t='+new Date().getTime(),'_blank');}catch(ex){alert(ex.message);}})();
 javascript:(function(){try{var iframes=document.getElementsByTagName('iframe');for(var i=0;i<iframes.length;i++){try{var doc=iframes[i].contentDocument||iframes[i].contentWindow.document;var sel=doc.getElementsByName('_SELORDRUB');if(sel&&sel.length>0){var ev=doc.getElementById('_EventName');if(ev)ev.value='EACEPTAR.CLICK.';sel[0].value='2';doc.getElementById('MAINFORM').submit();return;}}catch(e){}}}catch(ex){alert(ex.message);}})();
+
+
+
+
+
+
+var f = document.forms[0]; var s = ""; for(var i=0; i<f.elements.length; i++){s += f.elements[i].name + "=" + f.elements[i].value + "\n";} alert(s);
