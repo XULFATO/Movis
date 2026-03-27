@@ -423,4 +423,8 @@ alert(document.body.innerHTML.indexOf('GX_setevent'))
 
 var t=document.getElementsByTagName('tr'); var s=""; for(var i=5;i<15;i++){s+=i+":"+t[i].innerHTML.substring(0,100)+"\n";} alert(s);
 
+var s=""; var all=document.all; for(var i=0;i<all.length;i++){if(all[i].onclick){s+=i+":"+all[i].tagName+":"+all[i].outerHTML.substring(0,80)+"\n";}} alert(s.substring(0,2000));
+
+
+
 
