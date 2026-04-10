@@ -426,5 +426,41 @@ var t=document.getElementsByTagName('tr'); var s=""; for(var i=5;i<15;i++){s+=i+
 var s=""; var all=document.all; for(var i=0;i<all.length;i++){if(all[i].onclick){s+=i+":"+all[i].tagName+":"+all[i].outerHTML.substring(0,80)+"\n";}} alert(s.substring(0,2000));
 
 
+javascript:(function(){
+  try{
+    // 1. Leer checkboxes marcados REALES
+    var seleccion = [];
+    document.querySelectorAll('input[type="checkbox"]:checked').forEach(function(cb){
+      // intenta sacar valor útil
+      var val = cb.value || cb.getAttribute('data-value') || cb.id;
+      if(val) seleccion.push(val);
+    });
 
+    // 2. Limpiar posibles caches típicos
+    if(window.selectedItems) window.selectedItems = [];
+    if(window.gx && gx.fn && gx.fn.setControlValue){
+      // intenta limpiar hidden típico (ajusta nombre si lo ves en DOM)
+      try{ gx.fn.setControlValue('vSELECCION',''); }catch(e){}
+    }
+
+    // 3. Reconstruir selección (string tipo 46,327,329)
+    var lista = seleccion.join(',');
+
+    console.log('✔ Selección limpia:', lista);
+
+    // 4. Inyectar selección en el sistema (ajusta si ves otro campo hidden)
+    try{
+      var hidden = document.querySelector('input[type="hidden"]');
+      if(hidden) hidden.value = lista;
+    }catch(e){}
+
+    // 5. Lanzar evento GeneXus
+    if(typeof GX_setevent === 'function'){
+      GX_setevent('ECONSULTA_CLICK', lista);
+    }
+
+  }catch(e){
+    console.error('❌ Error:', e);
+  }
+})();
 
