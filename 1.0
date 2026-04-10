@@ -464,3 +464,286 @@ javascript:(function(){
   }
 })();
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+// ============================================================
+//  DIAGNÓSTICO TODO-EN-UNO — pega en F12 > Consola y pulsa Enter
+//  Genera informe completo. Copia el resultado y envíalo.
+// ============================================================
+(function () {
+  var R = [];
+  var SEP = '─'.repeat(55);
+
+  function titulo(t) { R.push('\n' + SEP); R.push('  ' + t); R.push(SEP); }
+  function linea(l)  { R.push(l); }
+  function ok(l)     { R.push('  ✓ ' + l); }
+  function warn(l)   { R.push('  ⚠ ' + l); }
+  function dato(k,v) { R.push('  ' + k + ': ' + JSON.stringify(v)); }
+
+  // ─── 1. HIDDEN INPUTS ───────────────────────────────────────
+  titulo('1. HIDDEN INPUTS');
+  var hiddens = Array.prototype.slice.call(
+    document.querySelectorAll('input[type="hidden"]')
+  );
+  if (!hiddens.length) {
+    warn('No se encontraron hidden inputs');
+  } else {
+    hiddens.forEach(function (h) {
+      var flags = [];
+      if (h.value && h.value.length > 0) flags.push('CON VALOR');
+      if (/select|check|row|item|id|choice|sel|list|pick/i.test(h.name + h.id))
+        flags.push('NOMBRE SOSPECHOSO');
+      if (/\d{2,}/.test(h.value)) flags.push('CONTIENE NÚMEROS');
+      if (/[,|;]/.test(h.value))  flags.push('LISTA CONCATENADA');
+      var lineTxt = '  name="' + h.name + '" id="' + h.id +
+        '" value="' + h.value + '"';
+      if (flags.length) lineTxt += '  ←← [' + flags.join(' | ') + ']';
+      linea(lineTxt);
+    });
+  }
+
+  // ─── 2. CHECKBOXES DEL DOM ──────────────────────────────────
+  titulo('2. CHECKBOXES EN DOM');
+  var checks = Array.prototype.slice.call(
+    document.querySelectorAll('input[type="checkbox"]')
+  );
+  if (!checks.length) {
+    warn('No se encontraron checkboxes');
+  } else {
+    ok('Total checkboxes encontrados: ' + checks.length);
+    var marcados = checks.filter(function (c) { return c.checked; });
+    ok('Marcados ahora mismo: ' + marcados.length);
+    if (marcados.length) {
+      marcados.forEach(function (c) {
+        dato('  MARCADO', {id: c.id, name: c.name, value: c.value});
+      });
+    }
+    // Revisar si tienen listeners inline
+    var sinEvento = checks.filter(function (c) {
+      return !c.getAttribute('onclick') && !c.getAttribute('onchange');
+    });
+    if (sinEvento.length === checks.length) {
+      warn('NINGÚN checkbox tiene onclick/onchange inline → listeners via JS o ninguno');
+    } else {
+      ok('Algunos checkboxes tienen eventos inline');
+      checks.forEach(function (c) {
+        var oc = c.getAttribute('onclick');
+        var och = c.getAttribute('onchange');
+        if (oc || och) {
+          linea('  cb val="' + c.value + '" onclick="' + (oc||'') +
+            '" onchange="' + (och||'') + '"');
+        }
+      });
+    }
+  }
+
+  // ─── 3. FORMULARIOS Y SUS CAMPOS ───────────────────────────
+  titulo('3. FORMULARIOS');
+  var forms = document.forms;
+  linea('  Total formularios: ' + forms.length);
+  Array.prototype.slice.call(forms).forEach(function (f, i) {
+    linea('  Form[' + i + '] id="' + f.id + '" name="' + f.name +
+      '" action="' + (f.action||'') + '" method="' + (f.method||'') + '"');
+    var campos = Array.prototype.slice.call(f.elements).filter(function(el){
+      return el.value && el.type !== 'checkbox' && el.type !== 'radio';
+    });
+    campos.forEach(function(el){
+      var flags2 = [];
+      if (/select|check|row|item|id|choice|sel|list|pick/i.test(el.name+el.id))
+        flags2.push('SOSPECHOSO');
+      if (/[,|;]/.test(el.value)) flags2.push('LISTA');
+      if (/\d{2,}/.test(el.value)) flags2.push('NÚMEROS');
+      linea('    [' + el.type + '] name="' + el.name + '" val="' +
+        el.value.substring(0,80) + '"' +
+        (flags2.length ? '  ←← ' + flags2.join('|') : ''));
+    });
+  });
+
+  // ─── 4. VARIABLES GLOBALES SOSPECHOSAS ─────────────────────
+  titulo('4. VARIABLES GLOBALES SOSPECHOSAS');
+  var candidatos = [
+    'selectedRows','selectedItems','checkedItems','seleccionados',
+    'gxSelectedList','gxChecked','selectedIds','listaSeleccion',
+    'checkedRows','selectedValues','gxSelected','rowsSelected',
+    'itemsSelected','checkList','selList','gridSelected'
+  ];
+  var encontrados = 0;
+  candidatos.forEach(function (g) {
+    if (typeof window[g] !== 'undefined') {
+      encontrados++;
+      dato('ENCONTRADA window.' + g, window[g]);
+    }
+  });
+  if (!encontrados) {
+    warn('Ninguna variable del listado predefinido encontrada');
+    warn('→ Busca manualmente con: Object.keys(window).filter(k => /sel|check|row|item|grid/i.test(k))');
+  }
+
+  // Búsqueda dinámica por patrón de nombre
+  titulo('4b. BÚSQUEDA DINÁMICA EN WINDOW');
+  try {
+    var dinamicas = Object.keys(window).filter(function (k) {
+      return /sel|check|row|item|grid|pick|list|choice/i.test(k) &&
+             k.length < 40 &&
+             typeof window[k] !== 'function' &&
+             typeof window[k] !== 'undefined';
+    });
+    if (!dinamicas.length) {
+      warn('Sin coincidencias dinámicas');
+    } else {
+      dinamicas.slice(0, 20).forEach(function (k) {
+        dato(k, typeof window[k] === 'object'
+          ? JSON.stringify(window[k]).substring(0,120)
+          : window[k]);
+      });
+    }
+  } catch(e) {
+    warn('Error en búsqueda dinámica: ' + e.message);
+  }
+
+  // ─── 5. FUNCIONES GENEXI / GENEXI-LIKE ─────────────────────
+  titulo('5. FUNCIONES GENEXI / EVENTOS GX');
+  var fnsGX = [
+    'GX_setevent','gx_setevent','GXSetEvent','GXevt',
+    'doSubmit','ExecuteEvent','GxExecuteEvent',
+    'gxformname','GXFormName','GxDoSubmit',
+    'GxSetGridValue','GxGetChecked','GxGridCheck'
+  ];
+  var fnsEncontradas = 0;
+  fnsGX.forEach(function (fn) {
+    if (typeof window[fn] !== 'undefined') {
+      fnsEncontradas++;
+      ok('window.' + fn + ' [' + typeof window[fn] + ']');
+      if (typeof window[fn] === 'function') {
+        // Intentar ver el código fuente
+        var src = window[fn].toString().substring(0, 300);
+        linea('    → ' + src.replace(/\n/g, ' ').replace(/\s+/g,' ') + '...');
+      }
+    }
+  });
+  if (!fnsEncontradas) {
+    warn('Ninguna función GeneXus del listado encontrada');
+  }
+
+  // Buscar objeto gx / GX
+  titulo('5b. OBJETOS GX');
+  ['gx','GX','gxobj','GXObject','GeneXus'].forEach(function(g){
+    if (window[g] && typeof window[g] === 'object') {
+      ok('window.' + g + ' existe');
+      try {
+        linea('  keys: ' + Object.keys(window[g]).join(', ').substring(0,200));
+      } catch(e) {}
+    }
+  });
+
+  // ─── 6. BOTONES / ELEMENTOS DE CONSULTA ────────────────────
+  titulo('6. BOTONES Y ELEMENTOS INTERACTIVOS');
+  var btns = Array.prototype.slice.call(
+    document.querySelectorAll('input[type="button"],input[type="submit"],button,a[href*="javascript"]')
+  ).filter(function(el){
+    return /consult|buscar|search|query|ejecut|accept|ok|enviar/i.test(
+      (el.value||'') + (el.textContent||'') + (el.id||'') + (el.name||'')
+    );
+  });
+  if (!btns.length) {
+    warn('No se encontraron botones con nombre relacionado a consulta');
+    warn('→ Lista todos los botones con: document.querySelectorAll("input[type=button],button")');
+  } else {
+    btns.forEach(function(b){
+      var oc2 = b.getAttribute('onclick') || '';
+      linea('  [' + b.tagName + '] id="' + b.id + '" val/text="' +
+        (b.value||b.textContent||'').trim().substring(0,40) + '"');
+      if (oc2) linea('    onclick: ' + oc2.substring(0,150));
+    });
+  }
+
+  // ─── 7. SCRIPTS INLINE SOSPECHOSOS ─────────────────────────
+  titulo('7. SCRIPTS INLINE — fragmentos relevantes');
+  var scripts = Array.prototype.slice.call(document.querySelectorAll('script:not([src])'));
+  var fragmentos = [];
+  scripts.forEach(function(s){
+    var txt = s.textContent || '';
+    // Buscar patrones relevantes
+    var matches = txt.match(/([^\n]{0,80}(selected|checked|push|hidden|setevent|grid)[^\n]{0,80})/gi);
+    if (matches) {
+      matches.slice(0,5).forEach(function(m){
+        fragmentos.push(m.trim());
+      });
+    }
+  });
+  if (!fragmentos.length) {
+    warn('Sin fragmentos relevantes en scripts inline');
+  } else {
+    ok(fragmentos.length + ' fragmentos relevantes encontrados:');
+    fragmentos.slice(0,15).forEach(function(f){ linea('  · ' + f.substring(0,120)); });
+  }
+
+  // ─── 8. ACTIVAR MONITOR EN TODOS LOS HIDDENS ───────────────
+  titulo('8. MONITOR ACTIVADO (cambios en hiddens a partir de ahora)');
+  var monitoreados = 0;
+  hiddens.forEach(function(h){
+    if (!h.__monitored) {
+      h.__monitored = true;
+      var _v = h.value;
+      try {
+        Object.defineProperty(h, 'value', {
+          get: function(){ return _v; },
+          set: function(nv){
+            if (nv !== _v) {
+              console.warn('[MONITOR] Hidden "' + h.name + '" cambió: "' + _v + '" → "' + nv + '"');
+              console.trace();
+            }
+            _v = nv;
+          },
+          configurable: true
+        });
+        monitoreados++;
+      } catch(e) { /* IE11 puede bloquear defineProperty en algunos elementos */ }
+    }
+  });
+  ok('Monitoreando ' + monitoreados + ' hidden inputs.');
+  ok('Cualquier cambio en su valor aparecerá en consola con traza de llamada.');
+
+  // ─── 9. INTERCEPTAR GX_setevent SI EXISTE ──────────────────
+  titulo('9. INTERCEPTOR GX_setevent');
+  if (typeof window.GX_setevent === 'function' && !window.__gxIntercepted) {
+    var _origGX = window.GX_setevent;
+    window.GX_setevent = function() {
+      console.warn('[INTERCEPTOR] GX_setevent args:', JSON.stringify(Array.prototype.slice.call(arguments)));
+      console.trace();
+      return _origGX.apply(this, arguments);
+    };
+    window.__gxIntercepted = true;
+    ok('GX_setevent interceptado. Próxima llamada aparecerá en consola.');
+  } else if (window.__gxIntercepted) {
+    ok('Ya estaba interceptado de antes.');
+  } else {
+    warn('GX_setevent no encontrado — interceptor no activado');
+  }
+
+  // ─── IMPRIMIR INFORME ───────────────────────────────────────
+  R.push('\n' + SEP);
+  R.push('  FIN DEL DIAGNÓSTICO');
+  R.push('  Copia todo lo anterior y envíalo para análisis.');
+  R.push(SEP);
+
+  var informe = R.join('\n');
+  console.log('%c DIAGNÓSTICO COMPLETO \n' + informe,
+    'font-family:monospace;font-size:12px;color:#00ff99;background:#111;padding:4px');
+
+  // También disponible como texto plano:
+  window.__diagnostico = informe;
+  console.log('\n→ Para copiar el informe limpio ejecuta: copy(window.__diagnostico)');
+
+})();
