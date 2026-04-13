@@ -1,3 +1,25 @@
+IFRAME 
+(function(){
+var msg='';
+try{
+  var fw=window.frames[1];
+  var d=fw.document;
+  var fs=d.getElementsByTagName('form');
+  msg='forms en frame1: '+fs.length+'\n';
+  for(var i=0;i<fs.length;i++){
+    var f=fs[i];
+    msg+='form['+i+'] action='+f.action+' method='+f.method+'\n';
+    var els=f.elements;
+    for(var j=0;j<els.length;j++){
+      msg+='  ['+els[j].type+'] name='+els[j].name+' value='+els[j].value+' checked='+els[j].checked+'\n';
+    }
+  }
+}catch(e){msg='ERROR: '+e.message;}
+console.warn(msg);
+window.__form=msg;
+})();
+
+
 URL QUE VIAJA
 (function(){
 var msg='';
