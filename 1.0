@@ -1,3 +1,36 @@
+VEMOS QUE HACE EL BOTON
+(function(){
+var msg='';
+try{
+  var d=window.frames[1].document;
+  var imgs=d.getElementsByTagName('img');
+  for(var i=0;i<imgs.length;i++){
+    var img=imgs[i];
+    var src=img.src||'';
+    if(src.indexOf('libro')>-1||src.indexOf('book')>-1||src.indexOf('open')>-1||src.indexOf('consult')>-1){
+      msg+='IMG src='+src+'\n';
+      msg+='  onclick='+(img.getAttribute('onclick')||'ninguno')+'\n';
+      var p=img.parentNode;
+      msg+='  parent='+p.tagName+' onclick='+(p.getAttribute('onclick')||'ninguno')+' href='+(p.href||'ninguno')+'\n';
+    }
+  }
+  // por si no lo pillamos por src, listar todos los clickables del header
+  var as=d.getElementsByTagName('a');
+  for(var i=0;i<as.length;i++){
+    var a=as[i];
+    msg+='A href='+(a.href||'')+' onclick='+(a.getAttribute('onclick')||'')+' title='+(a.title||'')+'\n';
+  }
+}catch(e){msg='ERROR: '+e.message;}
+console.warn(msg);
+window.__btn=msg;
+})();
+
+
+
+
+
+
+VEMOS COMO SE INFORMA CAMPOS
 (function(){
 if(window.__gxi2)return;
 window.__gxi2=true;
