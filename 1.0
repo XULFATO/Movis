@@ -1,3 +1,79 @@
+PARCHE FAVORITO
+
+javascript:(function(){try{var fw=window.frames[1];var d=fw.document;var fs=d.getElementsByTagName('form');if(!fs.length){alert('PARCHE: No se encontro formulario');return;}var f=fs[0];var els=f.elements;var marcados=[];for(var i=0;i<els.length;i++){if(els[i].type==='checkbox'&&els[i].checked){var nm=els[i].name;var sufijo='';var guiones=0;for(var c=0;c<nm.length;c++){if(nm.charAt(c)==='_')guiones++;if(guiones>=2)sufijo=sufijo+nm.charAt(c);}var numrub='';for(var j=0;j<els.length;j++){if(els[j].name==='_TNUMRUB'+sufijo){numrub=els[j].value;break;}}marcados[marcados.length]={cb:nm,sufijo:sufijo,numrub:numrub};}}var resumen='Rubricas seleccionadas: '+marcados.length+'\n';for(var i=0;i<marcados.length;i++){resumen+='  '+marcados[i].numrub+'\n';}resumen+='\nConfirmar consulta?';if(!confirm(resumen))return;for(var i=0;i<els.length;i++){if(els[i].name==='_EventName'){els[i].value='hselclip1z';break;}}f.submit();}catch(e){alert('PARCHE ERROR: '+e.message);}})();
+
+
+PARCHE CPONSOLA
+
+(function(){
+try{
+  var fw=window.frames[1];
+  var d=fw.document;
+  var fs=d.getElementsByTagName('form');
+  if(!fs.length){console.warn('[PARCHE] No se encontro formulario');return;}
+  var f=fs[0];
+  var els=f.elements;
+
+  // 1. Leer que checkboxes estan marcados ahora mismo
+  // y recoger el numero de rubrica de su hidden _TNUMRUB correspondiente
+  var marcados=[];
+  for(var i=0;i<els.length;i++){
+    if(els[i].type==='checkbox' && els[i].checked){
+      // nombre: _ACTUALIZA_0001 -> sufijo: _0001
+      var nm=els[i].name;
+      // extraer sufijo sin indexOf/substring: iterar chars
+      var sufijo='';
+      var guiones=0;
+      for(var c=0;c<nm.length;c++){
+        if(nm.charAt(c)==='_') guiones++;
+        if(guiones>=2) sufijo=sufijo+nm.charAt(c);
+      }
+      // buscar hidden _TNUMRUB + sufijo
+      var numrub='';
+      for(var j=0;j<els.length;j++){
+        if(els[j].name==='_TNUMRUB'+sufijo){
+          numrub=els[j].value;
+          break;
+        }
+      }
+      marcados[marcados.length]={cb:nm, sufijo:sufijo, numrub:numrub};
+    }
+  }
+
+  // 2. Mostrar resumen antes de actuar
+  var resumen='[PARCHE] Checkboxes marcados: '+marcados.length+'\n';
+  for(var i=0;i<marcados.length;i++){
+    resumen+='  cb='+marcados[i].cb+' -> rubrica='+marcados[i].numrub+'\n';
+  }
+  console.warn(resumen);
+  window.__parchelog=resumen;
+
+  // 3. Poner _EventName = hselclip1z para que el servidor
+  //    procese como consulta de seleccion
+  for(var i=0;i<els.length;i++){
+    if(els[i].name==='_EventName'){
+      els[i].value='hselclip1z';
+      console.warn('[PARCHE] _EventName forzado a hselclip1z');
+      break;
+    }
+  }
+
+  // 4. Hacer submit del formulario directamente
+  //    En vez de window.open via ello1, enviamos el form
+  //    con el estado real actual del DOM
+  console.warn('[PARCHE] Enviando formulario con seleccion real...');
+  f.submit();
+
+}catch(e){
+  console.warn('[PARCHE] ERROR: '+e.message);
+}
+})();
+
+
+
+
+
+
 IFRAME 
 (function(){
 var msg='';
