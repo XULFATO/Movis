@@ -1,6 +1,49 @@
 (function(){
 var msg='';
 try{
+  var d=window.frames[1].document;
+  var rows=d.getElementsByTagName('tr');
+  for(var r=0;r<rows.length;r++){
+    var inp=rows[r].getElementsByTagName('input');
+    var cells=rows[r].getElementsByTagName('td');
+    var hasCb=false;
+    for(var i=0;i<inp.length;i++){if(inp[i].type==='checkbox'){hasCb=true;break;}}
+    if(hasCb){
+      var txt='';
+      for(var c=0;c<cells.length&&c<6;c++){
+        txt+=(cells[c].innerText||cells[c].textContent||'').substring(0,12)+'|';
+      }
+      msg+='fila'+r+' cb='+inp[0].name+' checked='+inp[0].checked+' >> '+txt+'\n';
+    }
+  }
+}catch(e){msg='ERROR: '+e.message;}
+console.warn(msg);
+window.__map=msg;
+})();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+(function(){
+var msg='';
+try{
   for(var i=0;i<window.frames.length;i++){
     try{
       var d=window.frames[i].document;
