@@ -1,3 +1,40 @@
+(function(){
+var msg='';
+try{
+  // intentar documento principal primero
+  var docs=[document];
+  for(var i=0;i<window.frames.length;i++){
+    try{docs.push(window.frames[i].document);}catch(e){}
+  }
+  for(var d=0;d<docs.length;d++){
+    var rows=docs[d].getElementsByTagName('tr');
+    msg+='DOC['+d+'] filas: '+rows.length+'\n';
+    for(var r=0;r<rows.length;r++){
+      var cells=rows[r].getElementsByTagName('td');
+      var inp=rows[r].getElementsByTagName('input');
+      var rowText='';
+      for(var c=0;c<Math.min(cells.length,5);c++){
+        rowText+=cells[c].innerText.replace(/\s+/g,' ').trim().substring(0,15)+'|';
+      }
+      for(var ii=0;ii<inp.length;ii++){
+        if(inp[ii].type==='checkbox'){
+          msg+='  fila '+r+' checked='+inp[ii].checked+' val='+inp[ii].value+' name='+inp[ii].name+' >> '+rowText+'\n';
+        }
+      }
+    }
+  }
+}catch(e){msg+='ERROR: '+e.message;}
+if(!msg)msg='nada';
+console.warn(msg);
+window.__rows=msg;
+})();
+
+
+
+
+
+
+
 MÉTODO 1: Cambio de DPB a DPx (Clásico)
 Copia de seguridad del archivo .xlsm
 Renombra de .xlsm a .zip
