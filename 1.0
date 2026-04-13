@@ -1,3 +1,50 @@
+URL QUE VIAJA
+
+(function(){
+var msg='';
+try{
+  var d=window.frames[1].document;
+  var as=d.getElementsByTagName('a');
+  for(var i=0;i<as.length;i++){
+    var a=as[i];
+    var oc=a.getAttribute('onclick')||'';
+    if(oc.indexOf('hselclip')>-1){
+      msg+='HREF='+a.href+'\n';
+      msg+='ONCLICK='+oc+'\n';
+    }
+  }
+  // tambien buscar en el documento padre
+  var as2=document.getElementsByTagName('a');
+  for(var i=0;i<as2.length;i++){
+    var a=as2[i];
+    var oc=a.getAttribute('onclick')||'';
+    if(oc.indexOf('hselclip')>-1){
+      msg+='PADRE HREF='+a.href+'\n';
+      msg+='PADRE ONCLICK='+oc+'\n';
+    }
+  }
+  // buscar imgs con ese onclick
+  var imgs=d.getElementsByTagName('img');
+  for(var i=0;i<imgs.length;i++){
+    var img=imgs[i];
+    var p=img.parentNode;
+    var poc=p.getAttribute('onclick')||'';
+    var ph=p.href||'';
+    if(poc.indexOf('hselclip')>-1||ph.indexOf('hselclip')>-1){
+      msg+='IMG src='+img.src+'\n';
+      msg+='  parent onclick='+poc+'\n';
+      msg+='  parent href='+ph+'\n';
+    }
+  }
+}catch(e){msg='ERROR: '+e.message;}
+console.warn(msg);
+window.__url=msg;
+})();
+
+
+
+
+
 QEU HACE EL BOTON
 
 (function(){
