@@ -4,16 +4,8 @@ var msg='';
 try{
   var fw=window.frames[1];
   var d=fw.document;
-  var els=d.getElementsByTagName('form')[0].elements;
-  for(var i=0;i<els.length;i++){
-    if(els[i].name==='_EventName'){
-      msg+='EventName actual='+els[i].value+'\n';
-    }
-    if(els[i].name==='_SELRUBRICA'){
-      msg+='SELRUBRICA='+els[i].value+'\n';
-    }
-  }
-  // ver todos los hiddens con valor no vacio
+  var f=d.getElementsByTagName('form')[0];
+  var els=f.elements;
   for(var i=0;i<els.length;i++){
     if(els[i].type==='hidden'&&els[i].value!=''){
       msg+=els[i].name+'='+els[i].value+'\n';
@@ -21,7 +13,7 @@ try{
   }
 }catch(e){msg='ERROR: '+e.message;}
 console.warn(msg);
-window.__ev=msg;
+window.__clean=msg;
 })();
 
 
