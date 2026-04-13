@@ -1,3 +1,32 @@
+QEU HACE EL BOTON
+
+(function(){
+var msg='';
+try{
+  var fw=window.frames[1];
+  if(typeof fw.ello1==='function'){
+    msg+='ello1 src:\n'+fw.ello1.toString().substring(0,600)+'\n';
+  }else{msg+='ello1 no encontrada en frame[1]\n';}
+  if(typeof window.ello1==='function'){
+    msg+='ello1 en window src:\n'+window.ello1.toString().substring(0,600)+'\n';
+  }
+  // buscar tambien en el documento del frame
+  var d=fw.document;
+  var sc=d.getElementsByTagName('script');
+  for(var i=0;i<sc.length;i++){
+    var txt=sc[i].text||sc[i].textContent||sc[i].innerText||'';
+    if(txt.indexOf('hselclip')>-1||txt.indexOf('ello1')>-1||txt.indexOf('ACTUALIZA')>-1){
+      msg+='SCRIPT['+i+']:\n'+txt.substring(0,800)+'\n---\n';
+    }
+  }
+}catch(e){msg='ERROR: '+e.message;}
+console.warn(msg);
+window.__ello=msg;
+})();
+
+
+
+
 VEMOS QUE HACE EL BOTON
 (function(){
 var msg='';
