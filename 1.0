@@ -6,14 +6,22 @@ try{
   var d=fw.document;
   var f=d.getElementsByTagName('form')[0];
   var els=f.elements;
+  msg='total: '+els.length+'\n';
   for(var i=0;i<els.length;i++){
-    if(els[i].type==='hidden'&&els[i].value!=''){
-      msg+=els[i].name+'='+els[i].value+'\n';
+    var n=els[i].name;
+    var v=els[i].value;
+    var mostrar=false;
+    if(n==='_EventName') mostrar=true;
+    if(n==='_SELRUBRICA') mostrar=true;
+    if(v==='') mostrar=true;
+    if(els[i].type==='checkbox') mostrar=true;
+    if(mostrar){
+      msg+=n+'='+v+' ['+els[i].type+']\n';
     }
   }
 }catch(e){msg='ERROR: '+e.message;}
 console.warn(msg);
-window.__clean=msg;
+window.__sel=msg;
 })();
 
 
