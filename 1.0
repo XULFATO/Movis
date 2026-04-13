@@ -2,15 +2,12 @@ URL QUE VIAJA
 (function(){
 var msg='';
 try{
-  var d=window.frames[1].document;
-  var as=d.getElementsByTagName('a');
-  msg='total links: '+as.length+'\n';
-  for(var i=0;i<as.length;i++){
-    msg+='A['+i+'] href='+as[i].href+' onclick='+as[i].getAttribute('onclick')+'\n';
-  }
+  var fw=window.frames[1];
+  msg+='hselclip1z='+fw.hselclip1z+'\n';
+  msg+='tipo='+typeof fw.hselclip1z+'\n';
 }catch(e){msg='ERROR: '+e.message;}
 console.warn(msg);
-window.__url=msg;
+window.__hsel=msg;
 })();
 
 
