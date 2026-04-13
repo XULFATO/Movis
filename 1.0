@@ -1,4 +1,29 @@
 (function(){
+if(window.__gxi2)return;
+window.__gxi2=true;
+var fd=window.frames[1].document;
+var fs=fd.forms;
+for(var i=0;i<fs.length;i++){
+  (function(f){
+    if(f.attachEvent){
+      f.attachEvent('onsubmit',function(){
+        var msg='[SUBMIT] action='+f.action+'\n';
+        var els=f.elements;
+        for(var j=0;j<els.length;j++){
+          if(els[j].value&&els[j].value!=''){
+            msg+='  '+els[j].name+'='+els[j].value+'\n';
+          }
+          if(els[j].type==='checkbox'){
+            msg+='  CB '+els[j].name+'='+els[j].checked+'\n';
+          }
+        }
+        console.warn(msg);
+        window.__submitlog=msg;
+      });
+    }
+
+
+(function(){
 var msg='';
 try{
   var d=window.frames[1].document;
