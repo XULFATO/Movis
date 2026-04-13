@@ -1,15 +1,12 @@
 URL QUE VIAJA
-
 (function(){
 var msg='';
 try{
   var d=window.frames[1].document;
   var as=d.getElementsByTagName('a');
+  msg='total links: '+as.length+'\n';
   for(var i=0;i<as.length;i++){
-    var a=as[i];
-    var oc=a.getAttribute('onclick')||'';
-    var hr=a.href||'';
-    msg+='A['+i+'] href='+hr.substring(0,200)+' onclick='+oc.substring(0,200)+'\n';
+    msg+='A['+i+'] href='+as[i].href+' onclick='+as[i].getAttribute('onclick')+'\n';
   }
 }catch(e){msg='ERROR: '+e.message;}
 console.warn(msg);
