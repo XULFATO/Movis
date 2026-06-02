@@ -1,3 +1,99 @@
+
+# ----------------------------
+# Configuración
+# ----------------------------
+$docxPath = "C:\ruta\mi_documento.docx"           # Word original
+$outputDocx = "C:\ruta\mi_documento_ligero.docx" # Word final optimizado
+$tempFolder = "C:\ruta\WordImagesTemp"           # Carpeta temporal
+$jpgQuality = 80                                  # Calidad JPG
+$targetPpp = 220                                  # Resolución deseada (ppp)
+
+# ----------------------------
+# Preparar carpeta temporal
+# ----------------------------
+if (Test-Path $tempFolder) { Remove-Item $tempFolder -Recurse -Force }
+New-Item -ItemType Directory -Path $tempFolder | Out-Null
+
+# ----------------------------
+# Renombrar docx a zip y extraer contenido
+# ----------------------------
+$zipPath = "$tempFolder\docxzip.zip"
+Copy-Item $docxPath $zipPath
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+[System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $tempFolder)
+
+$mediaFolder = Join-Path $tempFolder "word\media"
+if (-Not (Test-Path $mediaFolder)) {
+    Write-Host "No se encontraron imágenes en el documento."
+    exit
+}
+
+Add-Type -AssemblyName System.Drawing
+
+# ----------------------------
+# Convertir PNG a JPG a 220 ppp
+# ----------------------------
+Get-ChildItem $mediaFolder -Filter *.png | ForEach-Object {
+    $file = $_.FullName
+    $img = [System.Drawing.Image]::FromFile($file)
+    
+    # Calcular nuevo tamaño basado en 220 ppp
+    $dpiRatioX = $targetPpp / $img.HorizontalResolution
+    $dpiRatioY = $targetPpp / $img.VerticalResolution
+    $newWidth = [int]($img.Width * $dpiRatioX)
+    $newHeight = [int]($img.Height * $dpiRatioY)
+
+    $bmp = New-Object System.Drawing.Bitmap $newWidth, $newHeight
+    $bmp.SetResolution($targetPpp, $targetPpp)
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+    $g.DrawImage($img, 0, 0, $newWidth, $newHeight)
+    $g.Dispose()
+
+    $jpgPath = [System.IO.Path]::ChangeExtension($file, ".jpg")
+    $encoder = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq "image/jpeg" }
+    $encoderParams = New-Object System.Drawing.Imaging.EncoderParameters(1)
+    $encoderParams.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter([System.Drawing.Imaging.Encoder]::Quality, $jpgQuality)
+
+    $bmp.Save($jpgPath, $encoder, $encoderParams)
+    $bmp.Dispose()
+    $img.Dispose()
+
+    # Reemplazar PNG por JPG
+    Remove-Item $file
+    Rename-Item $jpgPath (Split-Path $file -Leaf)
+    Write-Host "Convertida a JPG 220 ppp: $($_.Name)"
+}
+
+# ----------------------------
+# Reempaquetar Word
+# ----------------------------
+if (Test-Path $outputDocx) { Remove-Item $outputDocx -Force }
+[System.IO.Compression.ZipFile]::CreateFromDirectory($tempFolder, $outputDocx)
+
+Write-Host "`nDocumento optimizado listo en:" $outputDocx
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 CONSULTA EVENTO
 (function(){
 var msg='';
