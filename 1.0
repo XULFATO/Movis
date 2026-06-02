@@ -1,106 +1,9 @@
 
-
-Sub ConvertirReducirPNGaJPG()
-    Dim i As InlineShape
-    Dim tempPath As String
-    Dim savePath As String
-    Dim cont As Long
-    Dim shpWidth As Single
-    Dim shpHeight As Single
-    
-    ' Carpeta temporal
-    tempPath = Environ("TEMP") & "\WordTempJPG\"
-    If Dir(tempPath, vbDirectory) = "" Then MkDir tempPath
-    
-    cont = 1
-    
-    Application.ScreenUpdating = False
-    Application.EnableEvents = False
-    
-    For Each i In ActiveDocument.InlineShapes
-        If i.Type = wdInlineShapePicture Then
-            ' Guardar imagen temporalmente
-            savePath = tempPath & "img" & cont & ".jpg"
-            
-            ' Exportar la imagen actual a JPG
-            i.ConvertToShape.Export FileName:=savePath, Filter:=wdExportFormatJPG
-            
-            ' Guardar tamaño original
-            shpWidth = i.Width
-            shpHeight = i.Height
-            
-            ' Reemplazar la imagen en el mismo rango
-            Dim rng As Range
-            Set rng = i.Range
-            i.Delete
-            Dim newPic As InlineShape
-            Set newPic = rng.InlineShapes.AddPicture(FileName:=savePath, LinkToFile:=False, SaveWithDocument:=True)
-            
-            ' Restaurar tamaño original
-            newPic.LockAspectRatio = msoTrue
-            newPic.Width = shpWidth
-            newPic.Height = shpHeight
-            
-            cont = cont + 1
-        End If
-    Next i
-    
-    Application.ScreenUpdating = True
-    Application.EnableEvents = True
-    
-    MsgBox "Todas las imágenes han sido convertidas a JPG y reemplazadas correctamente.", vbInformation
-End Sub
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-..
 # ----------------------------
 # Configuración
 # ----------------------------
 $docxPath = "C:\ruta\mi_documento.docx"           # Word original
-$outputDocx = "C:\ruta\mi_documento_ligero.docx" # Word final optimizado
-$tempFolder = "C:\ruta\WordImagesTemp"           # Carpeta temporal
+$tempFolder = "C:\ruta\WordTempImages"           # Carpeta temporal
 $jpgQuality = 80                                  # Calidad JPG
 $targetPpp = 220                                  # Resolución deseada (ppp)
 
@@ -111,7 +14,7 @@ if (Test-Path $tempFolder) { Remove-Item $tempFolder -Recurse -Force }
 New-Item -ItemType Directory -Path $tempFolder | Out-Null
 
 # ----------------------------
-# Renombrar docx a zip y extraer contenido
+# Renombrar DOCX a ZIP y extraer contenido
 # ----------------------------
 $zipPath = "$tempFolder\docxzip.zip"
 Copy-Item $docxPath $zipPath
@@ -119,25 +22,23 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 [System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $tempFolder)
 
 $mediaFolder = Join-Path $tempFolder "word\media"
-if (-Not (Test-Path $mediaFolder)) {
-    Write-Host "No se encontraron imágenes en el documento."
-    exit
-}
+if (-Not (Test-Path $mediaFolder)) { Write-Host "No hay imágenes"; exit }
 
 Add-Type -AssemblyName System.Drawing
 
 # ----------------------------
-# Convertir PNG a JPG a 220 ppp
+# Convertir PNG a JPG 220 ppp
 # ----------------------------
+$cont = 1
 Get-ChildItem $mediaFolder -Filter *.png | ForEach-Object {
     $file = $_.FullName
     $img = [System.Drawing.Image]::FromFile($file)
-    
-    # Calcular nuevo tamaño basado en 220 ppp
-    $dpiRatioX = $targetPpp / $img.HorizontalResolution
-    $dpiRatioY = $targetPpp / $img.VerticalResolution
-    $newWidth = [int]($img.Width * $dpiRatioX)
-    $newHeight = [int]($img.Height * $dpiRatioY)
+
+    # Escalar proporcionalmente a 220 ppp
+    $ratioX = $targetPpp / $img.HorizontalResolution
+    $ratioY = $targetPpp / $img.VerticalResolution
+    $newWidth = [int]($img.Width * $ratioX)
+    $newHeight = [int]($img.Height * $ratioY)
 
     $bmp = New-Object System.Drawing.Bitmap $newWidth, $newHeight
     $bmp.SetResolution($targetPpp, $targetPpp)
@@ -146,33 +47,81 @@ Get-ChildItem $mediaFolder -Filter *.png | ForEach-Object {
     $g.DrawImage($img, 0, 0, $newWidth, $newHeight)
     $g.Dispose()
 
-    $jpgPath = [System.IO.Path]::ChangeExtension($file, ".jpg")
+    # Guardar JPG optimizado
+    $jpgPath = Join-Path $tempFolder ("img" + $cont + ".jpg")
     $encoder = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq "image/jpeg" }
     $encoderParams = New-Object System.Drawing.Imaging.EncoderParameters(1)
     $encoderParams.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter([System.Drawing.Imaging.Encoder]::Quality, $jpgQuality)
-
     $bmp.Save($jpgPath, $encoder, $encoderParams)
+
     $bmp.Dispose()
     $img.Dispose()
 
-    # Reemplazar PNG por JPG
-    Remove-Item $file
-    Rename-Item $jpgPath (Split-Path $file -Leaf)
-    Write-Host "Convertida a JPG 220 ppp: $($_.Name)"
+    Write-Host "Convertida: $($_.Name) → img$cont.jpg"
+    $cont++
 }
-
-# ----------------------------
-# Reempaquetar Word
-# ----------------------------
-if (Test-Path $outputDocx) { Remove-Item $outputDocx -Force }
-[System.IO.Compression.ZipFile]::CreateFromDirectory($tempFolder, $outputDocx)
-
-Write-Host "`nDocumento optimizado listo en:" $outputDocx
+Write-Host "`nTodas las imágenes JPG listas en: $tempFolder"
 
 
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+Sub ReemplazarImagenesPorJPG()
+    Dim i As InlineShape
+    Dim tempFolder As String
+    Dim jpgPath As String
+    Dim cont As Long
+    Dim shpWidth As Single
+    Dim shpHeight As Single
+    Dim rng As Range
+
+    ' Carpeta donde están los JPG generados por PowerShell
+    tempFolder = "C:\ruta\WordTempImages\"  ' Cambiar a tu carpeta
+
+    cont = 1
+
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+
+    For Each i In ActiveDocument.InlineShapes
+        If i.Type = wdInlineShapePicture Then
+            ' Guardar tamaño original
+            shpWidth = i.Width
+            shpHeight = i.Height
+
+            ' Preparar ruta JPG
+            jpgPath = tempFolder & "img" & cont & ".jpg"
+            If Dir(jpgPath) <> "" Then
+                ' Reemplazar imagen
+                Set rng = i.Range
+                i.Delete
+                Dim newPic As InlineShape
+                Set newPic = rng.InlineShapes.AddPicture(FileName:=jpgPath, LinkToFile:=False, SaveWithDocument:=True)
+                newPic.LockAspectRatio = msoTrue
+                newPic.Width = shpWidth
+                newPic.Height = shpHeight
+                cont = cont + 1
+            End If
+        End If
+    Next i
+
+    Application.ScreenUpdating = True
+    Application.EnableEvents = True
+
+    MsgBox "Todas las imágenes han sido reemplazadas por JPG 220 ppp.", vbInformation
+End Sub
 
 
 
