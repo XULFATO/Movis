@@ -1,64 +1,78 @@
 
-Sub ConvertirReducirImagenes()
+
+Sub ConvertirReducirPNGaJPG()
     Dim i As InlineShape
     Dim tempPath As String
-    Dim img As Object
     Dim savePath As String
-    Dim quality As Long
-    Dim targetPpp As Long
+    Dim cont As Long
     Dim shpWidth As Single
     Dim shpHeight As Single
     
-    ' Carpeta temporal donde se guardarán JPG
+    ' Carpeta temporal
     tempPath = Environ("TEMP") & "\WordTempJPG\"
     If Dir(tempPath, vbDirectory) = "" Then MkDir tempPath
     
-    quality = 80       ' Calidad JPG (0-100)
-    targetPpp = 220    ' Resolución deseada
+    cont = 1
     
     Application.ScreenUpdating = False
     Application.EnableEvents = False
     
     For Each i In ActiveDocument.InlineShapes
         If i.Type = wdInlineShapePicture Then
-            ' Guardar la imagen temporalmente como PNG
+            ' Guardar imagen temporalmente
+            savePath = tempPath & "img" & cont & ".jpg"
+            
+            ' Exportar la imagen actual a JPG
+            i.ConvertToShape.Export FileName:=savePath, Filter:=wdExportFormatJPG
+            
+            ' Guardar tamaño original
             shpWidth = i.Width
             shpHeight = i.Height
-            savePath = tempPath & "img" & i.Index & ".png"
-            i.SaveAsPicture FileName:=savePath
             
-            ' Crear objeto Image para convertir
-            Set img = CreateObject("WIA.ImageFile")
-            img.LoadFile savePath
-            
-            ' Crear objeto para procesar JPG
-            Dim ip As Object
-            Set ip = CreateObject("WIA.ImageProcess")
-            ip.Filters.Add ip.FilterInfos("Convert").FilterID
-            ip.Filters(1).Properties("FormatID") = "{B96B3CAF-0728-11D3-9D7B-0000F81EF32E}" ' JPG
-            
-            ' Reducir tamaño proporcional a resolución deseada
-            Dim ratioX As Double, ratioY As Double
-            ratioX = targetPpp / img.HorizontalResolution
-            ratioY = targetPpp / img.VerticalResolution
-            ip.Filters.Add ip.FilterInfos("Scale").FilterID
-            ip.Filters(2).Properties("MaximumWidth") = img.Width * ratioX
-            ip.Filters(2).Properties("MaximumHeight") = img.Height * ratioY
-            
-            savePath = tempPath & "img" & i.Index & ".jpg"
-            ip.Apply(img).SaveFile savePath
-            
-            ' Reemplazar imagen en Word
+            ' Reemplazar la imagen en el mismo rango
+            Dim rng As Range
+            Set rng = i.Range
             i.Delete
-            Selection.InlineShapes.AddPicture FileName:=savePath, LinkToFile:=False, SaveWithDocument:=True
+            Dim newPic As InlineShape
+            Set newPic = rng.InlineShapes.AddPicture(FileName:=savePath, LinkToFile:=False, SaveWithDocument:=True)
+            
+            ' Restaurar tamaño original
+            newPic.LockAspectRatio = msoTrue
+            newPic.Width = shpWidth
+            newPic.Height = shpHeight
+            
+            cont = cont + 1
         End If
     Next i
     
     Application.ScreenUpdating = True
     Application.EnableEvents = True
     
-    MsgBox "Todas las imágenes han sido convertidas a JPG 220 ppp y reducidas.", vbInformation
+    MsgBox "Todas las imágenes han sido convertidas a JPG y reemplazadas correctamente.", vbInformation
 End Sub
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
