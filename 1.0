@@ -1,4 +1,48 @@
+Sub ReemplazarImagenesPorJPGOrdenados()
+    Dim i As InlineShape
+    Dim tempFolder As String
+    Dim jpgPath As String
+    Dim shpWidth As Single, shpHeight As Single
+    Dim rng As Range
+    Dim cont As Long
 
+    ' Carpeta donde PowerShell generó los JPG
+    tempFolder = "C:\ruta\WordTempImages\"  ' Cambiar a tu carpeta
+
+    cont = 1
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+
+    For Each i In ActiveDocument.InlineShapes
+        If i.Type = wdInlineShapePicture Then
+            ' Guardar tamaño original
+            shpWidth = i.Width
+            shpHeight = i.Height
+
+            ' Reemplazo por JPG generado por PowerShell
+            jpgPath = tempFolder & "img" & cont & ".jpg"
+
+            If Dir(jpgPath) <> "" Then
+                Set rng = i.Range
+                i.Delete
+                Dim newPic As InlineShape
+                Set newPic = rng.InlineShapes.AddPicture(FileName:=jpgPath, LinkToFile:=False, SaveWithDocument:=True)
+
+                ' Restaurar tamaño
+                newPic.LockAspectRatio = msoTrue
+                newPic.Width = shpWidth
+                newPic.Height = shpHeight
+            End If
+
+            cont = cont + 1
+        End If
+    Next i
+
+    Application.ScreenUpdating = True
+    Application.EnableEvents = True
+
+    MsgBox "Todas las imágenes han sido reemplazadas por JPG 220 ppp en orden.", vbInformation
+End Sub
 
 # ----------------------------
 # Configuración
