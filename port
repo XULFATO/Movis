@@ -1,0 +1,21 @@
+1	Obligatorio Fijos (R a AC)	$R7:$AC7	=Y($A7="SI";O(MAYUSC(ESPACIOS($B7))="FIJOS 1";MAYUSC(ESPACIOS($B7))="FIJOS 2");MAYUSC(ESPACIOS($I7))="LIBRE";$J7<>"LIBRE";ESPACIOS(R7)="")
+2	Obligatorio Variables (X a AC)	$X7:$AC7	=Y($A7="SI";MAYUSC(ESPACIOS($B7))="TODOS";MAYUSC(ESPACIOS($I7))="LIBRE";$J7<>"LIBRE";ESPACIOS(X7)="")
+3	Obligatorio Cuentas Gestión	$AF7:$AG7	=Y($A7="SI";MAYUSC(ESPACIOS($M7))="G- GESTIÓN";ESPACIOS(AF7)="")
+4	Longitud ADP > 20		$J7:$J7		=Y($A7="SI";$J7<>"LIBRE";MAYUSC(ESPACIOS($I7))="LIBRE";LARGO($J7)>20)
+5	Campos vs BASIC - Nombre B	$B7:$B7		=Y($A7="SI";$D7<>"";$B7<>BUSCARX($D7;BASIC!$D:$D;BASIC!$B:$B;""))
+6	Campos vs BASIC - Columna R	$R7:$R7		=Y($A7="SI";$D7<>"";MAYUSC(ESPACIOS($B7))="FIJOS 1";$R7<>BUSCARX($D7;BASIC!$D:$D;BASIC!$R:$R;""))
+7	Campos vs BASIC - Columna S	$S7:$S7		=Y($A7="SI";$D7<>"";MAYUSC(ESPACIOS($B7))="FIJOS 1";$S7<>BUSCARX($D7;BASIC!$D:$D;BASIC!$S:$S;""))
+8	Campos vs BASIC - Columna T	$T7:$T7		=Y($A7="SI";$D7<>"";MAYUSC(ESPACIOS($B7))="FIJOS 1";$T7<>BUSCARX($D7;BASIC!$D:$D;BASIC!$T:$T;""))
+9	Campos vs BASIC - Columna X	$X7:$X7		=Y($A7="SI";$D7<>"";MAYUSC(ESPACIOS($B7))="FIJOS 1";$X7<>BUSCARX($D7;BASIC!$D:$D;BASIC!$X:$X;""))
+10	Campos vs BASIC - Columna Y	$Y7:$Y7		=Y($A7="SI";$D7<>"";O(MAYUSC(ESPACIOS($B7))="FIJOS 1";MAYUSC(ESPACIOS($B7))="TODOS");$Y7<>BUSCARX($D7;BASIC!$D:$D;BASIC!$Y:$Y;""))
+11	Campos vs BASIC - Columna Z	$Z7:$Z7		=Y($A7="SI";$D7<>"";O(MAYUSC(ESPACIOS($B7))="FIJOS 1";MAYUSC(ESPACIOS($B7))="TODOS");$Z7<>BUSCARX($D7;BASIC!$D:$D;BASIC!$Z:$Z;""))
+12	Campos vs BASIC - Columna AA	$AA7:$AA7	=Y($A7="SI";$D7<>"";O(MAYUSC(ESPACIOS($B7))="FIJOS 1";MAYUSC(ESPACIOS($B7))="TODOS");$AA7<>BUSCARX($D7;BASIC!$D:$D;BASIC!$AA:$AA;""))
+13	Campos vs BASIC - Columna AB	$AB7:$AB7	=Y($A7="SI";$D7<>"";O(MAYUSC(ESPACIOS($B7))="FIJOS 1";MAYUSC(ESPACIOS($B7))="TODOS");$AB7<>BUSCARX($D7;BASIC!$D:$D;BASIC!$AB:$AB;""))
+
+
+
+=SI($A7<>"SI";"";UNIRCADENAS(CARACTER(10);VERDADERO;SI($B7<>BASIC!$B7;"● El nombre del concepto informado para cliente es diferente al definido en Zadig Basic.";"");SI(Y($B7="FIJOS 1";$R7<>BASIC!$R7);"● Campo modificado del estandar: ""Reduce Entrada/saida (Columna R)""";"");SI(Y($B7="FIJOS 1";$S7<>BASIC!$S7);"● Campo modificado del estandar: ""Reduce Baixa (Columna S)""";"");SI(Y($B7="FIJOS 1";$T7<>BASIC!$T7);"● Campo modificado del estandar: ""Reduce %Jornada (Columna T)""";"");SI(Y($B7="FIJOS 1";$X7<>BASIC!$X7);"● Campo modificado del estandar: ""IRS (Columna X)""";"");SI(O($B7="FIJOS 1";$B7="TODOS");SI($Y7<>BASIC!$Y7;"● Campo modificado del estandar: ""Clave IRS (DMR) (Columna Y)""";"");"");SI(O($B7="FIJOS 1";$B7="TODOS");SI($Z7<>BASIC!$Z7;"● Campo modificado del estandar: ""Seguridad Social (Columna Z)""";"");"");SI(O($B7="FIJOS 1";$B7="TODOS");SI($AA7<>BASIC!$AA7;"● Campo modificado del estandar: ""Clave SS (Columna AA)""";"");"");SI(O($B7="FIJOS 1";$B7="TODOS");SI($AB7<>BASIC!$AB7;"● Campo modificado del estandar: ""Relatorio Unico (Columna AB)""";"");"")))
+
+=SI($A7<>"SI";"";UNIRCADENAS(CARACTER(10);VERDADERO;SI(Y(O($B7="FIJOS 1";$B7="FIJOS 2");$I7="LIBRE";$J7<>"LIBRE";CONTAR.BLANCO($R7:$AC7)>0);"● Falta informar alguno de los campos obligatorios al tratarse de un concepto Fijo";"");SI(Y($B7="TODOS";$I7="LIBRE";$J7<>"LIBRE";CONTAR.BLANCO($X7:$AC7)>0);"● Falta informar alguno de los campos obligatorios al tratarse de un concepto variable";"");SI(Y($M7="G – gestión";CONTAR.BLANCO($AF7:$AG7)>0);"● Se ha indicado que el concepto es de gestión, pero no se han informado las dos cuentas requeridas";"");SI(Y($J7<>"LIBRE";$I7="LIBRE";LARGO($J7)>20);"● El nombre del concepto supera el límite de 20 caracteres.";"")))
+
+
